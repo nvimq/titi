@@ -10,21 +10,11 @@ use crate::theme::symbols::SymbolPreset;
 use crate::theme::Theme;
 
 /// Options for creating a theme.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct CreateThemeOptions {
     pub mode: Option<ColorMode>,
     pub symbol_preset_override: Option<SymbolPreset>,
     pub color_blind_mode: bool,
-}
-
-impl Default for CreateThemeOptions {
-    fn default() -> Self {
-        Self {
-            mode: None,
-            symbol_preset_override: None,
-            color_blind_mode: false,
-        }
-    }
 }
 
 /// Load a theme JSON by name (built-in or custom dir).

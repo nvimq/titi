@@ -195,6 +195,7 @@ impl Theme {
     /// values (hex string, 256-color index, or empty string for terminal
     /// default).  `symbol_overrides` patch the preset's symbol map; unknown
     /// keys are silently ignored (omp logs at debug).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         name: String,
         fg_colors: HashMap<String, Value>,
@@ -278,17 +279,15 @@ impl Theme {
     /// a hex string.
     pub fn with_color_blind_mode(&self) -> Theme {
         let mut next = self.clone();
-        if let Some(hex) = next.hex_fg.get("toolDiffAdded").cloned() {
-            if hex.starts_with('#') {
-                if let Some(adjusted) =
-                    color::adjust_hsv(&hex, COLORBLIND_HUE_SHIFT, COLORBLIND_SAT_MUL, 1.0)
-                {
-                    let ansi = color::color_to_ansi(&adjusted, next.mode)
-                        .unwrap_or_else(|| FG_RESET.to_string());
-                    next.fg.insert("toolDiffAdded".to_string(), ansi);
-                    next.hex_fg.insert("toolDiffAdded".to_string(), adjusted);
-                }
-            }
+        if let Some(hex) = next.hex_fg.get("toolDiffAdded").cloned()
+            && hex.starts_with('#')
+            && let Some(adjusted) =
+                color::adjust_hsv(&hex, COLORBLIND_HUE_SHIFT, COLORBLIND_SAT_MUL, 1.0)
+        {
+            let ansi = color::color_to_ansi(&adjusted, next.mode)
+                .unwrap_or_else(|| FG_RESET.to_string());
+            next.fg.insert("toolDiffAdded".to_string(), ansi);
+            next.hex_fg.insert("toolDiffAdded".to_string(), adjusted);
         }
         next
     }
@@ -475,10 +474,8 @@ impl Theme {
         ];
         let mut hexes = Vec::new();
         for key in MAJOR_KEYS {
-            if let Some(hex) = self.hex_fg.get(*key) {
-                if !hex.is_empty() {
-                    hexes.push(hex.clone());
-                }
+            if let Some(hex) = self.hex_fg.get(*key).filter(|h| !h.is_empty()) {
+                hexes.push(hex.clone());
             }
         }
         hexes
