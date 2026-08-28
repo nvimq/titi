@@ -34,6 +34,7 @@ use titi_cli::app::{
 };
 use titi_cli::first_frame::SubmitOutcome;
 use titi_tui::caps::MousePreset;
+use titi_tui::slash::Route;
 
 /// The startup banner shown before the provider is ready.
 fn banner() -> Vec<String> {
@@ -123,41 +124,87 @@ fn main() -> io::Result<()> {
                             }
                             KeyCode::Char(c) => {
                                 input.push(c);
+                                app.slash_completions(&input);
                                 render(&mut app, &mut stdout, &input)?;
+                            }
+                            KeyCode::Tab => {
+                                if app.completion_visible() {
+                                    if let Some(name) = app.completion_accept() {
+                                        input = name;
+                                    }
+                                    render(&mut app, &mut stdout, &input)?;
+                                }
+                            }
+                            KeyCode::Up => {
+                                if app.completion_visible() {
+                                    app.completion_move(true);
+                                    render(&mut app, &mut stdout, &input)?;
+                                }
+                            }
+                            KeyCode::Down => {
+                                if app.completion_visible() {
+                                    app.completion_move(false);
+                                    render(&mut app, &mut stdout, &input)?;
+                                }
+                            }
+                            KeyCode::Esc => {
+                                if app.completion_visible() {
+                                    app.completion_hide();
+                                    render(&mut app, &mut stdout, &input)?;
+                                }
                             }
                             KeyCode::Enter => {
                                 if !input.is_empty() {
                                     let cmd = std::mem::take(&mut input);
-                                    if cmd.starts_with("/details ") {
-                                        let directive = cmd.trim_start_matches("/details ");
-                                        app.details(directive);
-                                    } else if cmd.starts_with("/mouse ") {
-                                        let preset = cmd.trim_start_matches("/mouse ");
-                                        if let Some(next) = MousePreset::parse(preset) {
-                                            write!(stdout, "{}", mouse.disable())?;
-                                            mouse = next;
-                                            write!(stdout, "{}", mouse.enable())?;
-                                            match save_mouse_preset(mouse) {
-                                                Ok(()) => {
-                                                    eprintln!("mouse preset: {} (saved)", mouse.name());
+                                    app.completion_hide();
+                                    match app.route_slash(&cmd) {
+                                        Route::Builtin(name) => match name.as_str() {
+                                            "details" => {
+                                                let directive = cmd.trim_start_matches("/details ");
+                                                app.details(directive);
+                                            }
+                                            "mouse" => {
+                                                let preset = cmd.trim_start_matches("/mouse ");
+                                                if let Some(next) = MousePreset::parse(preset) {
+                                                    write!(stdout, "{}", mouse.disable())?;
+                                                    mouse = next;
+                                                    write!(stdout, "{}", mouse.enable())?;
+                                                    match save_mouse_preset(mouse) {
+                                                        Ok(()) => {
+                                                            eprintln!("mouse preset: {} (saved)", mouse.name());
+                                                        }
+                                                        Err(reason) => {
+                                                            eprintln!(
+                                                                "mouse preset: {} (not saved: {reason})",
+                                                                mouse.name()
+                                                            );
+                                                        }
+                                                    }
                                                 }
-                                                Err(reason) => {
-                                                    eprintln!(
-                                                        "mouse preset: {} (not saved: {reason})",
-                                                        mouse.name()
-                                                    );
+                                            }
+                                            "model" => app.open_model_picker(model_choices()),
+                                            "sessions" => app.open_session_switcher(),
+                                            "help" => eprintln!("commands: help, details, model, sessions, mouse"),
+                                            other => eprintln!("builtin: {other}"),
+                                        },
+                                        Route::Expanded(prompt) => {
+                                            match app.submit(prompt.clone()) {
+                                                SubmitOutcome::Queued => {
+                                                    eprintln!("queued (provider starting): {prompt}");
+                                                }
+                                                SubmitOutcome::Delivered => {
+                                                    eprintln!("delivered: {prompt}");
                                                 }
                                             }
                                         }
-                                    } else if cmd == "/model" {
-                                        app.open_model_picker(model_choices());
-                                    } else {
-                                        match app.submit(cmd.clone()) {
-                                            SubmitOutcome::Queued => {
-                                                eprintln!("queued (provider starting): {cmd}");
-                                            }
-                                            SubmitOutcome::Delivered => {
-                                                eprintln!("delivered: {cmd}");
+                                        Route::Passthrough => {
+                                            match app.submit(cmd.clone()) {
+                                                SubmitOutcome::Queued => {
+                                                    eprintln!("queued (provider starting): {cmd}");
+                                                }
+                                                SubmitOutcome::Delivered => {
+                                                    eprintln!("delivered: {cmd}");
+                                                }
                                             }
                                         }
                                     }
@@ -166,6 +213,7 @@ fn main() -> io::Result<()> {
                             }
                             KeyCode::Backspace => {
                                 input.pop();
+                                app.slash_completions(&input);
                                 render(&mut app, &mut stdout, &input)?;
                             }
                             _ => {}

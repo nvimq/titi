@@ -41,10 +41,21 @@ fallbackChains настроены: default = opencode-go/glm-5.3-flash → cline
 | 12. Bracketed paste + overlay-панели (DoD): `Event::Paste` — вставка одним блоком, inline-collapse >6 строк, `[Image #N]` аттачменты; `Ctrl+X` session switcher, `/model`+`Ctrl+M` model picker, approval-gated close сессии (удаление JSONL только по Yes), Esc везде cancel-без-удаления | f4f4836 | done, +1 unit (composer, счётчик аттачментов) + 10 интеграционных (overlays_paste) |
 
 titi-cli: FirstFrame core (banner, StatusLine Starting→Ready, очередь ввода, замер ttff) + App (FirstFrame + Transcript + theme) + бинарник на crossterm (raw mode, alternate screen, event loop). Transcript: секции thinking/tools expanded, subagents collapsed, activity hidden; `/details <section> <mode>`; backstop-алерт при all_hidden. Реализовано на std threads, БЕЗ tokio/ratatui — хватило crossterm.
-titi-tui: 370 тестов (352 unit + 18 integration); titi-cli: 19 интеграционных; workspace: 577. Сборка 0 warnings; новые файлы clippy-clean.
+titi-tui: 392 тестов (374 unit + 18 integration); titi-cli: 30 интеграционных; workspace: 598. Сборка 0 warnings; новые файлы clippy-clean.
 
-## Следующие шаги
-1. ✅ Bracketed paste (DoD): `Event::Paste` вставляет многострочный текст одним блоком (не выполняет команды по строкам), >6 строк — inline-collapse (`preview + … (+N lines)`), путь к `.png` → `[Image #N]` (счётчик в `Composer`); unit-тесты `collapse_paste` + `parse_osc5522` (17 в composer.rs); 3 интеграционных в `overlays_paste.rs`. PTY-smoke: `?2004h`/`?2004l` в кадре.
-2. ✅ Overlay-панели (DoD): `Ctrl+X` — session switcher (Enter/Ctrl+D/Ctrl+N/Ctrl+R/Esc), `/model`/`Ctrl+M` — model picker (8 моделей из fallback-цепей STATE.md), Ctrl+D в свитчере → approval-промпт (удаление `<agent_dir>/sessions/<id>.jsonl` только по Yes); Esc всегда cancel-без-удаления; панели композитятся в кадр через `overlay::composite_rows` поверх selection-фона; 10 интеграционных тестов. Примечание: `Ctrl+M` физически = Enter (0x0D) без kitty keyboard protocol — рабочий путь `/model`.
-3. PTY-smoke: full terminal test — kitty+resize+input, drag-select selection background, `/mouse` switching.
-4. Каждый шаг обновляет этот файл — точка возобновления.
+## Slash DoD (2026-08-28)
+
+- [x] Builtin names reserved (help, details, model, sessions, mouse)
+- [x] `/unknown-xyz` → Passthrough (LLM as text)
+- [x] `$1`/`$ARGUMENTS` expand in file templates (unit-tested in slash.rs)
+- [x] Floating autocomplete panel (CompletionPanel, 6 unit + 11 integration tests)
+- [x] Tab inserts highlighted command name, Esc hides, arrows navigate
+- [x] Enter dispatches via Route::Builtin / Expanded / Passthrough
+- [x] Snapshot test for route + complete (slash_snapshot.rs, 2 passed)
+- [x] TopCenter anchor added to overlay::Anchor for floating panel placement
+- [x] PTY-smoke: `/m` → panel shows `/model  Switch the active model`, Enter → model picker opens
+
+3. ✅ Slash-команды (DoD): реестр `SlashRegistry` (builtin резерв, file-команды с `$1`/`$@`/`$ARGUMENTS`, Passthrough для `/unknown`); floating `CompletionPanel` (non-modal: Tab вставляет имя, Esc прячет, стрелки двигают подсветку); Enter диспатчит через `Route` (Builtin: help/details/model/sessions/mouse; Expanded: submit развёрнутого шаблона; Passthrough: submit как текст). Снапшот-тест route+complete; 6 unit (панель) + 11 интеграционных (titi-cli). `Anchor::TopCenter` добавлен для floating-размещения.
+4. ⏳ Очередь (DoD): во время стрима `Steer`/`FollowUp` ставятся в очередь, `Alt+Up` возвращает последнее в редактор, Esc снимает подсветку не удаляя (тест на `Composer::queue`).
+5. PTY-smoke: full terminal test — kitty+resize+input, drag-select selection background, `/mouse` switching.
+6. Каждый шаг обновляет этот файл — точка возобновления.

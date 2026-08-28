@@ -12,11 +12,14 @@ use titi_tui::composer::{Composer, PasteResult, PASTE_INLINE_MAX_LINES};
 use titi_tui::markdown::Section;
 use titi_tui::caps::MousePreset;
 use titi_tui::overlay::{composite_rows, Anchor};
-use titi_tui::panels::{ApprovalPanel, SelectionPanel, SessionAction, SessionSwitcher};
+use titi_tui::panels::{
+    ApprovalPanel, CompletionPanel, SelectionPanel, SessionAction, SessionSwitcher,
+};
 use titi_tui::selection::Selection;
 use titi_tui::status::AgentState;
 use titi_tui::theme::{global, Theme};
 use titi_tui::transcript::{Alert, Entry, Transcript};
+use titi_tui::slash::{Route, SlashRegistry};
 
 use crate::first_frame::{FirstFrame, SubmitOutcome};
 
@@ -33,6 +36,11 @@ pub struct App {
     composer: Composer,
     /// Session id awaiting close approval (`SessionAction::Close`).
     pending_close: Option<String>,
+    /// Slash-command registry (builtin names reserved, then file
+    /// expansion, then passthrough to the LLM).
+    slash: SlashRegistry,
+    /// Floating non-modal slash autocomplete.
+    completion: CompletionPanel,
 }
 
 impl App {
@@ -47,12 +55,73 @@ impl App {
             overlay: None,
             composer: Composer::new(),
             pending_close: None,
+            slash: Self::default_slash_registry(),
+            completion: CompletionPanel::new(),
         }
+    }
+
+    /// The built-in slash commands (names reserved — see the Slash DoD).
+    ///
+    /// `help` lists them, `details` toggles transcript sections, `mouse`
+    /// switches the tracking preset, `model` opens the picker, `sessions`
+    /// opens the switcher.
+    fn default_slash_registry() -> SlashRegistry {
+        let mut registry = SlashRegistry::new();
+        registry.register_builtin("help", "Show available commands");
+        registry.register_builtin("model", "Switch the active model");
+        registry.register_builtin("sessions", "Open the session switcher");
+        registry.register_builtin("mouse", "Set mouse tracking: off|wheel|buttons|all");
+        registry.register_builtin("details", "Toggle transcript section visibility");
+        registry
     }
 
     /// Whether a modal overlay panel is currently shown.
     pub fn overlay_open(&self) -> bool {
         self.overlay.is_some()
+    }
+    /// Route a `/`-prefixed input line: builtin (reserved name), expanded
+    /// file command, or passthrough to the LLM.  Never matches a plain
+    /// prompt (no leading `/`).
+    pub fn route_slash(&self, input: &str) -> Route {
+        self.slash.route(input)
+    }
+
+    /// Refresh the floating completion panel for the current input:
+    /// suggestions only while typing a bare `/name` (no arguments yet);
+    /// anything else hides it.
+    pub fn slash_completions(&mut self, input: &str) {
+        if !input.starts_with('/') || input.contains(' ') {
+            self.completion.hide();
+            return;
+        }
+        self.completion.refresh(self.slash.complete(input));
+    }
+
+    /// Whether the completion panel is currently shown.
+    pub fn completion_visible(&self) -> bool {
+        self.completion.is_visible()
+    }
+
+    /// Move the completion highlight (Up/Down; wraps).
+    pub fn completion_move(&mut self, up: bool) {
+        if up {
+            self.completion.move_up();
+        } else {
+            self.completion.move_down();
+        }
+    }
+
+    /// Accept the highlighted completion: return its command name and hide
+    /// the panel.  `None` when the panel is hidden/empty.
+    pub fn completion_accept(&mut self) -> Option<String> {
+        let name = self.completion.selected_name()?.to_owned();
+        self.completion.hide();
+        Some(name)
+    }
+
+    /// Hide the completion panel without touching the input buffer.
+    pub fn completion_hide(&mut self) {
+        self.completion.hide();
     }
 
     /// Show the model picker over the given model ids.
@@ -254,6 +323,12 @@ impl App {
         };
         if !overlay_rows.is_empty() {
             rows = composite_rows(&rows, &overlay_rows, w, Anchor::BottomCenter);
+        }
+        // Floating slash autocomplete sits above the overlay — it is
+        // non-modal, so it renders even while an overlay panel is shown.
+        let completion_rows = self.completion.render(w);
+        if !completion_rows.is_empty() {
+            rows = composite_rows(&rows, &completion_rows, w, Anchor::TopCenter);
         }
         rows
     }

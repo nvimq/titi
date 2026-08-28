@@ -13,6 +13,8 @@ use crate::width;
 pub enum Anchor {
     /// Bottom edge of the viewport, horizontally centered.
     BottomCenter,
+    /// Top edge of the viewport, horizontally centered.
+    TopCenter,
 }
 
 /// Stable handle to a shown overlay.
@@ -115,12 +117,25 @@ pub fn composite_rows(
 ) -> Vec<String> {
     let mut frame = viewport.to_vec();
     let n = rows.len();
-    let overflow = n.saturating_sub(frame.len());
+    let overflow_n = n.saturating_sub(frame.len());
     for (i, row) in rows.iter().enumerate() {
-        if i < overflow {
-            continue; // top rows that do not fit are dropped
-        }
-        let target = frame.len() - (n - i);
+        let target = match anchor {
+            // Bottom-anchored: last rows stay, top rows overflow.
+            Anchor::BottomCenter => {
+                if i < overflow_n {
+                    continue;
+                }
+                frame.len() - (n - i)
+            }
+            // Top-anchored: first rows stay, bottom rows overflow.
+            Anchor::TopCenter => {
+                if i >= frame.len() {
+                    // Row past the bottom of the viewport — drop it.
+                    break;
+                }
+                i
+            }
+        };
         frame[target] = anchored_line(row, width, anchor);
     }
     frame
@@ -275,6 +290,38 @@ mod tests {
         assert_eq!(frame.len(), 2);
         assert_eq!(frame[0], " two  ");
         assert_eq!(frame[1], "three ");
+    }
+    #[test]
+    fn top_anchored_overlay_lands_on_the_top_rows() {
+        let mut stack = OverlayStack::new();
+        stack.show(
+            Box::new(Static::new(&["one", "two", "three"])),
+            Anchor::TopCenter,
+        );
+        let vp = viewport(&["v0", "v1", "v2"]);
+        let frame = stack.composite(&vp, 6);
+
+        // Top three rows replaced; height stays 3.
+        assert_eq!(frame.len(), 3);
+        assert_eq!(frame[0], " one  ");
+        assert_eq!(frame[1], " two  ");
+        assert_eq!(frame[2], "three ");
+    }
+
+    #[test]
+    fn top_anchored_overlay_taller_than_frame_drops_bottom_overflow() {
+        let mut stack = OverlayStack::new();
+        stack.show(
+            Box::new(Static::new(&["one", "two", "three"])),
+            Anchor::TopCenter,
+        );
+        let vp = viewport(&["v0", "v1"]);
+        let frame = stack.composite(&vp, 6);
+
+        // Frame height stays 2; the top two overlay rows win.
+        assert_eq!(frame.len(), 2);
+        assert_eq!(frame[0], " one  ");
+        assert_eq!(frame[1], " two  ");
     }
 
     #[test]
