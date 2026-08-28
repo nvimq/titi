@@ -81,7 +81,7 @@ pub struct Theme { colors: ColorTokens, symbols: SymbolPreset }  // serde-вал
 - [ ] Overlay-панели: model picker, session switcher (`Ctrl+X`: Enter/Ctrl+D/Ctrl+N/Esc), approval-промпт реализуют `Overlay`; Esc всегда cancel-без-удаления.
 - [ ] Transcript: thinking и tools expanded, subagents collapsed, activity hidden по умолчанию; переключение `/details <section> <mode>`; floating-alert backstop при полностью скрытых секциях; markdown-рендер с токенами темы (golden-тесты рендера).
 - [ ] Статус-линия: машина состояний starting/ready/thinking/running/interrupted; таймер `⏱`/`⏲`; бейджи (компрессии, фоновые задачи, YOLO); busy-индикатор со сменным пресетом и постоянной шириной (тест: ширина строки не меняется на кадрах спиннера).
-- [ ] Мышь: пресеты `off|wheel|buttons|all` маппятся на режимы 1000/1002/1003 + SGR 1006 и персистятся в конфиге; drag-select рисует selection-фон (интеграционный тест на эмуляции SGR-mouse-событий).
+- [x] Мышь: пресеты `off|wheel|buttons|all` маппятся на режимы 1000/1002/1003 + SGR 1006 и персистятся в конфиге; drag-select рисует selection-фон (интеграционный тест на эмуляции SGR-mouse-событий).
 
 ## Deep-dive
 
