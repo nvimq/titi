@@ -261,6 +261,11 @@ impl SessionSwitcher {
         self.closed
     }
 
+    /// The session titles the switcher was built over.
+    pub fn titles(&self) -> &[String] {
+        &self.titles
+    }
+
     fn close_with(&mut self, action: SessionAction) {
         self.action = Some(action);
         self.closed = true;

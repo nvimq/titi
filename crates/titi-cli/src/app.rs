@@ -7,8 +7,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
+use titi_tui::component::Component as _;
+use titi_tui::composer::{Composer, PasteResult, PASTE_INLINE_MAX_LINES};
 use titi_tui::markdown::Section;
 use titi_tui::caps::MousePreset;
+use titi_tui::overlay::{composite_rows, Anchor};
+use titi_tui::panels::{ApprovalPanel, SelectionPanel, SessionAction, SessionSwitcher};
 use titi_tui::selection::Selection;
 use titi_tui::status::AgentState;
 use titi_tui::theme::{global, Theme};
@@ -23,6 +27,12 @@ pub struct App {
     theme: Arc<Theme>,
     width: u16,
     selection: Option<Selection>,
+    /// The modal overlay panel currently shown, if any.
+    overlay: Option<ActiveOverlay>,
+    /// Paste collapse + attachment numbering state.
+    composer: Composer,
+    /// Session id awaiting close approval (`SessionAction::Close`).
+    pending_close: Option<String>,
 }
 
 impl App {
@@ -34,6 +44,92 @@ impl App {
             theme,
             width: 80,
             selection: None,
+            overlay: None,
+            composer: Composer::new(),
+            pending_close: None,
+        }
+    }
+
+    /// Whether a modal overlay panel is currently shown.
+    pub fn overlay_open(&self) -> bool {
+        self.overlay.is_some()
+    }
+
+    /// Show the model picker over the given model ids.
+    pub fn open_model_picker(&mut self, models: Vec<String>) {
+        let labels = models.to_vec();
+        self.overlay = Some(ActiveOverlay::ModelPicker(SelectionPanel::new(
+            "Model", models, labels,
+        )));
+    }
+
+    /// Show the session switcher: the live session first, then the ids
+    /// stored under `<agent_dir>/sessions`.
+    pub fn open_session_switcher(&mut self) {
+        let mut titles = vec!["current".to_owned()];
+        titles.extend(list_sessions());
+        self.open_session_switcher_over(titles);
+    }
+
+    /// Show the session switcher over explicit titles (tests, embedded
+    /// session sources).
+    pub fn open_session_switcher_over(&mut self, titles: Vec<String>) {
+        self.overlay = Some(ActiveOverlay::SessionSwitcher(SessionSwitcher::new(titles)));
+    }
+
+    /// Show an approval prompt; `approved` decides the pending action.
+    pub fn open_approval(&mut self, prompt: &str) {
+        self.overlay = Some(ActiveOverlay::Approval(ApprovalPanel::prompt(prompt)));
+    }
+
+    /// Queue a session close behind an approval prompt.  Esc / No / Cancel
+    /// never deletes ([`App::confirm_pending_close`] runs only on Yes).
+    pub fn request_session_close(&mut self, id: &str) {
+        self.pending_close = Some(id.to_owned());
+        self.open_approval(&format!("Close session {id}?"));
+    }
+
+    /// The session id awaiting close approval, if any.
+    pub fn take_pending_close(&mut self) -> Option<String> {
+        self.pending_close.take()
+    }
+
+    /// Route a decoded key to the open overlay.  Returns the panel's
+    /// outcome once it closes; `None` while it stays open or no overlay is
+    /// shown.  A switcher `Close` never returns directly — it opens the
+    /// approval prompt ([`App::request_session_close`]), and only an
+    /// explicit Yes reaches the deletion.
+    pub fn overlay_input(&mut self, data: &str) -> Option<OverlayOutcome> {
+        let mut active = self.overlay.take()?;
+        active.handle_input(data);
+        if !active.is_closed() {
+            self.overlay = Some(active);
+            return None;
+        }
+        // Intercept the switcher's Close: resolve the session id and gate
+        // the deletion behind the approval panel.
+        if let ActiveOverlay::SessionSwitcher(s) = &active
+            && let Some(SessionAction::Close(i)) = s.action()
+            && let Some(id) = s.titles().get(*i).cloned()
+        {
+            self.request_session_close(&id);
+            return None;
+        }
+        active.outcome()
+    }
+
+    /// Append a bracketed paste to the input buffer.  Multi-line pastes are
+    /// inserted as one block (never executed line-by-line); pastes longer
+    /// than [`PASTE_INLINE_MAX_LINES`] collapse to an inline preview; a
+    /// single image path becomes an `[Image #N]` attachment marker.
+    pub fn paste(&mut self, text: &str) -> String {
+        match self.composer.collapse_paste(text, PASTE_INLINE_MAX_LINES) {
+            PasteResult::Text(text) => text,
+            PasteResult::Collapsed {
+                preview,
+                omitted_lines,
+            } => format!("{preview}\n… (+{omitted_lines} lines)"),
+            PasteResult::Attachment { marker, .. } => marker,
         }
     }
 
@@ -149,6 +245,16 @@ impl App {
         if let Some(sel) = &self.selection {
             rows = sel.apply_background(&rows, &self.theme);
         }
+        // Modal overlay composites last — panels sit on top of the frame
+        // and of any selection background.
+        let w = self.width;
+        let overlay_rows = match &mut self.overlay {
+            Some(active) => active.render(w),
+            None => Vec::new(),
+        };
+        if !overlay_rows.is_empty() {
+            rows = composite_rows(&rows, &overlay_rows, w, Anchor::BottomCenter);
+        }
         rows
     }
 
@@ -224,4 +330,137 @@ pub fn default_theme() -> Result<Arc<Theme>, String> {
         )
         .map(Arc::new),
     }
+}
+
+/// The modal overlay panel currently shown, kept typed so the application
+/// can extract its result when it closes (contract:
+/// `docs/research/agent-ux/README.md` — panels implement Overlay; Esc is
+/// always cancel-without-delete).
+pub enum ActiveOverlay {
+    ModelPicker(SelectionPanel<String>),
+    SessionSwitcher(SessionSwitcher),
+    Approval(ApprovalPanel),
+}
+
+impl ActiveOverlay {
+    fn render(&mut self, width: u16) -> Vec<String> {
+        match self {
+            ActiveOverlay::ModelPicker(p) => p.render(width),
+            ActiveOverlay::SessionSwitcher(s) => s.render(width),
+            ActiveOverlay::Approval(a) => a.render(width),
+        }
+    }
+
+    fn handle_input(&mut self, data: &str) {
+        match self {
+            ActiveOverlay::ModelPicker(p) => p.handle_input(data),
+            ActiveOverlay::SessionSwitcher(s) => s.handle_input(data),
+            ActiveOverlay::Approval(a) => a.handle_input(data),
+        }
+    }
+
+    fn is_closed(&self) -> bool {
+        match self {
+            ActiveOverlay::ModelPicker(p) => p.is_closed(),
+            ActiveOverlay::SessionSwitcher(s) => s.is_closed(),
+            ActiveOverlay::Approval(a) => a.is_closed(),
+        }
+    }
+
+    /// Extract the outcome of a closed panel.
+    fn outcome(self) -> Option<OverlayOutcome> {
+        match self {
+            ActiveOverlay::ModelPicker(p) => p
+                .into_result()
+                .and_then(|r| r.selected)
+                .map(OverlayOutcome::ModelSelected),
+            ActiveOverlay::SessionSwitcher(s) => {
+                let titles = s.titles().to_vec();
+                match s.into_action() {
+                    Some(SessionAction::Switch(i)) => titles
+                        .get(i)
+                        .cloned()
+                        .map(OverlayOutcome::SessionSwitched),
+                    Some(SessionAction::New) => Some(OverlayOutcome::SessionNew),
+                    Some(SessionAction::Cancel) => Some(OverlayOutcome::SessionCancelled),
+                    // Refresh keeps the panel open; Close is intercepted in
+                    // App::overlay_input — neither reaches here.
+                    Some(SessionAction::Refresh) | Some(SessionAction::Close(_)) => None,
+                    None => None,
+                }
+            }
+            ActiveOverlay::Approval(a) => a.into_result().map(|r| {
+                OverlayOutcome::Approval(!r.cancelled && r.selected == Some("Yes"))
+            }),
+        }
+    }
+}
+
+/// What a closed overlay panel decided.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum OverlayOutcome {
+    /// Model picker: the chosen model id.
+    ModelSelected(String),
+    /// Session switcher, Enter: the session to switch to.
+    SessionSwitched(String),
+    /// Session switcher, Ctrl+N: create a new session.
+    SessionNew,
+    /// Session switcher, Esc: cancelled — nothing deleted.
+    SessionCancelled,
+    /// Approval panel: `true` only for an explicit Yes; Esc/No/Cancel are
+    /// all cancel-without-delete.
+    Approval(bool),
+}
+
+/// Models offered by the picker — the fallback chains from
+/// `docs/research/STATE.md`.
+pub fn model_choices() -> Vec<String> {
+    [
+        "opencode-go/glm-5.3-flash",
+        "clinepass/glm-5.3",
+        "opencode-go/deepseek-v4-flash",
+        "clinepass/deepseek-v4-flash",
+        "bai/glm-5.3-flash",
+        "bai/qwen3.8-flash",
+        "clinepass/deepseek-v4-pro",
+        "qwen3.8-max",
+    ]
+    .into_iter()
+    .map(String::from)
+    .collect()
+}
+
+/// List session ids stored under `<agent_dir>/sessions` (newest first).
+pub fn list_sessions_from(agent_dir: &std::path::Path) -> Vec<String> {
+    let dir = agent_dir.join("sessions");
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut ids: Vec<(std::time::SystemTime, String)> = entries
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
+        .filter_map(|e| {
+            let modified = e.metadata().ok()?.modified().ok()?;
+            Some((modified, e.path().file_stem()?.to_string_lossy().into_owned()))
+        })
+        .collect();
+    ids.sort_by_key(|a| std::cmp::Reverse(a.0));
+    ids.into_iter().map(|(_, id)| id).collect()
+}
+
+/// [`list_sessions_from`] against the real agent directory.
+pub fn list_sessions() -> Vec<String> {
+    list_sessions_from(&titi_config::agent_dir())
+}
+
+/// Delete a session's JSONL file.  Callers must gate this behind an
+/// approval prompt — Esc never reaches here.
+pub fn delete_session_from(agent_dir: &std::path::Path, id: &str) -> Result<(), String> {
+    let path = agent_dir.join("sessions").join(format!("{id}.jsonl"));
+    std::fs::remove_file(&path).map_err(|e| format!("{e}"))
+}
+
+/// [`delete_session_from`] against the real agent directory.
+pub fn delete_session(id: &str) -> Result<(), String> {
+    delete_session_from(&titi_config::agent_dir(), id)
 }

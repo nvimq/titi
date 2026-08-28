@@ -91,21 +91,39 @@ impl OverlayStack {
         let mut frame = viewport.to_vec();
         for overlay in &mut self.overlays {
             let rows = overlay.component.render(width);
-            let n = rows.len();
-            if n == 0 {
+            if rows.is_empty() {
                 continue;
             }
-            let overflow = n.saturating_sub(frame.len());
-            for (i, row) in rows.into_iter().enumerate() {
-                if i < overflow {
-                    continue; // top rows that do not fit are dropped
-                }
-                let target = frame.len() - (n - i);
-                frame[target] = anchored_line(&row, width, overlay.anchor);
-            }
+            frame = composite_rows(&frame, &rows, width, overlay.anchor);
         }
         frame
     }
+}
+
+/// Composite one overlay's rows over the viewport: each row fully replaces
+/// the bottom-aligned frame line it lands on; rows the overlay does not
+/// reach pass through unchanged; rows overflowing the top of the frame are
+/// dropped, so the frame height never grows.
+///
+/// Shared by [`OverlayStack::composite`] and application-level
+/// single-overlay composition (the typed-panel path in `titi-cli`).
+pub fn composite_rows(
+    viewport: &[String],
+    rows: &[String],
+    width: u16,
+    anchor: Anchor,
+) -> Vec<String> {
+    let mut frame = viewport.to_vec();
+    let n = rows.len();
+    let overflow = n.saturating_sub(frame.len());
+    for (i, row) in rows.iter().enumerate() {
+        if i < overflow {
+            continue; // top rows that do not fit are dropped
+        }
+        let target = frame.len() - (n - i);
+        frame[target] = anchored_line(row, width, anchor);
+    }
+    frame
 }
 
 /// Lay a single overlay row into a full-width frame line for `anchor`.

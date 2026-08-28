@@ -60,7 +60,12 @@ pub struct Composer {
     queue: VecDeque<Queued>,
     /// Paste state.
     paste: PasteState,
+    /// Attachment counter — `[Image #N]` markers increment it.
+    attach_seq: usize,
 }
+
+/// Pastes longer than this many lines collapse to an inline preview.
+pub const PASTE_INLINE_MAX_LINES: usize = 6;
 
 impl Composer {
     /// Create a new, empty composer.
@@ -69,6 +74,7 @@ impl Composer {
             buffer: String::new(),
             queue: VecDeque::new(),
             paste: PasteState::None,
+            attach_seq: 0,
         }
     }
 
@@ -125,16 +131,18 @@ impl Composer {
     /// Collapse a long multiline paste.
     ///
     /// - If the text is a single image path (`.png`, `.jpg`, `.jpeg`, `.gif`,
-    ///   `.bmp`, `.ico`) → `Attachment` with a markdown image marker.
+    ///   `.bmp`, `.ico`) → `Attachment` with an `[Image #N]` marker (the
+    ///   attachment counter increments per image pasted).
     /// - If the text has ≤ `max_lines` lines → `Text` verbatim.
     /// - Otherwise → `Collapsed` with the first line and omitted count.
-    pub fn collapse_paste(text: &str, max_lines: usize) -> PasteResult {
+    pub fn collapse_paste(&mut self, text: &str, max_lines: usize) -> PasteResult {
         // Check for a single image path.
         let trimmed = text.trim();
         if is_image_path(trimmed) {
+            self.attach_seq += 1;
             return PasteResult::Attachment {
                 name: trimmed.to_owned(),
-                marker: format!("[Image: {}]", trimmed),
+                marker: format!("[Image #{}]", self.attach_seq),
             };
         }
 
@@ -240,14 +248,16 @@ mod tests {
 
     #[test]
     fn short_paste_is_text() {
-        let result = Composer::collapse_paste("hello world", 5);
+        let mut c = Composer::new();
+        let result = c.collapse_paste("hello world", 5);
         assert_eq!(result, PasteResult::Text("hello world".into()));
     }
 
     #[test]
     fn long_paste_is_collapsed() {
         let long = "first line\nsecond\nthird\nfourth\nfifth\nsixth";
-        let result = Composer::collapse_paste(long, 3);
+        let mut c = Composer::new();
+        let result = c.collapse_paste(long, 3);
         match result {
             PasteResult::Collapsed {
                 preview,
@@ -262,31 +272,54 @@ mod tests {
 
     #[test]
     fn image_path_returns_attachment() {
-        let result = Composer::collapse_paste("/path/to/photo.png", 5);
+        let mut c = Composer::new();
+        let result = c.collapse_paste("/path/to/photo.png", 5);
         match result {
             PasteResult::Attachment { name, marker } => {
                 assert_eq!(name, "/path/to/photo.png");
-                assert!(marker.contains("photo.png"));
+                assert_eq!(marker, "[Image #1]");
             }
             other => panic!("expected Attachment, got {other:?}"),
         }
     }
 
     #[test]
+    fn attachment_counter_increments_per_image() {
+        let mut c = Composer::new();
+        assert!(matches!(
+            c.collapse_paste("a.png", 5),
+            PasteResult::Attachment { ref marker, .. } if marker == "[Image #1]"
+        ));
+        assert!(matches!(
+            c.collapse_paste("b.jpg", 5),
+            PasteResult::Attachment { ref marker, .. } if marker == "[Image #2]"
+        ));
+        // Non-image pastes do not consume a number.
+        assert!(matches!(c.collapse_paste("note", 5), PasteResult::Text(_)));
+        assert!(matches!(
+            c.collapse_paste("c.png", 5),
+            PasteResult::Attachment { ref marker, .. } if marker == "[Image #3]"
+        ));
+    }
+
+    #[test]
     fn jpeg_path_returns_attachment() {
-        let result = Composer::collapse_paste("image.JPEG", 5);
+        let mut c = Composer::new();
+        let result = c.collapse_paste("image.JPEG", 5);
         assert!(matches!(result, PasteResult::Attachment { .. }));
     }
 
     #[test]
     fn non_image_path_is_not_attachment() {
-        let result = Composer::collapse_paste("/path/to/file.txt", 5);
+        let mut c = Composer::new();
+        let result = c.collapse_paste("/path/to/file.txt", 5);
         assert!(matches!(result, PasteResult::Text(_)));
     }
 
     #[test]
     fn multiline_image_path_is_not_attachment() {
-        let result = Composer::collapse_paste("photo.png\nmore", 5);
+        let mut c = Composer::new();
+        let result = c.collapse_paste("photo.png\nmore", 5);
         assert!(matches!(result, PasteResult::Text(_)), "has newline");
     }
 

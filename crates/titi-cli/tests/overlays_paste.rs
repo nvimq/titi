@@ -1,0 +1,210 @@
+//! Integration tests for overlay panels (model picker, session switcher,
+//! approval prompt) and bracketed paste in titi-cli.
+//!
+//! Contract: `docs/research/agent-ux/README.md` (DoD):
+//! - model picker / session switcher (`Ctrl+X`: Enter/Ctrl+D/Ctrl+N/Esc) /
+//!   approval prompt are overlays composited over the frame;
+//! - Esc is always cancel-without-delete;
+//! - bracketed paste inserts multi-line text as one block (never executed
+//!   line-by-line), long pastes collapse inline, a `.png` path becomes an
+//!   `[Image #N]` attachment.
+
+use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
+
+use titi_cli::app::{
+    default_theme, delete_session_from, list_sessions_from, model_choices, App,
+};
+use titi_tui::composer::PASTE_INLINE_MAX_LINES;
+
+fn app() -> App {
+    App::new(
+        Arc::new(AtomicBool::new(false)),
+        vec!["titi".to_owned()],
+        default_theme().unwrap(),
+    )
+}
+
+// ---------------------------------------------------------------------------
+// Bracketed paste
+// ---------------------------------------------------------------------------
+
+#[test]
+fn paste_multiline_is_one_block() {
+    let mut app = app();
+    let appended = app.paste("line one\nline two\nline three");
+    assert_eq!(appended, "line one\nline two\nline three");
+    // One paste = one insert; nothing was executed or queued.
+    assert_eq!(app.queue_len(), 0);
+}
+
+#[test]
+fn paste_at_threshold_is_text_beyond_collapses() {
+    let mut app = app();
+    let six = "a\nb\nc\nd\ne\nf";
+    assert_eq!(app.paste(six), six, "≤ PASTE_INLINE_MAX_LINES stays verbatim");
+
+    let seven = "a\nb\nc\nd\ne\nf\ng";
+    assert_eq!(app.paste(seven), "a\n… (+1 lines)");
+    assert_eq!(PASTE_INLINE_MAX_LINES, 6);
+}
+
+#[test]
+fn paste_png_path_becomes_image_attachment() {
+    let mut app = app();
+    assert_eq!(app.paste("/tmp/photo.png"), "[Image #1]");
+    assert_eq!(app.paste("shot.JPEG"), "[Image #2]");
+    // Non-image pastes do not consume attachment numbers.
+    assert_eq!(app.paste("plain note"), "plain note");
+    assert_eq!(app.paste("diagram.gif"), "[Image #3]");
+}
+
+// ---------------------------------------------------------------------------
+// Model picker
+// ---------------------------------------------------------------------------
+
+#[test]
+fn model_picker_selects_with_enter() {
+    let mut app = app();
+    app.open_model_picker(model_choices());
+    assert!(app.overlay_open());
+
+    // Down once, Enter → the second model is chosen.
+    assert_eq!(app.overlay_input("\x1b[B"), None, "still open after move");
+    let outcome = app.overlay_input("\r");
+    assert_eq!(
+        outcome,
+        Some(titi_cli::app::OverlayOutcome::ModelSelected(
+            model_choices()[1].clone()
+        ))
+    );
+    assert!(!app.overlay_open(), "panel closed after Enter");
+}
+
+#[test]
+fn model_picker_esc_cancels_without_effect() {
+    let mut app = app();
+    app.open_model_picker(model_choices());
+    assert_eq!(app.overlay_input("\x1b"), None, "Esc → no selection");
+    assert!(!app.overlay_open());
+}
+
+#[test]
+fn overlay_frame_composites_picker_rows() {
+    let mut app = app();
+    app.open_model_picker(model_choices());
+    let rows = app.render();
+    let last = rows.last().unwrap();
+    assert!(
+        last.contains('└') && last.contains('┘'),
+        "picker box bottom border composited into the frame bottom: {last:?}"
+    );
+    // The frame is short, so only the bottom part of the picker is
+    // visible (top rows are dropped by the composite contract).
+    let any = rows.iter().any(|r| r.contains("qwen3.8-max"));
+    assert!(any, "last picker item visible in the frame");
+}
+
+// ---------------------------------------------------------------------------
+// Session switcher
+// ---------------------------------------------------------------------------
+
+#[test]
+fn session_switcher_enter_switches_esc_cancels() {
+    let mut app = app();
+    app.open_session_switcher_over(vec!["current".into(), "abc123".into()]);
+
+    // Down once, Enter → switch to "abc123".
+    assert_eq!(app.overlay_input("\x1b[B"), None);
+    assert_eq!(
+        app.overlay_input("\r"),
+        Some(titi_cli::app::OverlayOutcome::SessionSwitched(
+            "abc123".into()
+        ))
+    );
+
+    // Esc → cancel, nothing happens.
+    app.open_session_switcher_over(vec!["current".into()]);
+    assert_eq!(
+        app.overlay_input("\x1b"),
+        Some(titi_cli::app::OverlayOutcome::SessionCancelled)
+    );
+    assert!(!app.overlay_open());
+}
+
+#[test]
+fn session_switcher_new_and_refresh() {
+    let mut app = app();
+    app.open_session_switcher_over(vec!["current".into()]);
+
+    // Ctrl+N → new session outcome.
+    assert_eq!(
+        app.overlay_input("\x0e"),
+        Some(titi_cli::app::OverlayOutcome::SessionNew)
+    );
+
+    // Ctrl+R refreshes in place — the panel stays open.
+    app.open_session_switcher_over(vec!["current".into()]);
+    assert_eq!(app.overlay_input("\x12"), None, "refresh keeps panel open");
+    assert!(app.overlay_open());
+}
+
+#[test]
+fn session_close_routes_through_approval() {
+    let tmp = std::env::temp_dir().join(format!("titi-overlay-close-{}", std::process::id()));
+    let agent_dir = tmp.join("agent");
+    let sessions = agent_dir.join("sessions");
+    std::fs::create_dir_all(&sessions).unwrap();
+    let session_file = sessions.join("deadbeef.jsonl");
+    std::fs::write(&session_file, "").unwrap();
+    assert_eq!(list_sessions_from(&agent_dir), vec!["deadbeef".to_owned()]);
+
+    let mut app = app();
+    app.open_session_switcher_over(vec!["current".into(), "deadbeef".into()]);
+
+    // Down to "deadbeef", Ctrl+D → approval prompt opens, nothing deleted.
+    assert_eq!(app.overlay_input("\x1b[B"), None);
+    assert_eq!(app.overlay_input("\x04"), None, "close waits for approval");
+    assert!(app.overlay_open(), "approval prompt is shown");
+
+    // Esc on the approval → cancel-without-delete.
+    assert_eq!(
+        app.overlay_input("\x1b"),
+        Some(titi_cli::app::OverlayOutcome::Approval(false))
+    );
+    assert!(session_file.exists(), "Esc never deletes");
+
+    // Again through the gate, then explicit Yes.
+    app.open_session_switcher_over(vec!["current".into(), "deadbeef".into()]);
+    app.overlay_input("\x1b[B");
+    app.overlay_input("\x04");
+    assert_eq!(
+        app.overlay_input("\r"),
+        Some(titi_cli::app::OverlayOutcome::Approval(true))
+    );
+    let pending = app.take_pending_close();
+    assert_eq!(pending.as_deref(), Some("deadbeef"));
+
+    // The application executes the approved deletion.
+    delete_session_from(&agent_dir, pending.unwrap().as_str()).unwrap();
+    assert!(!session_file.exists(), "approved close deletes the session");
+    assert!(!app.overlay_open());
+
+    std::fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
+fn live_session_close_cannot_delete_current() {
+    let mut app = app();
+    app.open_session_switcher_over(vec!["current".into()]);
+
+    // Ctrl+D on the live session still gates through approval…
+    assert_eq!(app.overlay_input("\x04"), None);
+    assert!(app.overlay_open());
+    assert_eq!(
+        app.overlay_input("\r"),
+        Some(titi_cli::app::OverlayOutcome::Approval(true))
+    );
+    // …but the pending id is "current", which the binary refuses to delete.
+    assert_eq!(app.take_pending_close().as_deref(), Some("current"));
+}

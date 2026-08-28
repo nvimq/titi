@@ -19,14 +19,18 @@ use std::time::Duration;
 
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
-    self, Event, KeyCode, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
+    MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 
-use titi_cli::app::{default_theme, load_mouse_preset, save_mouse_preset, App};
+use titi_cli::app::{
+    default_theme, delete_session, load_mouse_preset, model_choices, save_mouse_preset, App,
+    OverlayOutcome,
+};
 use titi_cli::first_frame::SubmitOutcome;
 use titi_tui::caps::MousePreset;
 
@@ -66,7 +70,7 @@ fn main() -> io::Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, Hide)?;
+    execute!(stdout, EnterAlternateScreen, Hide, EnableBracketedPaste)?;
     write!(stdout, "{}", mouse.enable())?;
 
     let theme = default_theme().map_err(io::Error::other)?;
@@ -84,54 +88,95 @@ fn main() -> io::Result<()> {
     loop {
         if event::poll(Duration::from_millis(50))? {
             match event::read()? {
-                Event::Key(key) => match key.code {
-                    KeyCode::Char(c) if key.modifiers.contains(KeyModifiers::CONTROL) && c == 'c' => {
+                Event::Key(key) => {
+                    if key.modifiers.contains(KeyModifiers::CONTROL)
+                        && key.code == KeyCode::Char('c')
+                    {
                         break;
                     }
-                    KeyCode::Char(c) => {
-                        input.push(c);
-                        render(&mut app, &mut stdout, &input)?;
-                    }
-                    KeyCode::Enter => {
-                        if !input.is_empty() {
-                            let cmd = std::mem::take(&mut input);
-                            if cmd.starts_with("/details ") {
-                                let directive = cmd.trim_start_matches("/details ");
-                                app.details(directive);
-                            } else if cmd.starts_with("/mouse ") {
-                                let preset = cmd.trim_start_matches("/mouse ");
-                                if let Some(next) = MousePreset::parse(preset) {
-                                    write!(stdout, "{}", mouse.disable())?;
-                                    mouse = next;
-                                    write!(stdout, "{}", mouse.enable())?;
-                                    match save_mouse_preset(mouse) {
-                                        Ok(()) => eprintln!("mouse preset: {} (saved)", mouse.name()),
-                                        Err(reason) => {
-                                            eprintln!("mouse preset: {} (not saved: {reason})", mouse.name());
+                    // Modal: an open overlay consumes every key before the
+                    // prompt line sees it.
+                    if app.overlay_open() {
+                        if let Some(data) = overlay_key_data(&key) {
+                            if let Some(outcome) = app.overlay_input(data) {
+                                handle_outcome(&mut app, outcome);
+                            }
+                            render(&mut app, &mut stdout, &input)?;
+                        }
+                    } else {
+                        match key.code {
+                            KeyCode::Char('x')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                app.open_session_switcher();
+                                render(&mut app, &mut stdout, &input)?;
+                            }
+                            KeyCode::Char('m')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                app.open_model_picker(model_choices());
+                                render(&mut app, &mut stdout, &input)?;
+                            }
+                            KeyCode::Char(c) => {
+                                input.push(c);
+                                render(&mut app, &mut stdout, &input)?;
+                            }
+                            KeyCode::Enter => {
+                                if !input.is_empty() {
+                                    let cmd = std::mem::take(&mut input);
+                                    if cmd.starts_with("/details ") {
+                                        let directive = cmd.trim_start_matches("/details ");
+                                        app.details(directive);
+                                    } else if cmd.starts_with("/mouse ") {
+                                        let preset = cmd.trim_start_matches("/mouse ");
+                                        if let Some(next) = MousePreset::parse(preset) {
+                                            write!(stdout, "{}", mouse.disable())?;
+                                            mouse = next;
+                                            write!(stdout, "{}", mouse.enable())?;
+                                            match save_mouse_preset(mouse) {
+                                                Ok(()) => {
+                                                    eprintln!("mouse preset: {} (saved)", mouse.name());
+                                                }
+                                                Err(reason) => {
+                                                    eprintln!(
+                                                        "mouse preset: {} (not saved: {reason})",
+                                                        mouse.name()
+                                                    );
+                                                }
+                                            }
+                                        }
+                                    } else if cmd == "/model" {
+                                        app.open_model_picker(model_choices());
+                                    } else {
+                                        match app.submit(cmd.clone()) {
+                                            SubmitOutcome::Queued => {
+                                                eprintln!("queued (provider starting): {cmd}");
+                                            }
+                                            SubmitOutcome::Delivered => {
+                                                eprintln!("delivered: {cmd}");
+                                            }
                                         }
                                     }
                                 }
-                            } else {
-                                match app.submit(cmd.clone()) {
-                                    SubmitOutcome::Queued => {
-                                        eprintln!("queued (provider starting): {cmd}");
-                                    }
-                                    SubmitOutcome::Delivered => {
-                                        eprintln!("delivered: {cmd}");
-                                    }
-                                }
+                                render(&mut app, &mut stdout, &input)?;
                             }
+                            KeyCode::Backspace => {
+                                input.pop();
+                                render(&mut app, &mut stdout, &input)?;
+                            }
+                            _ => {}
                         }
-                        render(&mut app, &mut stdout, &input)?;
                     }
-                    KeyCode::Backspace => {
-                        input.pop();
-                        render(&mut app, &mut stdout, &input)?;
-                    }
-                    _ => {}
-                },
+                }
                 Event::Mouse(mouse_event) => {
                     handle_mouse(&mut app, mouse_event);
+                    render(&mut app, &mut stdout, &input)?;
+                }
+                Event::Paste(text) if !app.overlay_open() => {
+                    // One paste = one event: the whole block is inserted
+                    // into the buffer, never executed line-by-line.
+                    let appended = app.paste(&text);
+                    input.push_str(&appended);
                     render(&mut app, &mut stdout, &input)?;
                 }
                 _ => {}
@@ -148,7 +193,7 @@ fn main() -> io::Result<()> {
         }
     }
 
-    execute!(stdout, Show, LeaveAlternateScreen)?;
+    execute!(stdout, Show, LeaveAlternateScreen, DisableBracketedPaste)?;
     write!(stdout, "{}", mouse.disable())?;
     disable_raw_mode()?;
     Ok(())
@@ -165,12 +210,62 @@ fn handle_mouse(app: &mut App, event: MouseEvent) {
     }
 }
 
+/// Map a key event to an overlay input sequence — panels consume raw
+/// decoded input (Esc, arrows, Enter, Ctrl+D/N/R, k/j).  Keys without a
+/// mapping are ignored while an overlay is open (modal).
+fn overlay_key_data(key: &KeyEvent) -> Option<&'static str> {
+    match (key.code, key.modifiers) {
+        (KeyCode::Esc, _) => Some("\x1b"),
+        (KeyCode::Enter, _) => Some("\r"),
+        (KeyCode::Up, _) => Some("\x1b[A"),
+        (KeyCode::Down, _) => Some("\x1b[B"),
+        (KeyCode::Char('d'), m) if m.contains(KeyModifiers::CONTROL) => Some("\x04"),
+        (KeyCode::Char('n'), m) if m.contains(KeyModifiers::CONTROL) => Some("\x0e"),
+        (KeyCode::Char('r'), m) if m.contains(KeyModifiers::CONTROL) => Some("\x12"),
+        (KeyCode::Char('k'), m) if !m.contains(KeyModifiers::CONTROL) => Some("k"),
+        (KeyCode::Char('j'), m) if !m.contains(KeyModifiers::CONTROL) => Some("j"),
+        _ => None,
+    }
+}
+
+/// Act on a closed overlay panel's outcome.  An approval Yes is the only
+/// path that deletes; Esc / No / Cancel never do.
+fn handle_outcome(app: &mut App, outcome: OverlayOutcome) {
+    match outcome {
+        OverlayOutcome::ModelSelected(model) => eprintln!("model: {model}"),
+        OverlayOutcome::SessionSwitched(id) => eprintln!("session: switched to {id}"),
+        OverlayOutcome::SessionNew => eprintln!("session: new"),
+        OverlayOutcome::SessionCancelled => {
+            eprintln!("session switcher: cancelled (nothing deleted)");
+        }
+        OverlayOutcome::Approval(true) => match app.take_pending_close() {
+            Some(id) if id == "current" => {
+                eprintln!("session: cannot close the live session");
+            }
+            Some(id) => match delete_session(&id) {
+                Ok(()) => eprintln!("session: closed {id}"),
+                Err(reason) => eprintln!("session: not closed ({reason})"),
+            },
+            None => eprintln!("approval: yes (no pending action)"),
+        },
+        OverlayOutcome::Approval(false) => eprintln!("approval: declined (nothing deleted)"),
+    }
+}
+
 /// Repaint: banner + transcript + status line + input line.
 fn render(app: &mut App, stdout: &mut impl Write, input: &str) -> io::Result<()> {
     // Move cursor to top so we overwrite the previous frame.
     for row in app.render() {
         writeln!(stdout, "{row}")?;
     }
-    write!(stdout, "> {input}")?;
+    // Pasted multi-line text renders with indented continuation lines.
+    let mut lines = input.split('\n');
+    if let Some(first) = lines.next() {
+        write!(stdout, "> {first}")?;
+    }
+    for line in lines {
+        writeln!(stdout)?;
+        write!(stdout, "  {line}")?;
+    }
     stdout.flush()
 }
