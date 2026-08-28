@@ -1,0 +1,139 @@
+//! TUI app composition for titi-cli: first frame + transcript accordion.
+//!
+//! Terminal-independent core — tests drive it with an in-memory render; the
+//! binary wraps it with crossterm raw mode + alternate screen.
+
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
+use std::time::Duration;
+
+use titi_tui::markdown::Section;
+use titi_tui::status::AgentState;
+use titi_tui::theme::{global, Theme};
+use titi_tui::transcript::{Alert, Entry, Transcript};
+
+use crate::first_frame::{FirstFrame, SubmitOutcome};
+
+/// Composite app: startup state machine + transcript.
+pub struct App {
+    first_frame: FirstFrame,
+    transcript: Transcript,
+    theme: Arc<Theme>,
+    width: u16,
+}
+
+impl App {
+    /// Create the app.  `ready` is flipped by the provider-init thread.
+    pub fn new(_ready: Arc<AtomicBool>, banner: Vec<String>, theme: Arc<Theme>) -> Self {
+        App {
+            first_frame: FirstFrame::new(banner),
+            transcript: Transcript::new(),
+            theme,
+            width: 80,
+        }
+    }
+
+    /// Set the terminal width (resize).
+    pub fn resize(&mut self, width: u16) {
+        self.width = width;
+    }
+
+    /// Current width.
+    pub fn width(&self) -> u16 {
+        self.width
+    }
+
+    /// Agent state.
+    pub fn state(&self) -> AgentState {
+        self.first_frame.state()
+    }
+
+    /// Provider readiness.
+    pub fn is_ready(&self) -> bool {
+        self.first_frame.is_ready()
+    }
+
+    /// Queued prompts count.
+    pub fn queue_len(&self) -> usize {
+        self.first_frame.queue_len()
+    }
+
+    /// Apply a `/details` directive to the transcript.
+    pub fn details(&mut self, directive: &str) -> bool {
+        let changed = self.transcript.details(directive);
+        if changed && self.transcript.all_hidden() {
+            // Floating-alert backstop: all sections hidden — surface a
+            // notice instead of a silent transcript.
+            self.transcript.set_alert(Alert {
+                text: "all sections hidden — use /details to show a section".into(),
+            });
+        } else if changed {
+            self.transcript.clear_alert();
+        }
+        changed
+    }
+
+    /// All transcript sections hidden.
+    pub fn all_hidden(&self) -> bool {
+        self.transcript.all_hidden()
+    }
+
+    /// Append a transcript entry (thinking/tools/subagents/activity).
+    pub fn push_transcript(&mut self, section: Section, text: impl Into<String>) {
+        self.transcript.push(Entry::new(section, text));
+    }
+
+    /// Set the floating alert directly.
+    pub fn set_alert(&mut self, text: impl Into<String>) {
+        self.transcript.set_alert(Alert { text: text.into() });
+    }
+
+    /// Submit a prompt; queued while starting, delivered when ready.
+    pub fn submit(&mut self, prompt: String) -> SubmitOutcome {
+        self.first_frame.submit(prompt)
+    }
+
+    /// Flush queued prompts after provider readiness; returns them.
+    pub fn flush_queued(&mut self, ready: &AtomicBool) -> Vec<String> {
+        if ready.load(Ordering::SeqCst) && !self.is_ready() {
+            self.first_frame.provider_ready()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Render the full frame: banner, transcript accordion, status line.
+    pub fn render(&mut self) -> Vec<String> {
+        let mut rows = Vec::new();
+        // First frame = banner + status line (painted before provider ready).
+        let (first, _) = self.first_frame.first_frame(self.width);
+        rows.extend(first);
+        rows.push(String::new());
+        rows.extend(self.transcript.render(self.width, &self.theme));
+        rows.push(self.first_frame.status_line(self.width));
+        rows
+    }
+
+    /// Time-to-first-frame (from construction to first render).
+    pub fn time_to_first_frame(&self) -> Duration {
+        self.first_frame.frame_elapsed()
+    }
+}
+
+/// Load the process-wide default theme (built-in `dark`), falling back to a
+/// minimal theme if the loader fails.
+pub fn default_theme() -> Arc<Theme> {
+    let name = global().init("dark");
+    global()
+        .current()
+        .unwrap_or_else(|| Arc::new(Theme::new(
+            name,
+            std::collections::HashMap::new(),
+            std::collections::HashMap::new(),
+            titi_tui::theme::ColorMode::Truecolor,
+            titi_tui::theme::SymbolPreset::Unicode,
+            std::collections::HashMap::new(),
+            None,
+            None,
+        ).expect("empty theme builds")))
+}

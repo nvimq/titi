@@ -54,6 +54,11 @@ impl FirstFrame {
         (rows, elapsed)
     }
 
+    /// Elapsed since construction — the time-to-first-frame measurement.
+    pub fn frame_elapsed(&self) -> Duration {
+        self.started_at.elapsed()
+    }
+
     /// Current agent state.
     pub fn state(&self) -> AgentState {
         self.status.state()

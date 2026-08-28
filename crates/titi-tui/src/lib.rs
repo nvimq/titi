@@ -22,4 +22,5 @@ pub mod slash;
 pub mod status;
 pub mod width;
 pub mod theme;
+pub mod transcript;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
