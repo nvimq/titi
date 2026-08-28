@@ -4,9 +4,12 @@
 /// Crate version, mirrors the workspace release.
 
 pub mod component;
+pub mod caps;
 pub mod cursor;
 pub mod focus;
 pub mod history;
+pub mod image;
+pub mod input;
 pub mod keybindings;
 pub mod keys;
 pub mod overlay;
