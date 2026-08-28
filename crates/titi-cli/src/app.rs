@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use titi_tui::markdown::Section;
+use titi_tui::selection::Selection;
 use titi_tui::status::AgentState;
 use titi_tui::theme::{global, Theme};
 use titi_tui::transcript::{Alert, Entry, Transcript};
@@ -20,6 +21,7 @@ pub struct App {
     transcript: Transcript,
     theme: Arc<Theme>,
     width: u16,
+    selection: Option<Selection>,
 }
 
 impl App {
@@ -30,6 +32,7 @@ impl App {
             transcript: Transcript::new(),
             theme,
             width: 80,
+            selection: None,
         }
     }
 
@@ -41,6 +44,35 @@ impl App {
     /// Current width.
     pub fn width(&self) -> u16 {
         self.width
+    }
+
+    /// Mouse press: anchor a drag-select at (x, y).
+    pub fn mouse_press(&mut self, x: u16, y: u16) {
+        self.selection = Some(Selection::anchor(x, y));
+    }
+
+    /// Mouse drag: move the selection cursor.
+    pub fn mouse_drag(&mut self, x: u16, y: u16) {
+        if let Some(sel) = &mut self.selection {
+            sel.drag(x, y);
+        }
+    }
+
+    /// Mouse release: commit the selection.
+    pub fn mouse_release(&mut self) {
+        if let Some(sel) = &mut self.selection {
+            sel.release();
+        }
+    }
+
+    /// Clear the active selection.
+    pub fn clear_selection(&mut self) {
+        self.selection = None;
+    }
+
+    /// The active selection, if any.
+    pub fn selection(&self) -> Option<Selection> {
+        self.selection
     }
 
     /// Agent state.
@@ -111,6 +143,11 @@ impl App {
         rows.push(String::new());
         rows.extend(self.transcript.render(self.width, &self.theme));
         rows.push(self.first_frame.status_line(self.width));
+        // Selection coordinates are absolute screen rows; apply the
+        // selectedBg overlay over the whole rendered frame.
+        if let Some(sel) = &self.selection {
+            rows = sel.apply_background(&rows, &self.theme);
+        }
         rows
     }
 

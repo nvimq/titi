@@ -420,6 +420,18 @@ impl InputBuffer {
 
 /// Parse an SGR 1006 mouse sequence: `\x1b[<Cb;Px;PyM` (press)
 /// or `\x1b[<Cb;Px;Pym` (release).
+/// Parse an SGR 1006 mouse sequence: `\x1b[<Cb;Px;PyM` (press/drag/scroll)
+/// or `\x1b[<Cb;Px;Pym` (release).
+///
+/// SGR mouse button/state bits (cb):
+/// - bits 0-1: button (0=left, 1=middle, 2=right)
+/// - bit 2: shift
+/// - bit 3: meta
+/// - bit 4: ctrl
+/// - bit 5 (0x20): motion (drag) — button held while moving
+/// - bit 6 (0x40): scroll up (wheel)
+/// - bit 7 (0x80): scroll down (wheel)
+/// - `M` = press/motion/scroll event, `m` = release
 fn parse_sgr_mouse(seq: &str) -> Option<InputEvent> {
     let body = seq.strip_prefix("\x1b[<")?;
     let is_press = body.ends_with('M');
@@ -429,16 +441,18 @@ fn parse_sgr_mouse(seq: &str) -> Option<InputEvent> {
     let x: u16 = parts.next()?.parse().ok()?;
     let y: u16 = parts.next()?.parse().ok()?;
 
-    let kind = if is_press {
-        let button = cb & 0x03;
-        match button {
-            0 => MouseKind::Press,
-            1 => MouseKind::Press,
-            2 => MouseKind::Press,
-            _ => MouseKind::Unknown,
-        }
-    } else {
+    let kind = if cb & 0x40 != 0 {
+        MouseKind::ScrollUp
+    } else if cb & 0x80 != 0 {
+        MouseKind::ScrollDown
+    } else if !is_press {
         MouseKind::Release
+    } else if cb & 0x20 != 0 {
+        // Motion (drag) while a button is held.
+        MouseKind::Drag
+    } else {
+        // Button press.
+        MouseKind::Press
     };
 
     Some(InputEvent::Mouse { kind, x, y })
@@ -581,6 +595,54 @@ mod tests {
                 kind: MouseKind::Release,
                 x: 5,
                 y: 15,
+            }
+        );
+    }
+
+    #[test]
+    fn sgr_mouse_drag() {
+        // Motion with a held button: cb = 0 (button) | 0x20 (motion) = 32.
+        let mut buf = InputBuffer::new();
+        let events = buf.feed(b"\x1b[<32;12;7M");
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0],
+            InputEvent::Mouse {
+                kind: MouseKind::Drag,
+                x: 12,
+                y: 7,
+            }
+        );
+    }
+
+    #[test]
+    fn sgr_mouse_scroll_up() {
+        // Wheel up: cb = 0x40 = 64.
+        let mut buf = InputBuffer::new();
+        let events = buf.feed(b"\x1b[<64;3;9M");
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0],
+            InputEvent::Mouse {
+                kind: MouseKind::ScrollUp,
+                x: 3,
+                y: 9,
+            }
+        );
+    }
+
+    #[test]
+    fn sgr_mouse_scroll_down() {
+        // Wheel down: cb = 0x80 = 128.
+        let mut buf = InputBuffer::new();
+        let events = buf.feed(b"\x1b[<128;1;2M");
+        assert_eq!(events.len(), 1);
+        assert_eq!(
+            events[0],
+            InputEvent::Mouse {
+                kind: MouseKind::ScrollDown,
+                x: 1,
+                y: 2,
             }
         );
     }

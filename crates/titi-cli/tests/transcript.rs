@@ -88,6 +88,57 @@ fn all_hidden_shows_floating_alert_backstop() {
 }
 
 #[test]
+fn mouse_drag_select_applies_background() {
+    let mut app = App::new(
+        Arc::new(AtomicBool::new(false)),
+        vec!["titi".to_owned()],
+        test_theme(),
+    );
+    app.push_transcript(Section::Thinking, "line one");
+    app.push_transcript(Section::Thinking, "line two");
+    app.push_transcript(Section::Thinking, "line three");
+
+    // Rows: 0 banner, 1 blank, 2 thinking header, 3 line one,
+    //       4 line two, 5 line three, 6 tools header, 7 subagents header,
+    //       8 status.
+    let before = app.render();
+
+    // Press at (0, 3) and drag to (8, 5): selects rows 3..=5.
+    app.mouse_press(0, 3);
+    app.mouse_drag(8, 5);
+    let after = app.render();
+    assert!(after[3].contains("\x1b[48;2;"), "row 3 painted: {:?}", after[3]);
+    assert!(after[4].contains("\x1b[48;2;"), "row 4 painted: {:?}", after[4]);
+    assert!(after[5].contains("\x1b[48;2;"), "row 5 painted: {:?}", after[5]);
+    // Row 2 (header) outside the selection region untouched.
+    assert_eq!(after[2], before[2], "header unchanged");
+
+    // Release commits the selection.
+    app.mouse_release();
+    assert_eq!(app.selection().unwrap().rect(), Some((0, 3, 8, 5)));
+
+    // Mouse moved elsewhere clears the selection.
+    app.mouse_drag(4, 4);
+    assert_ne!(app.selection().unwrap().rect(), Some((0, 3, 8, 5)));
+}
+
+#[test]
+fn mouse_press_without_drag_paints_nothing() {
+    let mut app = App::new(
+        Arc::new(AtomicBool::new(false)),
+        vec!["titi".to_owned()],
+        test_theme(),
+    );
+    app.push_transcript(Section::Thinking, "content");
+    let before = app.render();
+    app.mouse_press(2, 3);
+    app.mouse_release();
+    // Anchor == current → empty selection → no background.
+    let after = app.render();
+    assert_eq!(before, after);
+}
+
+#[test]
 fn first_frame_still_queues_input_with_transcript() {
     let mut app = App::new(
         Arc::new(AtomicBool::new(false)),
