@@ -13,6 +13,7 @@ pub mod image;
 pub mod input;
 pub mod keybindings;
 pub mod keys;
+pub mod markdown;
 pub mod overlay;
 pub mod panels;
 pub mod renderer;
