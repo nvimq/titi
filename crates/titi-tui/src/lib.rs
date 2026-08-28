@@ -14,6 +14,7 @@ pub mod input;
 pub mod keybindings;
 pub mod keys;
 pub mod overlay;
+pub mod panels;
 pub mod renderer;
 pub mod viewport;
 pub mod slash;

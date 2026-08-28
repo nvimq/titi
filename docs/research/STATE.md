@@ -31,14 +31,15 @@ fallbackChains настроены: default = opencode-go/glm-5.3-flash → cline
 | 2. Тема (theme/) | 837226a | done |
 | 3. Kitty graphics (caps.rs, image.rs, input.rs) | 8cd4138 | done, 18+10+15 тестов |
 | 4. Renderer/history/ack/resize (renderer.rs) | f416be6 | done, 16 тестов |
-| 5. Agent UX: composer.rs, slash.rs, status.rs | d899189 | done, +62 теста |
+| 5. Agent UX: composer.rs, slash.rs, status.rs, panels.rs | d899189 | done, +62 теста |
+| 6. Agent UX: overlay panels (SelectionPanel, ApprovalPanel) | (next commit) | done, +13 тестов |
 
-titi-tui: 292 теста; workspace: 480. Сборка 0 warnings; новые файлы clippy-clean.
+titi-tui: 307 тестов (305 unit + 2 integration); workspace: 495. Сборка 0 warnings; новые файлы clippy-clean.
 Остаток волны 3: transcript/overlays-рендер в titi-cli (интеграция), snapshot-тесты slash в golden-файлы.
 
 ## Следующие шаги
 
-1. Agent UX глубже: snapshot-тесты SlashRegistry::route/complete, overlays-панели, transcript.
+1. Agent UX: snapshot-тесты SlashRegistry::route/complete, transcript-рендеринг в titi-cli (markdown).
 2. Интеграция в titi-cli: frame provider над агентом, PTY-smoke (kitty+resize+input).
 3. DoD tui-renderer остаток: (a) правило «titi-tui не зависит от titi-providers/titi-tools»; (b) тест мемоизации Component::render; (c) PTY-smoke.
 4. Каждый шаг обновляет этот файл — точка возобновления.
