@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crossterm::cursor::{Hide, Show};
+use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
     MouseButton, MouseEvent, MouseEventKind,
@@ -319,8 +319,7 @@ fn handle_outcome(app: &mut App, outcome: OverlayOutcome) {
 
 /// Repaint: banner + transcript + status line + input line.
 fn render(app: &mut App, stdout: &mut impl Write, input: &str) -> io::Result<()> {
-    execute!(stdout, Clear(ClearType::All))?;
-    // Move cursor to top so we overwrite the previous frame.
+    execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
     for row in app.render() {
         writeln!(stdout, "{row}")?;
     }
