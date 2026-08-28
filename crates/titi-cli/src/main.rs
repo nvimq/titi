@@ -135,6 +135,12 @@ fn main() -> io::Result<()> {
                                     render(&mut app, &mut stdout, &input)?;
                                 }
                             }
+                            KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => {
+                                if let Some(text) = app.pull_last_queued() {
+                                    input = text;
+                                    render(&mut app, &mut stdout, &input)?;
+                                }
+                            }
                             KeyCode::Up => {
                                 if app.completion_visible() {
                                     app.completion_move(true);
@@ -150,6 +156,9 @@ fn main() -> io::Result<()> {
                             KeyCode::Esc => {
                                 if app.completion_visible() {
                                     app.completion_hide();
+                                    render(&mut app, &mut stdout, &input)?;
+                                } else if app.queue_highlighted() {
+                                    app.clear_highlight();
                                     render(&mut app, &mut stdout, &input)?;
                                 }
                             }
@@ -315,14 +324,18 @@ fn render(app: &mut App, stdout: &mut impl Write, input: &str) -> io::Result<()>
     for row in app.render() {
         writeln!(stdout, "{row}")?;
     }
-    // Pasted multi-line text renders with indented continuation lines.
+    // A queued message pulled back via Alt+Up is highlighted (inverse
+    // video) until Esc clears the highlight — the text stays in the
+    // buffer either way.
+    let prompt = if app.queue_highlighted() { "\x1b[7m" } else { "" };
+    let reset = if app.queue_highlighted() { "\x1b[0m" } else { "" };
     let mut lines = input.split('\n');
     if let Some(first) = lines.next() {
-        write!(stdout, "> {first}")?;
+        write!(stdout, "{prompt}> {first}{reset}")?;
     }
     for line in lines {
         writeln!(stdout)?;
-        write!(stdout, "  {line}")?;
+        write!(stdout, "{prompt}  {line}{reset}")?;
     }
     stdout.flush()
 }

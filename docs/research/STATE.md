@@ -41,7 +41,7 @@ fallbackChains настроены: default = opencode-go/glm-5.3-flash → cline
 | 12. Bracketed paste + overlay-панели (DoD): `Event::Paste` — вставка одним блоком, inline-collapse >6 строк, `[Image #N]` аттачменты; `Ctrl+X` session switcher, `/model`+`Ctrl+M` model picker, approval-gated close сессии (удаление JSONL только по Yes), Esc везде cancel-без-удаления | f4f4836 | done, +1 unit (composer, счётчик аттачментов) + 10 интеграционных (overlays_paste) |
 
 titi-cli: FirstFrame core (banner, StatusLine Starting→Ready, очередь ввода, замер ttff) + App (FirstFrame + Transcript + theme) + бинарник на crossterm (raw mode, alternate screen, event loop). Transcript: секции thinking/tools expanded, subagents collapsed, activity hidden; `/details <section> <mode>`; backstop-алерт при all_hidden. Реализовано на std threads, БЕЗ tokio/ratatui — хватило crossterm.
-titi-tui: 392 тестов (374 unit + 18 integration); titi-cli: 30 интеграционных; workspace: 598. Сборка 0 warnings; новые файлы clippy-clean.
+titi-tui: 392 тестов (374 unit + 18 integration); titi-cli: 35 интеграционных; workspace: 603. Сборка 0 warnings; новые файлы clippy-clean.
 
 ## Slash DoD (2026-08-28)
 
@@ -56,6 +56,6 @@ titi-tui: 392 тестов (374 unit + 18 integration); titi-cli: 30 интег�
 - [x] PTY-smoke: `/m` → panel shows `/model  Switch the active model`, Enter → model picker opens
 
 3. ✅ Slash-команды (DoD): реестр `SlashRegistry` (builtin резерв, file-команды с `$1`/`$@`/`$ARGUMENTS`, Passthrough для `/unknown`); floating `CompletionPanel` (non-modal: Tab вставляет имя, Esc прячет, стрелки двигают подсветку); Enter диспатчит через `Route` (Builtin: help/details/model/sessions/mouse; Expanded: submit развёрнутого шаблона; Passthrough: submit как текст). Снапшот-тест route+complete; 6 unit (панель) + 11 интеграционных (titi-cli). `Anchor::TopCenter` добавлен для floating-размещения.
-4. ⏳ Очередь (DoD): во время стрима `Steer`/`FollowUp` ставятся в очередь, `Alt+Up` возвращает последнее в редактор, Esc снимает подсветку не удаляя (тест на `Composer::queue`).
+4. ✅ Очередь (DoD): `App::push_queued`/`stream_queue_len`/`pull_last_queued`/`queue_highlighted`/`clear_highlight` поверх `Composer::queue`; `Alt+Up` (crossterm `KeyCode::Up` + `KeyModifiers::ALT`) вытаскивает последнее сообщение в редактор с подсветкой (inverse video), Esc снимает подсветку не удаляя текст; LIFO-порядок; 3 unit (composer) + 5 интеграционных (queue.rs). PTY-smoke: Alt+Up/Esc на пустой очереди — no-op, без паники.
 5. PTY-smoke: full terminal test — kitty+resize+input, drag-select selection background, `/mouse` switching.
 6. Каждый шаг обновляет этот файл — точка возобновления.

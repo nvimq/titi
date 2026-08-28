@@ -8,7 +8,9 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use titi_tui::component::Component as _;
-use titi_tui::composer::{Composer, PasteResult, PASTE_INLINE_MAX_LINES};
+use titi_tui::composer::{
+    Composer, PasteResult, QueueMode, Queued, PASTE_INLINE_MAX_LINES,
+};
 use titi_tui::markdown::Section;
 use titi_tui::caps::MousePreset;
 use titi_tui::overlay::{composite_rows, Anchor};
@@ -41,6 +43,9 @@ pub struct App {
     slash: SlashRegistry,
     /// Floating non-modal slash autocomplete.
     completion: CompletionPanel,
+    /// A queued message pulled back into the editor via Alt+Up; shown
+    /// highlighted until Esc clears the highlight (does not re-queue).
+    highlighted: Option<Queued>,
 }
 
 impl App {
@@ -57,6 +62,7 @@ impl App {
             pending_close: None,
             slash: Self::default_slash_registry(),
             completion: CompletionPanel::new(),
+            highlighted: None,
         }
     }
 
@@ -298,6 +304,34 @@ impl App {
         } else {
             Vec::new()
         }
+    }
+    /// Queue a message for the stream (Steer / FollowUp).
+    pub fn push_queued(&mut self, text: impl Into<String>, mode: QueueMode) {
+        self.composer.push_queue(text.into(), mode);
+    }
+
+    /// Number of messages waiting in the stream queue.
+    pub fn stream_queue_len(&self) -> usize {
+        self.composer.queue_len()
+    }
+
+    /// Pull the last queued message back into the editor (Alt+Up).  The
+    /// returned text is marked highlighted — Esc clears the highlight
+    /// without re-queueing.  `None` when the queue is empty.
+    pub fn pull_last_queued(&mut self) -> Option<String> {
+        let queued = self.composer.dequeue_last()?;
+        self.highlighted = Some(queued.clone());
+        Some(queued.text)
+    }
+
+    /// Whether a queued message is currently highlighted in the editor.
+    pub fn queue_highlighted(&self) -> bool {
+        self.highlighted.is_some()
+    }
+
+    /// Clear the queued-message highlight without deleting the text (Esc).
+    pub fn clear_highlight(&mut self) {
+        self.highlighted = None;
     }
 
     /// Render the full frame: banner, transcript accordion, status line.
