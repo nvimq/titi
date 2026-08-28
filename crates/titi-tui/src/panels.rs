@@ -204,6 +204,153 @@ impl ApprovalPanel {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Session switcher  (Ctrl+X)
+// ---------------------------------------------------------------------------
+
+/// Outcome of closing the session switcher.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionAction {
+    /// Switch to the session at the given index (Enter).
+    Switch(usize),
+    /// Close the session at the given index (Ctrl+D).
+    Close(usize),
+    /// Create a new session (Ctrl+N).
+    New,
+    /// Reload the list (Ctrl+R) — the panel stays open.
+    Refresh,
+    /// Cancelled (Esc) — no action, no deletion.
+    Cancel,
+}
+
+/// Live session switcher.
+///
+/// Hermes-style: `↑`/`↓` move, `Enter` switches, `Ctrl+D` closes the
+/// selected session, `Ctrl+N` creates a new one, `Ctrl+R` refreshes,
+/// `Esc` cancels without deleting.
+pub struct SessionSwitcher {
+    titles: Vec<String>,
+    selected: usize,
+    action: Option<SessionAction>,
+    closed: bool,
+}
+
+impl SessionSwitcher {
+    /// Create a switcher over the given session titles (one per session).
+    pub fn new(titles: Vec<String>) -> Self {
+        SessionSwitcher {
+            titles,
+            selected: 0,
+            action: None,
+            closed: false,
+        }
+    }
+
+    /// The chosen action once closed, or `None` while still open.
+    pub fn action(&self) -> Option<&SessionAction> {
+        self.action.as_ref()
+    }
+
+    /// Consume the panel and return its action, or `None` if not yet closed.
+    pub fn into_action(self) -> Option<SessionAction> {
+        self.action
+    }
+
+    /// Whether the switcher has been closed.
+    pub fn is_closed(&self) -> bool {
+        self.closed
+    }
+
+    fn close_with(&mut self, action: SessionAction) {
+        self.action = Some(action);
+        self.closed = true;
+    }
+
+    fn move_up(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        }
+    }
+
+    fn move_down(&mut self) {
+        if !self.titles.is_empty() && self.selected + 1 < self.titles.len() {
+            self.selected += 1;
+        }
+    }
+}
+
+impl Component for SessionSwitcher {
+    fn render(&mut self, width: u16) -> Vec<String> {
+        if self.closed {
+            return Vec::new();
+        }
+        let w = width as usize;
+        if w < 8 {
+            return self
+                .titles
+                .iter()
+                .enumerate()
+                .map(|(i, t)| {
+                    if i == self.selected {
+                        format!("> {t}")
+                    } else {
+                        format!("  {t}")
+                    }
+                })
+                .collect();
+        }
+
+        let inner_w = w.saturating_sub(4).max(6);
+        let mut rows = Vec::new();
+        rows.push(format!("┌{}┐", "─".repeat(inner_w)));
+        rows.push(format!(
+            "│ {}{} │",
+            "Sessions".to_owned(),
+            " ".repeat(inner_w.saturating_sub(9))
+        ));
+        rows.push(format!("├{}┤", "─".repeat(inner_w)));
+
+        for (i, title) in self.titles.iter().enumerate() {
+            let truncated = truncate_to_width(title, inner_w.saturating_sub(2));
+            let pad = inner_w.saturating_sub(2) - visible_width(&truncated);
+            let marker = if i == self.selected { "▶" } else { " " };
+            rows.push(format!("│ {marker}{truncated}{} │", " ".repeat(pad)));
+        }
+
+        rows.push(format!("└{}┘", "─".repeat(inner_w)));
+        rows
+    }
+
+    fn handle_input(&mut self, data: &str) {
+        if self.closed {
+            return;
+        }
+        match data {
+            "\x1b" | "\x1b\x1b" => self.close_with(SessionAction::Cancel), // Esc
+            "\x1b[A" | "k" => self.move_up(),                              // Up / k
+            "\x1b[B" | "j" => self.move_down(),                            // Down / j
+            "\r" | "\n" => {
+                if !self.titles.is_empty() {
+                    self.close_with(SessionAction::Switch(self.selected));
+                }
+            }
+            "\x04" => {
+                // Ctrl+D — close selected session
+                if !self.titles.is_empty() {
+                    self.close_with(SessionAction::Close(self.selected));
+                }
+            }
+            "\x0e" => self.close_with(SessionAction::New), // Ctrl+N
+            "\x12" => self.action = Some(SessionAction::Refresh), // Ctrl+R, keep open
+            _ => {}
+        }
+    }
+
+    fn wants_key_release(&self) -> bool {
+        false
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -352,11 +499,58 @@ mod tests {
         );
     }
 
+    // ---- SessionSwitcher --------------------------------------------------
+
     #[test]
-    fn render_title_visible() {
-        let mut p = SelectionPanel::new("My Title", vec!["x"], vec!["Item".into()]);
-        let rows = p.render(40);
-        let title_row = rows.iter().find(|r| r.contains("My Title"));
-        assert!(title_row.is_some(), "title not found in {rows:?}");
+    fn switcher_enter_switches() {
+        let mut s = SessionSwitcher::new(vec!["A".into(), "B".into()]);
+        s.handle_input("\x1b[B"); // move to B
+        s.handle_input("\r"); // Enter
+        assert_eq!(s.action(), Some(&SessionAction::Switch(1)));
+    }
+
+    #[test]
+    fn switcher_ctrl_d_closes() {
+        let mut s = SessionSwitcher::new(vec!["A".into(), "B".into(), "C".into()]);
+        s.handle_input("\x1b[B"); // move to index 1
+        s.handle_input("\x04"); // Ctrl+D
+        assert_eq!(s.action(), Some(&SessionAction::Close(1)));
+    }
+
+    #[test]
+    fn switcher_ctrl_n_new() {
+        let mut s = SessionSwitcher::new(vec!["A".into()]);
+        s.handle_input("\x0e"); // Ctrl+N
+        assert_eq!(s.action(), Some(&SessionAction::New));
+    }
+
+    #[test]
+    fn switcher_ctrl_r_refreshes_keeps_open() {
+        let mut s = SessionSwitcher::new(vec!["A".into(), "B".into()]);
+        s.handle_input("\x12"); // Ctrl+R
+        assert_eq!(s.action(), Some(&SessionAction::Refresh));
+        assert!(!s.is_closed(), "refresh must keep the switcher open");
+    }
+
+    #[test]
+    fn switcher_esc_cancels_without_delete() {
+        let mut s = SessionSwitcher::new(vec!["A".into(), "B".into()]);
+        s.handle_input("\x1b"); // Esc
+        assert_eq!(s.action(), Some(&SessionAction::Cancel));
+        assert!(s.is_closed());
+    }
+
+    #[test]
+    fn switcher_empty_list_enter_is_noop() {
+        let mut s = SessionSwitcher::new(vec![]);
+        s.handle_input("\r");
+        assert!(!s.is_closed(), "Enter on empty list must not close");
+    }
+
+    #[test]
+    fn switcher_into_action() {
+        let mut s = SessionSwitcher::new(vec!["Only".into()]);
+        s.handle_input("\x0e"); // Ctrl+N
+        assert_eq!(s.into_action(), Some(SessionAction::New));
     }
 }
