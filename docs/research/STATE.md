@@ -34,13 +34,15 @@ fallbackChains настроены: default = opencode-go/glm-5.3-flash → cline
 | 5. Agent UX: composer.rs, slash.rs, status.rs, panels.rs | d899189 | done, +62 теста |
 | 6. Agent UX: overlay panels (SelectionPanel, ApprovalPanel, SessionSwitcher) + slash snapshot
 | 7. Transcript markdown renderer + section visibility model + golden-тесты | b9d3b53 | done, +31 тест | | 3ad727b | done, +20 тестов |
+| 8. mouse Off preset + /mouse parse | 17df97a | done, +2 теста |
+| 9. Первый кадр в titi-cli: banner + status line до ready провайдера, queue ввода во время init, time-to-first-frame < 150ms | 680f0d8 → (current) | done, +2 интеграционных теста (mock provider, 2s delay) |
 
-titi-tui: 348 тестов (333 unit + 15 integration); workspace: 536. Сборка 0 warnings; новые файлы clippy-clean.
-Остаток волны 3: transcript/overlays-рендер в titi-cli (интеграция), snapshot-тесты slash в golden-файлы.
+titi-cli: FirstFrame core (banner, StatusLine Starting→Ready, очередь ввода, замер ttff) + бинарник на crossterm (raw mode, alternate screen, event loop). Реализовано на std threads + mpsc-poll, БЕЗ tokio/ratatui — хватило crossterm.
+titi-tui: 348 тестов (333 unit + 15 integration); workspace: 538. Сборка 0 warnings; новые файлы clippy-clean.
 
 ## Следующие шаги
 
-1. Первый кадр (DoD): banner + status line before provider ready, input queued during init, time-to-first-frame < 150ms. Требует: tokio, crossterm, ratatui в titi-cli; integration test с mock provider + 2s delay.
+1. ✅ Первый кадр (DoD): banner + status line before provider ready, input queued during init, time-to-first-frame < 150ms (2 интеграционных теста, mock provider + 2s delay).
 2. Интеграция transcript в titi-cli: компонент Transcript, секции accordion, floating-alert.
 3. PTY-smoke: kitty+resize+input, drag-select selection background.
 4. Каждый шаг обновляет этот файл — точка возобновления.
