@@ -251,7 +251,8 @@ impl StatusLine {
     /// `state-label  ⏱/⏲ timer  ⬡ badge1 ⇉ badge2  busy`
     ///
     /// The line is truncated to `width` columns if it exceeds the terminal
-    /// width.
+    /// width, then padded with trailing spaces to exactly `width` columns so
+    /// the status bar always spans the terminal.
     pub fn render(&mut self, width: u16) -> String {
         let w = width as usize;
 
@@ -313,7 +314,8 @@ impl StatusLine {
             )
         };
 
-        truncate_to_width(&line, w)
+        let line = truncate_to_width(&line, w);
+        pad_to_width(&line, w)
     }
 }
 
@@ -456,6 +458,16 @@ mod tests {
     }
 
     // ---- Render -----------------------------------------------------------
+
+    #[test]
+    fn render_pads_to_full_width() {
+        let mut sl = StatusLine::new();
+        for w in [40u16, 80, 120] {
+            let line = sl.render(w);
+            assert_eq!(line.len(), w as usize, "status bar spans width {w}");
+            assert!(line.starts_with("starting"), "line: {line}");
+        }
+    }
 
     #[test]
     fn render_initial_state() {

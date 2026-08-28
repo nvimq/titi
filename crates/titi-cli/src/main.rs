@@ -24,7 +24,8 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen,
+    LeaveAlternateScreen,
 };
 
 use titi_cli::app::{
@@ -75,6 +76,9 @@ fn main() -> io::Result<()> {
 
     let theme = default_theme().map_err(io::Error::other)?;
     let mut app = App::new(Arc::clone(&ready), banner(), theme);
+    if let Ok((w, _)) = size() {
+        app.resize(w);
+    }
     let rows = app.render();
     for row in &rows {
         writeln!(stdout, "{row}")?;
@@ -168,6 +172,10 @@ fn main() -> io::Result<()> {
                         }
                     }
                 }
+                Event::Resize(w, _h) => {
+                    app.resize(w);
+                    render(&mut app, &mut stdout, &input)?;
+                }
                 Event::Mouse(mouse_event) => {
                     handle_mouse(&mut app, mouse_event);
                     render(&mut app, &mut stdout, &input)?;
@@ -254,6 +262,7 @@ fn handle_outcome(app: &mut App, outcome: OverlayOutcome) {
 
 /// Repaint: banner + transcript + status line + input line.
 fn render(app: &mut App, stdout: &mut impl Write, input: &str) -> io::Result<()> {
+    execute!(stdout, Clear(ClearType::All))?;
     // Move cursor to top so we overwrite the previous frame.
     for row in app.render() {
         writeln!(stdout, "{row}")?;
