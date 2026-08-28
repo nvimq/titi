@@ -294,6 +294,7 @@ pub fn wrap_sync(frame: &str) -> String {
 /// - `All`: + any-event motion (1003)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MousePreset {
+    Off,
     Wheel,
     Buttons,
     All,
@@ -303,6 +304,7 @@ impl MousePreset {
     /// The CSI enable sequence for this preset.
     pub fn enable(&self) -> &'static str {
         match self {
+            MousePreset::Off => "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l",
             MousePreset::Wheel => "\x1b[?1000h\x1b[?1006h",
             MousePreset::Buttons => "\x1b[?1000h\x1b[?1002h\x1b[?1006h",
             MousePreset::All => "\x1b[?1000h\x1b[?1002h\x1b[?1003h\x1b[?1006h",
@@ -312,9 +314,30 @@ impl MousePreset {
     /// The CSI disable sequence for this preset.
     pub fn disable(&self) -> &'static str {
         match self {
+            MousePreset::Off => "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l",
             MousePreset::Wheel => "\x1b[?1000l\x1b[?1006l",
             MousePreset::Buttons => "\x1b[?1000l\x1b[?1002l\x1b[?1006l",
             MousePreset::All => "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l",
+        }
+    }
+    /// Parse a `/mouse` argument: `off`, `wheel`, `buttons`, `all`.
+    pub fn parse(arg: &str) -> Option<Self> {
+        match arg.trim().to_lowercase().as_str() {
+            "off" => Some(MousePreset::Off),
+            "wheel" => Some(MousePreset::Wheel),
+            "buttons" => Some(MousePreset::Buttons),
+            "all" => Some(MousePreset::All),
+            _ => None,
+        }
+    }
+
+    /// The argument name used by `/mouse`.
+    pub fn name(&self) -> &'static str {
+        match self {
+            MousePreset::Off => "off",
+            MousePreset::Wheel => "wheel",
+            MousePreset::Buttons => "buttons",
+            MousePreset::All => "all",
         }
     }
 }
@@ -518,7 +541,18 @@ mod tests {
         assert_eq!(sync_end(), "\x1b[?2026l");
     }
 
-    // ---- Mouse presets ----------------------------------------------------
+    #[test]
+    fn mouse_preset_off() {
+        let preset = MousePreset::Off;
+        assert_eq!(
+            preset.enable(),
+            "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
+        );
+        assert_eq!(
+            preset.disable(),
+            "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l"
+        );
+    }
 
     #[test]
     fn mouse_preset_wheel() {
@@ -532,6 +566,20 @@ mod tests {
         let preset = MousePreset::Buttons;
         assert_eq!(preset.enable(), "\x1b[?1000h\x1b[?1002h\x1b[?1006h");
         assert_eq!(preset.disable(), "\x1b[?1000l\x1b[?1002l\x1b[?1006l");
+    }
+
+    #[test]
+    fn mouse_preset_parse_and_name() {
+        assert_eq!(MousePreset::parse("off"), Some(MousePreset::Off));
+        assert_eq!(MousePreset::parse("wheel"), Some(MousePreset::Wheel));
+        assert_eq!(MousePreset::parse("buttons"), Some(MousePreset::Buttons));
+        assert_eq!(MousePreset::parse("all"), Some(MousePreset::All));
+        assert_eq!(MousePreset::parse("ALL"), Some(MousePreset::All));
+        assert_eq!(MousePreset::parse("nope"), None);
+        assert_eq!(MousePreset::Off.name(), "off");
+        assert_eq!(MousePreset::Wheel.name(), "wheel");
+        assert_eq!(MousePreset::Buttons.name(), "buttons");
+        assert_eq!(MousePreset::All.name(), "all");
     }
 
     #[test]

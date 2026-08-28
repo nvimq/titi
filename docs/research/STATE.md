@@ -35,7 +35,7 @@ fallbackChains настроены: default = opencode-go/glm-5.3-flash → cline
 | 6. Agent UX: overlay panels (SelectionPanel, ApprovalPanel, SessionSwitcher) + slash snapshot
 | 7. Transcript markdown renderer + section visibility model + golden-тесты | b9d3b53 | done, +31 тест | | 3ad727b | done, +20 тестов |
 
-titi-tui: 346 тестов (331 unit + 15 integration); workspace: 534. Сборка 0 warnings; новые файлы clippy-clean.
+titi-tui: 348 тестов (333 unit + 15 integration); workspace: 536. Сборка 0 warnings; новые файлы clippy-clean.
 Остаток волны 3: transcript/overlays-рендер в titi-cli (интеграция), snapshot-тесты slash в golden-файлы.
 
 ## Следующие шаги
