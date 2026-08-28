@@ -5,6 +5,7 @@
 
 pub mod component;
 pub mod caps;
+pub mod composer;
 pub mod cursor;
 pub mod focus;
 pub mod history;
@@ -15,6 +16,8 @@ pub mod keys;
 pub mod overlay;
 pub mod renderer;
 pub mod viewport;
+pub mod slash;
+pub mod status;
 pub mod width;
 pub mod theme;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

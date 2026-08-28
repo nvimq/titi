@@ -1,0 +1,515 @@
+//! Status line — agent state machine, turn timers, badges, and busy indicator.
+//!
+//! Contract: `docs/research/agent-ux/README.md`.
+
+use crate::width::visible_width;
+use crate::width::truncate_to_width;
+use std::time::{Duration, Instant};
+
+// ---------------------------------------------------------------------------
+// Agent state machine
+// ---------------------------------------------------------------------------
+
+/// Agent lifecycle states.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AgentState {
+    Starting,
+    Ready,
+    Thinking,
+    Running,
+    Interrupted,
+}
+
+/// Events that drive the state machine.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StatusEvent {
+    ProviderReady,
+    PromptSent,
+    FirstToken,
+    TurnEnd,
+    Interrupt,
+    Resume,
+}
+
+impl AgentState {
+    /// Transition to the next state given an event.
+    ///
+    /// Returns the new state, or `None` if the event is invalid for the
+    /// current state.
+    pub fn transition(self, event: StatusEvent) -> Option<AgentState> {
+        use AgentState::*;
+        use StatusEvent::*;
+        match (self, event) {
+            (Starting, ProviderReady) => Some(Ready),
+            (Ready, PromptSent) => Some(Thinking),
+            (Thinking, FirstToken) => Some(Running),
+            (Running, TurnEnd) => Some(Ready),
+            (Running, Interrupt) => Some(Interrupted),
+            (Interrupted, Resume) => Some(Ready),
+            _ => None,
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Timer formatting
+// ---------------------------------------------------------------------------
+
+/// Format a duration as a compact timer string.
+///
+/// - < 1 minute → `"12s"` (seconds)
+/// - < 1 hour → `"3m 45s"` (minutes + seconds)
+/// - ≥ 1 hour → `"1h 23m"` (hours + minutes)
+/// - ≥ 24 hours → `"24h+"` (hours +)
+pub fn format_timer(dur: Duration) -> String {
+    let total_secs = dur.as_secs();
+    if total_secs < 60 {
+        format!("{}s", total_secs)
+    } else if total_secs < 3600 {
+        let mins = total_secs / 60;
+        let secs = total_secs % 60;
+        format!("{}m {:02}s", mins, secs)
+    } else if total_secs < 86400 {
+        let hours = total_secs / 3600;
+        let mins = (total_secs % 3600) / 60;
+        format!("{}h {:02}m", hours, mins)
+    } else {
+        let hours = total_secs / 3600;
+        format!("{}h+", hours)
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Busy indicator
+// ---------------------------------------------------------------------------
+
+/// Available busy-indicator presets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BusyPreset {
+    /// ASCII spinner: `|/-\` (width 1).
+    Ascii,
+    /// Braille dots: `⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏` (width 1 each).
+    Braille,
+    /// Kaomoji — each frame padded to the same display width.
+    Kaomoji,
+}
+
+/// A fixed-width busy indicator that cycles through animation frames.
+///
+/// All frames have the same visual width, so the status line does not
+/// jitter when the indicator advances.
+#[derive(Debug, Clone)]
+pub struct BusyIndicator {
+    frames: &'static [&'static str],
+    index: usize,
+    frame_width: usize,
+}
+
+impl BusyIndicator {
+    /// Create a new indicator with the given preset.
+    pub fn new(preset: BusyPreset) -> Self {
+        let (frames_str, frame_width) = match preset {
+            BusyPreset::Ascii => (&["|", "/", "-", "\\"][..], 1),
+            BusyPreset::Braille => {
+                (&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][..], 1)
+            }
+            BusyPreset::Kaomoji => {
+                // Each frame padded to the max display width of the set.
+                let raw: &[&str] = &[
+                    "(◕‿◕)", "(◕‿◕)", "(◡‿◡)", "(◠‿◠)", "(◕‿◕)", "(◕‿◕)",
+                ];
+                let max_w = raw.iter().map(|f| visible_width(f)).max().unwrap_or(1);
+                // We store the raw frames and pad at render time.
+                return BusyIndicator {
+                    frames: raw,
+                    index: 0,
+                    frame_width: max_w,
+                };
+            }
+        };
+        BusyIndicator {
+            frames: frames_str,
+            index: 0,
+            frame_width,
+        }
+    }
+
+    /// Advance to the next frame and return the current frame string,
+    /// padded to the fixed width.
+    pub fn frame(&mut self) -> String {
+        let f = self.frames[self.index];
+        self.index = (self.index + 1) % self.frames.len();
+        pad_to_width(f, self.frame_width)
+    }
+
+    /// The constant display width of every frame.
+    pub fn width(&self) -> usize {
+        self.frame_width
+    }
+}
+
+/// Pad a string to a given display width with spaces.
+fn pad_to_width(s: &str, target: usize) -> String {
+    let w = visible_width(s);
+    if w >= target {
+        s.to_owned()
+    } else {
+        let mut out = s.to_owned();
+        out.push_str(&" ".repeat(target - w));
+        out
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Status line model
+// ---------------------------------------------------------------------------
+
+/// Badges shown on the status line.
+#[derive(Debug, Clone, Default)]
+pub struct Badges {
+    pub compressions: u32,
+    pub background_tasks: u32,
+    pub yolo: bool,
+}
+
+/// The status line model — state machine, timers, badges, and busy indicator.
+#[derive(Debug, Clone)]
+pub struct StatusLine {
+    /// Current agent state.
+    state: AgentState,
+    /// When the current turn started (for timer display).
+    turn_start: Option<Instant>,
+    /// Badges.
+    pub badges: Badges,
+    /// Busy indicator (active during Running/Thinking states).
+    busy: BusyIndicator,
+}
+
+impl StatusLine {
+    /// Create a new status line in the `Starting` state.
+    pub fn new() -> Self {
+        StatusLine {
+            state: AgentState::Starting,
+            turn_start: None,
+            badges: Badges::default(),
+            busy: BusyIndicator::new(BusyPreset::Ascii),
+        }
+    }
+}
+
+impl Default for StatusLine {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl StatusLine {
+
+    /// Apply a state transition event.
+    ///
+    /// Returns the new state, or `None` if the event was invalid for the
+    /// current state (no-op).
+    pub fn transition(&mut self, event: StatusEvent) -> Option<AgentState> {
+        let new = self.state.transition(event)?;
+        // Side effects on specific transitions.
+        match event {
+            StatusEvent::PromptSent => {
+                self.turn_start = Some(Instant::now());
+            }
+            StatusEvent::TurnEnd | StatusEvent::Interrupt => {
+                self.turn_start = None;
+            }
+            _ => {}
+        }
+        self.state = new;
+        Some(new)
+    }
+
+    /// Current agent state.
+    pub fn state(&self) -> AgentState {
+        self.state
+    }
+
+    /// Set the busy indicator preset.
+    pub fn set_busy_preset(&mut self, preset: BusyPreset) {
+        self.busy = BusyIndicator::new(preset);
+    }
+
+    /// Busy indicator reference.
+    pub fn busy(&self) -> &BusyIndicator {
+        &self.busy
+    }
+
+    /// Busy indicator mutable reference.
+    pub fn busy_mut(&mut self) -> &mut BusyIndicator {
+        &mut self.busy
+    }
+
+    /// Render the status line to a single string at the given width.
+    ///
+    /// The format is:
+    /// `state-label  ⏱/⏲ timer  ⬡ badge1 ⇉ badge2  busy`
+    ///
+    /// The line is truncated to `width` columns if it exceeds the terminal
+    /// width.
+    pub fn render(&mut self, width: u16) -> String {
+        let w = width as usize;
+
+        // State label.
+        let state_label = match self.state {
+            AgentState::Starting => "starting",
+            AgentState::Ready => "ready",
+            AgentState::Thinking => "think",
+            AgentState::Running => "run",
+            AgentState::Interrupted => "interrupted",
+        };
+
+        // Timer.
+        let timer_str = if let Some(start) = self.turn_start {
+            let elapsed = start.elapsed();
+            match self.state {
+                AgentState::Running => format!("⏱ {}", format_timer(elapsed)),
+                AgentState::Thinking => format!("⏱ {}", format_timer(elapsed)),
+                _ => format!("⏲ {}", format_timer(elapsed)),
+            }
+        } else {
+            String::new()
+        };
+
+        // Badges.
+        let mut badge_parts = Vec::new();
+        if self.badges.compressions > 0 {
+            badge_parts.push(format!("cmp:{}", self.badges.compressions));
+        }
+        if self.badges.background_tasks > 0 {
+            badge_parts.push(format!("⇉{}", self.badges.background_tasks));
+        }
+        if self.badges.yolo {
+            badge_parts.push("YOLO".to_owned());
+        }
+        let badges_str = if badge_parts.is_empty() {
+            String::new()
+        } else {
+            badge_parts.join(" ")
+        };
+
+        // Busy indicator — only during active states.
+        let busy_str = match self.state {
+            AgentState::Running | AgentState::Thinking => {
+                format!(" {}", self.busy.frame())
+            }
+            _ => String::new(),
+        };
+
+        // Assemble.
+        let line = if timer_str.is_empty() && badges_str.is_empty() {
+            format!("{}{}", state_label, busy_str)
+        } else if badges_str.is_empty() {
+            format!("{}  {}{}", state_label, timer_str, busy_str)
+        } else {
+            format!(
+                "{}  {}  {}{}",
+                state_label, timer_str, badges_str, busy_str
+            )
+        };
+
+        truncate_to_width(&line, w)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ---- State machine ----------------------------------------------------
+
+    #[test]
+    fn state_transitions_starting_to_ready() {
+        let s = AgentState::Starting;
+        assert_eq!(s.transition(StatusEvent::ProviderReady), Some(AgentState::Ready));
+    }
+
+    #[test]
+    fn state_transitions_ready_to_thinking() {
+        let s = AgentState::Ready;
+        assert_eq!(s.transition(StatusEvent::PromptSent), Some(AgentState::Thinking));
+    }
+
+    #[test]
+    fn state_transitions_thinking_to_running() {
+        let s = AgentState::Thinking;
+        assert_eq!(s.transition(StatusEvent::FirstToken), Some(AgentState::Running));
+    }
+
+    #[test]
+    fn state_transitions_running_to_ready() {
+        let s = AgentState::Running;
+        assert_eq!(s.transition(StatusEvent::TurnEnd), Some(AgentState::Ready));
+    }
+
+    #[test]
+    fn state_transitions_running_to_interrupted() {
+        let s = AgentState::Running;
+        assert_eq!(s.transition(StatusEvent::Interrupt), Some(AgentState::Interrupted));
+    }
+
+    #[test]
+    fn state_transitions_interrupted_to_ready() {
+        let s = AgentState::Interrupted;
+        assert_eq!(s.transition(StatusEvent::Resume), Some(AgentState::Ready));
+    }
+
+    #[test]
+    fn invalid_transition_returns_none() {
+        let s = AgentState::Starting;
+        assert_eq!(s.transition(StatusEvent::TurnEnd), None);
+        assert_eq!(s.transition(StatusEvent::Interrupt), None);
+    }
+
+    #[test]
+    fn status_line_initial_state() {
+        let sl = StatusLine::new();
+        assert_eq!(sl.state(), AgentState::Starting);
+    }
+
+    #[test]
+    fn status_line_transition_side_effects() {
+        let mut sl = StatusLine::new();
+        assert!(sl.transition(StatusEvent::ProviderReady).is_some());
+        assert_eq!(sl.state(), AgentState::Ready);
+        assert!(sl.turn_start.is_none());
+    }
+
+    // ---- Timer formatting -------------------------------------------------
+
+    #[test]
+    fn format_seconds() {
+        assert_eq!(format_timer(Duration::from_secs(5)), "5s");
+        assert_eq!(format_timer(Duration::from_secs(59)), "59s");
+    }
+
+    #[test]
+    fn format_minutes() {
+        assert_eq!(format_timer(Duration::from_secs(60)), "1m 00s");
+        assert_eq!(format_timer(Duration::from_secs(185)), "3m 05s");
+    }
+
+    #[test]
+    fn format_hours() {
+        assert_eq!(format_timer(Duration::from_secs(3600)), "1h 00m");
+        assert_eq!(format_timer(Duration::from_secs(7380)), "2h 03m");
+    }
+
+    #[test]
+    fn format_days() {
+        assert_eq!(format_timer(Duration::from_secs(86400)), "24h+");
+        assert_eq!(format_timer(Duration::from_secs(90000)), "25h+");
+    }
+
+    // ---- Busy indicator ---------------------------------------------------
+
+    #[test]
+    fn busy_indicator_ascii_cycles() {
+        let mut ind = BusyIndicator::new(BusyPreset::Ascii);
+        let f0 = ind.frame();
+        assert_eq!(visible_width(&f0), 1, "ascii width 1");
+        let f1 = ind.frame();
+        let f2 = ind.frame();
+        let f3 = ind.frame();
+        // Should have cycled: | / - \.
+        let seen = [f0, f1, f2, f3];
+        let all_frames = ["|", "/", "-", "\\"];
+        for f in &seen {
+            assert!(all_frames.contains(&f.as_str()), "unexpected frame {f}");
+        }
+        // Wrap around.
+        let f4 = ind.frame();
+        assert_eq!(f4, "|", "wraps after 4 frames");
+    }
+
+    #[test]
+    fn busy_indicator_braille_width_constant() {
+        let mut ind = BusyIndicator::new(BusyPreset::Braille);
+        let n = 10;
+        for _ in 0..n {
+            let f = ind.frame();
+            assert_eq!(visible_width(&f), 1, "braille frame width 1");
+        }
+    }
+
+    #[test]
+    fn busy_indicator_kaomoji_width_constant() {
+        let mut ind = BusyIndicator::new(BusyPreset::Kaomoji);
+        let w = ind.width();
+        let n = 6;
+        for _ in 0..n {
+            let f = ind.frame();
+            assert_eq!(visible_width(&f), w, "kaomoji frame width = {w}");
+        }
+    }
+
+    #[test]
+    fn busy_indicator_pad_to_width() {
+        let s = pad_to_width("x", 3);
+        assert_eq!(s, "x  ");
+        assert_eq!(visible_width(&s), 3);
+    }
+
+    // ---- Render -----------------------------------------------------------
+
+    #[test]
+    fn render_initial_state() {
+        let mut sl = StatusLine::new();
+        let line = sl.render(80);
+        assert!(line.contains("starting"), "line: {line}");
+    }
+
+    #[test]
+    fn render_ready_state() {
+        let mut sl = StatusLine::new();
+        sl.transition(StatusEvent::ProviderReady);
+        let line = sl.render(80);
+        assert!(line.contains("ready"), "line: {line}");
+    }
+
+    #[test]
+    fn render_truncated() {
+        let mut sl = StatusLine::new();
+        sl.transition(StatusEvent::ProviderReady);
+        // Very narrow width — should truncate.
+        let line = sl.render(4);
+        assert!(line.len() <= 4, "truncated line: {line}");
+    }
+
+    #[test]
+    fn render_badges_appear() {
+        let mut sl = StatusLine::new();
+        sl.transition(StatusEvent::ProviderReady);
+        sl.badges.yolo = true;
+        let line = sl.render(80);
+        assert!(line.contains("YOLO"), "line: {line}");
+    }
+
+    #[test]
+    fn render_with_busy_indicator() {
+        let mut sl = StatusLine::new();
+        sl.transition(StatusEvent::ProviderReady);
+        sl.transition(StatusEvent::PromptSent);
+        sl.transition(StatusEvent::FirstToken);
+        // Running state → busy indicator shown.
+        let line = sl.render(80);
+        assert!(line.contains("run"), "line: {line}");
+        // Busy indicator is at least 1 char wide.
+        assert!(line.len() > 10, "line: {line}");
+    }
+
+    #[test]
+    fn render_no_timer_before_prompt() {
+        let mut sl = StatusLine::new();
+        sl.transition(StatusEvent::ProviderReady);
+        // Ready state, no timer.
+        let line = sl.render(80);
+        assert!(!line.contains("⏱"), "no timer before prompt: {line}");
+        assert!(!line.contains("⏲"), "no frozen timer: {line}");
+    }
+}
