@@ -40,7 +40,7 @@ titi-tui: 348 тестов (333 unit + 15 integration); workspace: 536. Сбор
 
 ## Следующие шаги
 
-1. Agent UX: интеграция transcript в titi-cli (компонент Transcript, секции accordion, floating-alert).
-2. Интеграция в titi-cli: frame provider над агентом, PTY-smoke (kitty+resize+input).
-3. DoD tui-renderer остаток: (a) правило «titi-tui не зависит от titi-providers/titi-tools»; (b) тест мемоизации Component::render; (c) PTY-smoke.
+1. Первый кадр (DoD): banner + status line before provider ready, input queued during init, time-to-first-frame < 150ms. Требует: tokio, crossterm, ratatui в titi-cli; integration test с mock provider + 2s delay.
+2. Интеграция transcript в titi-cli: компонент Transcript, секции accordion, floating-alert.
+3. PTY-smoke: kitty+resize+input, drag-select selection background.
 4. Каждый шаг обновляет этот файл — точка возобновления.
