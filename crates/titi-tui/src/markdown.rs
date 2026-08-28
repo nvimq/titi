@@ -192,7 +192,7 @@ pub fn render_markdown(text: &str, theme: &Theme, width: u16) -> Vec<String> {
         if let Some(heading) = raw.strip_prefix('#') {
             let level = heading.chars().take_while(|c| *c == '#').count() + 1;
             let content = heading.trim_start_matches('#').trim();
-            let styled = style_inline(content, theme, &[]);
+            let styled = style_inline(content, theme);
             let prefix = "#".repeat(level);
             // Bold for headings.
             lines.push(theme.fg(ThemeColor::MdHeading, &format!("{prefix} {styled}")));
@@ -202,11 +202,11 @@ pub fn render_markdown(text: &str, theme: &Theme, width: u16) -> Vec<String> {
         // Blockquote.
         if let Some(content) = raw.strip_prefix('>') {
             let content = content.trim_start();
-            let styled = style_inline(content, theme, &[]);
+            let styled = style_inline(content, theme);
             let wrapped = wrap_text_with_ansi(&styled, w.saturating_sub(4));
             for (i, wline) in wrapped.iter().enumerate() {
                 let border = if i == 0 { "▎ " } else { "  " };
-                lines.push(theme.fg(ThemeColor::MdQuoteBorder, border) + wline);
+                lines.push(format!("{}{}", theme.fg(ThemeColor::MdQuoteBorder, border), theme.fg(ThemeColor::MdQuote, wline)));
             }
             continue;
         }
@@ -217,7 +217,7 @@ pub fn render_markdown(text: &str, theme: &Theme, width: u16) -> Vec<String> {
             .strip_prefix("- ")
             .or_else(|| raw.trim_start().strip_prefix("* "))
         {
-            let content = style_inline(rest, theme, &[]);
+            let content = style_inline(rest, theme);
             let bullet = theme.fg(ThemeColor::MdListBullet, "•");
             let wrapped = wrap_text_with_ansi(&content, w.saturating_sub(4));
             for (i, wline) in wrapped.iter().enumerate() {
@@ -235,7 +235,7 @@ pub fn render_markdown(text: &str, theme: &Theme, width: u16) -> Vec<String> {
             if let Some(dot_pos) = raw.trim_start().find(". ") {
                 let num_str = raw.trim_start()[..dot_pos].to_owned();
                 let rest = raw.trim_start()[dot_pos + 2..].trim();
-                let content = style_inline(rest, theme, &[]);
+                let content = style_inline(rest, theme);
                 let bullet = theme.fg(ThemeColor::MdListBullet, &format!("{num_str}."));
                 let wrapped = wrap_text_with_ansi(&content, w.saturating_sub(4));
                 for (i, wline) in wrapped.iter().enumerate() {
@@ -256,7 +256,7 @@ pub fn render_markdown(text: &str, theme: &Theme, width: u16) -> Vec<String> {
         }
 
         // Plain paragraph.
-        let styled = style_inline(trimmed, theme, &[]);
+        let styled = style_inline(trimmed, theme);
         lines.append(&mut wrap_text_with_ansi(&styled, w));
     }
 
@@ -286,95 +286,95 @@ fn render_code_block(lines: &[&str], lang: &str, theme: &Theme, w: usize) -> Vec
 
 /// Style inline markdown in a single line of text.
 ///
-/// Handles `**bold**`, `*italic*`, `` `code` ``, `[text](url)`.
-fn style_inline(text: &str, theme: &Theme, _reserved: &[&str]) -> String {
+/// Handles `` `code` ``, `[text](url)`, `**bold**`, `*italic*`.  Processes
+/// the earliest marker first and recurses into prefixes so nested/staged
+/// markers (e.g. bold before an inline code span) all render.
+fn style_inline(text: &str, theme: &Theme) -> String {
     let mut out = String::new();
     let mut rest = text;
     while !rest.is_empty() {
-        // Inline code: backtick-enclosed
-        if let Some(code_start) = rest.find('`') {
-            out.push_str(&rest[..code_start]);
-            rest = &rest[code_start + 1..];
-            if let Some(code_end) = rest.find('`') {
-                let code = &rest[..code_end];
-                out.push_str(&theme.fg(ThemeColor::MdCode, code));
-                rest = &rest[code_end + 1..];
-                continue;
+        let code_at = rest.find('`');
+        let link_at = rest.find('[');
+        let bold_at = rest.find("**");
+        let italic_at = rest.find('*');
+
+        // Earliest marker wins; on ties code > link > bold > italic.
+        let mut best: Option<(usize, &str)> = None;
+        for (i, kind) in [(code_at, "code"), (link_at, "link"), (bold_at, "bold"), (italic_at, "italic")] {
+            let Some(i) = i else { continue };
+            if kind == "italic" && bold_at == Some(i) {
+                continue; // part of a bold pair
             }
-            // Unmatched backtick — treat as literal.
-            out.push('`');
-            continue;
+            if best.is_none_or(|(b, _)| i < b) {
+                best = Some((i, kind));
+            }
         }
 
-        // Link: [text](url)
-        if let Some(link_start) = rest.find('[') {
-            out.push_str(&rest[..link_start]);
-            rest = &rest[link_start + 1..];
-            if let Some(link_end) = rest.find(']') {
-                let link_text = &rest[..link_end];
-                rest = &rest[link_end + 1..];
-                if rest.starts_with('(') {
-                    rest = &rest[1..];
-                    if let Some(url_end) = rest.find(')') {
-                        let url = &rest[..url_end];
-                        let styled = theme.fg(ThemeColor::MdLink, link_text);
-                        let url_styled = theme.fg(ThemeColor::MdLinkUrl, &format!(" ({url})"));
-                        out.push_str(&styled);
-                        out.push_str(&url_styled);
-                        rest = &rest[url_end + 1..];
-                        continue;
+        let Some((i, kind)) = best else {
+            out.push_str(rest);
+            break;
+        };
+
+        // Recurse into the plain prefix so markers before this one render.
+        out.push_str(&style_inline(&rest[..i], theme));
+        rest = &rest[i..];
+
+        match kind {
+            "code" => {
+                rest = &rest[1..];
+                if let Some(end) = rest.find('`') {
+                    out.push_str(&theme.fg(ThemeColor::MdCode, &rest[..end]));
+                    rest = &rest[end + 1..];
+                } else {
+                    out.push('`');
+                }
+            }
+            "link" => {
+                rest = &rest[1..];
+                if let Some(end) = rest.find(']') {
+                    let link_text = &rest[..end];
+                    rest = &rest[end + 1..];
+                    if rest.starts_with('(') {
+                        rest = &rest[1..];
+                        if let Some(url_end) = rest.find(')') {
+                            let url = &rest[..url_end];
+                            out.push_str(&theme.fg(ThemeColor::MdLink, link_text));
+                            out.push_str(&theme.fg(ThemeColor::MdLinkUrl, &format!(" ({url})")));
+                            rest = &rest[url_end + 1..];
+                            continue;
+                        }
                     }
+                    // No matching URL — literal.
+                    out.push('[');
+                    out.push_str(link_text);
+                    out.push(']');
+                } else {
+                    out.push('[');
                 }
-                // No matching URL — treat as literal.
-                out.push('[');
-                out.push_str(link_text);
-                out.push(']');
-                continue;
             }
-            // Unmatched [ — literal.
-            out.push('[');
-            continue;
-        }
-
-        // Bold: **text**
-        if let Some(b_start) = rest.find("**") {
-            out.push_str(&rest[..b_start]);
-            rest = &rest[b_start + 2..];
-            if let Some(b_end) = rest.find("**") {
-                let inner = style_inline(&rest[..b_end], theme, &[]);
-                out.push_str(&theme.bold(&inner));
-                rest = &rest[b_end + 2..];
-                continue;
+            "bold" => {
+                rest = &rest[2..];
+                if let Some(end) = rest.find("**") {
+                    let inner = style_inline(&rest[..end], theme);
+                    out.push_str(&theme.bold(&inner));
+                    rest = &rest[end + 2..];
+                } else {
+                    out.push_str("**");
+                }
             }
-            // Unmatched ** — literal.
-            out.push_str("**");
-            continue;
-        }
-
-        // Italic: *text* (single asterisk, not **)
-        if let Some(i_start) = rest.find('*') {
-            out.push_str(&rest[..i_start]);
-            rest = &rest[i_start + 1..];
-            if let Some(i_end) = rest.find('*') {
-                // Check it's not ** — if next char is also *, it's a bold start.
-                if rest.as_bytes().get(i_end + 1) == Some(&b'*') {
-                    // Treat as literal
+            "italic" => {
+                rest = &rest[1..];
+                if let Some(end) = rest.find('*') {
+                    // Do not treat a `**` closing as a lone italic marker.
+                    let inner = style_inline(&rest[..end], theme);
+                    out.push_str(&theme.italic(&inner));
+                    rest = &rest[end + 1..];
+                } else {
                     out.push('*');
-                    continue;
                 }
-                let inner = style_inline(&rest[..i_end], theme, &[]);
-                out.push_str(&theme.italic(&inner));
-                rest = &rest[i_end + 1..];
-                continue;
             }
-            // Unmatched * — literal.
-            out.push('*');
-            continue;
+            _ => unreachable!(),
         }
-
-        // No more markers — push the rest.
-        out.push_str(rest);
-        break;
     }
     out
 }
