@@ -13,7 +13,7 @@ use titi_tui::markdown::Section;
 use titi_tui::theme::Theme;
 
 fn test_theme() -> Arc<Theme> {
-    default_theme()
+    default_theme().unwrap()
 }
 
 #[test]
@@ -120,6 +120,29 @@ fn mouse_drag_select_applies_background() {
     // Mouse moved elsewhere clears the selection.
     app.mouse_drag(4, 4);
     assert_ne!(app.selection().unwrap().rect(), Some((0, 3, 8, 5)));
+}
+
+#[test]
+fn mouse_preset_roundtrips_through_config() {
+    use titi_cli::app::{load_mouse_preset_from, save_mouse_preset_to};
+    use titi_tui::caps::MousePreset;
+
+    // Use a temp dir as the agent directory; titi-config creates the yml
+    // file on first set().
+    let tmp = std::env::temp_dir().join(format!("titi-mouse-config-{}", std::process::id()));
+    let agent_dir = tmp.join("agent");
+    std::fs::create_dir_all(&agent_dir).unwrap();
+
+    // Default: nothing persisted.
+    assert_eq!(load_mouse_preset_from(&agent_dir), None);
+    // Save buttons → load buttons.
+    save_mouse_preset_to(&agent_dir, MousePreset::Buttons).unwrap();
+    assert_eq!(load_mouse_preset_from(&agent_dir), Some(MousePreset::Buttons));
+    // Save all → load all.
+    save_mouse_preset_to(&agent_dir, MousePreset::All).unwrap();
+    assert_eq!(load_mouse_preset_from(&agent_dir), Some(MousePreset::All));
+
+    let _ = std::fs::remove_dir_all(&tmp);
 }
 
 #[test]

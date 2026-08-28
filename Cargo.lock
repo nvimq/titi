@@ -1465,6 +1465,8 @@ name = "titi-cli"
 version = "0.1.0"
 dependencies = [
  "crossterm",
+ "serde_json",
+ "titi-config",
  "titi-core",
  "titi-providers",
  "titi-tools",

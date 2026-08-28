@@ -26,7 +26,7 @@ use crossterm::terminal::{
     disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
 };
 
-use titi_cli::app::{default_theme, App};
+use titi_cli::app::{default_theme, load_mouse_preset, save_mouse_preset, App};
 use titi_cli::first_frame::SubmitOutcome;
 use titi_tui::caps::MousePreset;
 
@@ -46,9 +46,10 @@ fn init_provider(ready: Arc<AtomicBool>) {
 }
 
 fn main() -> io::Result<()> {
-    // `--mouse <preset>` (default: off — no tracking, terminal-native
-    // selection works; drag-select requires `buttons` or `all`).
-    let mut mouse = MousePreset::Off;
+    // `--mouse <preset>` (default: persisted `display.mouse_tracking`, else
+    // off — no tracking, terminal-native selection works; drag-select
+    // requires `buttons` or `all`).
+    let mut mouse = load_mouse_preset().unwrap_or(MousePreset::Off);
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next()
         && arg == "--mouse"
@@ -68,7 +69,7 @@ fn main() -> io::Result<()> {
     execute!(stdout, EnterAlternateScreen, Hide)?;
     write!(stdout, "{}", mouse.enable())?;
 
-    let theme = default_theme();
+    let theme = default_theme().map_err(io::Error::other)?;
     let mut app = App::new(Arc::clone(&ready), banner(), theme);
     let rows = app.render();
     for row in &rows {
@@ -103,7 +104,12 @@ fn main() -> io::Result<()> {
                                     write!(stdout, "{}", mouse.disable())?;
                                     mouse = next;
                                     write!(stdout, "{}", mouse.enable())?;
-                                    eprintln!("mouse preset: {}", mouse.name());
+                                    match save_mouse_preset(mouse) {
+                                        Ok(()) => eprintln!("mouse preset: {} (saved)", mouse.name()),
+                                        Err(reason) => {
+                                            eprintln!("mouse preset: {} (not saved: {reason})", mouse.name());
+                                        }
+                                    }
                                 }
                             } else {
                                 match app.submit(cmd.clone()) {

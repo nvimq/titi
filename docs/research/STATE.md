@@ -37,15 +37,15 @@ fallbackChains настроены: default = opencode-go/glm-5.3-flash → cline
 | 8. mouse Off preset + /mouse parse | 17df97a | done, +2 теста |
 | 9. Первый кадр в titi-cli: banner + status line до ready провайдера, queue ввода во время init, time-to-first-frame < 150ms | 0742f0a | done, +2 интеграционных теста (mock provider, 2s delay) |
 | 10. Transcript в titi-cli: компонент Transcript (accordion-секции, /details, floating-alert backstop) | f55896f | done, +6 unit (titi-tui) + 4 интеграционных (titi-cli) |
-| 11. Mouse drag-select: Selection model, SGR-mouse decoding (Drag/ScrollUp/Down), selection background, SGR-mouse integration test | (current) | done, +9 unit (selection) + 3 input (Drag/Scroll) + 3 интеграционных (mouse_selection) + 2 App (titi-cli) |
+| 11. Mouse drag-select: Selection model, SGR-mouse decoding (Drag/ScrollUp/Down), selection background, SGR-mouse integration test, /mouse + --mouse пресеты, персист display.mouse_tracking | (current) | done, +9 unit (selection) + 3 input (Drag/Scroll) + 3 интеграционных (mouse_selection) + 3 App/config (titi-cli) |
 
 titi-cli: FirstFrame core (banner, StatusLine Starting→Ready, очередь ввода, замер ttff) + App (FirstFrame + Transcript + theme) + бинарник на crossterm (raw mode, alternate screen, event loop). Transcript: секции thinking/tools expanded, subagents collapsed, activity hidden; `/details <section> <mode>`; backstop-алерт при all_hidden. Реализовано на std threads, БЕЗ tokio/ratatui — хватило crossterm.
-titi-tui: 369 тестов (351 unit + 18 integration); titi-cli: 8 интеграционных; workspace: 563. Сборка 0 warnings; новые файлы clippy-clean.
+titi-tui: 369 тестов (351 unit + 18 integration); titi-cli: 9 интеграционных; workspace: 566. Сборка 0 warnings; новые файлы clippy-clean.
 
 ## Следующие шаги
 
 1. ✅ Первый кадр (DoD): banner + status line before provider ready, input queued during init, time-to-first-frame < 150ms (2 интеграционных теста, mock provider + 2s delay).
 2. ✅ Transcript в titi-cli: компонент Transcript, секции accordion, `/details`, floating-alert backstop (6 unit + 4 интеграционных теста).
-3. ✅ Mouse drag-select: Selection model, SGR-mouse decoding, selection background, SGR-mouse integration test, `/mouse` + `--mouse` flag (9 unit + 3 input + 3 интеграционных + 2 App теста).
+3. ✅ Mouse drag-select: Selection model, SGR-mouse decoding, selection background, SGR-mouse integration test, `/mouse` + `--mouse` flag, персист display.mouse_tracking в конфиге (9 unit + 3 input + 3 интеграционных + 3 App/config теста).
 4. PTY-smoke: full terminal test — kitty+resize+input, drag-select selection background, `/mouse` switching.
 5. Каждый шаг обновляет этот файл — точка возобновления.

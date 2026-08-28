@@ -8,6 +8,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use titi_tui::markdown::Section;
+use titi_tui::caps::MousePreset;
 use titi_tui::selection::Selection;
 use titi_tui::status::AgentState;
 use titi_tui::theme::{global, Theme};
@@ -157,13 +158,61 @@ impl App {
     }
 }
 
+/// The config key that stores the mouse-tracking preset.
+pub const MOUSE_TRACKING_KEY: &str = "display.mouse_tracking";
+
+/// Load the persisted mouse preset from the titi config.
+///
+/// `agent_dir` is the settings root (see [`titi_config::agent_dir`]).
+/// Returns `None` when the key is absent or unparsable (caller falls back to
+/// its own default).
+pub fn load_mouse_preset_from(agent_dir: &std::path::Path) -> Option<MousePreset> {
+    use titi_config::settings::Settings;
+    let settings = Settings::load(
+        agent_dir,
+        &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        &[],
+    )
+    .ok()?;
+    let value = settings.get(MOUSE_TRACKING_KEY)?;
+    let name = match value {
+        serde_json::Value::String(s) => s,
+        _ => return None,
+    };
+    MousePreset::parse(&name)
+}
+
+/// Load the persisted mouse preset using the real agent directory.
+pub fn load_mouse_preset() -> Option<MousePreset> {
+    load_mouse_preset_from(&titi_config::agent_dir())
+}
+
+/// Persist the mouse preset to the titi config (`display.mouse_tracking`).
+pub fn save_mouse_preset_to(agent_dir: &std::path::Path, preset: MousePreset) -> Result<(), String> {
+    use titi_config::settings::Settings;
+    let mut settings = Settings::load(
+        agent_dir,
+        &std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+        &[],
+    )
+    .map_err(|e| format!("{e}"))?;
+    settings
+        .set(MOUSE_TRACKING_KEY, serde_json::json!(preset.name()))
+        .map_err(|e| format!("{e}"))
+}
+
+/// Persist the mouse preset using the real agent directory.
+pub fn save_mouse_preset(preset: MousePreset) -> Result<(), String> {
+    save_mouse_preset_to(&titi_config::agent_dir(), preset)
+}
+
 /// Load the process-wide default theme (built-in `dark`), falling back to a
 /// minimal theme if the loader fails.
-pub fn default_theme() -> Arc<Theme> {
+pub fn default_theme() -> Result<Arc<Theme>, String> {
     let name = global().init("dark");
-    global()
-        .current()
-        .unwrap_or_else(|| Arc::new(Theme::new(
+    match global().current() {
+        Some(theme) => Ok(theme),
+        None => Theme::new(
             name,
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
@@ -172,5 +221,7 @@ pub fn default_theme() -> Arc<Theme> {
             std::collections::HashMap::new(),
             None,
             None,
-        ).expect("empty theme builds")))
+        )
+        .map(Arc::new),
+    }
 }
