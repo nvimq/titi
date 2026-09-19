@@ -107,3 +107,48 @@ async fn stop_agent_aborts_the_running_agent() {
         Some(EngineEvent::AgentStatusChanged { agent_id: id, status: AgentStatus::Aborted }) if id == agent_id
     ));
 }
+
+#[tokio::test]
+async fn streaming_runner_reports_provider_progress() {
+    use titi_engine::{ResolvedModel, StreamingAgentRunner};
+    use titi_providers::{BlockId, MockBody, MockTransport, StopReason, StreamEvent, Transport};
+
+    let transport: Arc<dyn Transport> = Arc::new(MockTransport::new(vec![MockBody::Events(vec![
+        StreamEvent::TextDelta {
+            id: BlockId::new("text"),
+            text: "found it".into(),
+        },
+        StreamEvent::Done {
+            reason: StopReason::Stop,
+        },
+    ])]));
+    let resolver: Arc<dyn TransportResolver> = Arc::new(move |model: &str| {
+        Ok(ResolvedModel::without_credential(model, Arc::clone(&transport)))
+    });
+    let mut engine = EngineRuntime::start_with_agents(
+        EngineConfig::new("unused"),
+        Arc::clone(&resolver),
+        Arc::new(StreamingAgentRunner::new(resolver, "primary")),
+    );
+    engine
+        .send(EngineCommand::SpawnAgent {
+            name: "Scout".into(),
+            task: "search".into(),
+            kind: AgentKind::Subagent,
+        })
+        .await
+        .unwrap();
+    let mut events = Vec::new();
+    while let Some(event) = engine.recv().await {
+        let done = matches!(event, EngineEvent::AgentFinished { .. });
+        events.push(event);
+        if done {
+            break;
+        }
+    }
+    assert!(events.iter().any(|event| matches!(event, EngineEvent::AgentProgress { text, .. } if text == "found it")));
+    assert!(matches!(
+        events.last(),
+        Some(EngineEvent::AgentFinished { success: true, summary, .. }) if summary == "found it"
+    ));
+}

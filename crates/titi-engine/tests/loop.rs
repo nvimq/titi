@@ -166,3 +166,74 @@ async fn does_not_retry_permanent_errors() {
         })
     ));
 }
+
+#[tokio::test]
+async fn cancel_aborts_an_in_flight_turn() {
+    let transport = Arc::new(MockTransport::new(vec![MockBody::Events(vec![
+        StreamEvent::Start,
+        StreamEvent::TextDelta {
+            id: BlockId::new("text"),
+            text: "partial".into(),
+        },
+        StreamEvent::Done {
+            reason: StopReason::Stop,
+        },
+    ])]));
+    let mut engine = EngineRuntime::start(
+        EngineConfig::new("primary"),
+        resolver(vec![("primary", transport)]),
+    );
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "hi".into() })
+        .await
+        .unwrap();
+    engine.send(EngineCommand::Cancel).await.unwrap();
+    let events = collect_until_terminal(&mut engine).await;
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::Cancelled { .. })),
+        "{events:?}"
+    );
+}
+
+#[tokio::test]
+async fn follow_up_runs_after_active_turn() {
+    let transport = Arc::new(MockTransport::new(vec![
+        MockBody::Events(vec![
+            StreamEvent::TextDelta {
+                id: BlockId::new("one"),
+                text: "first".into(),
+            },
+            StreamEvent::Done {
+                reason: StopReason::Stop,
+            },
+        ]),
+        MockBody::Events(vec![
+            StreamEvent::TextDelta {
+                id: BlockId::new("two"),
+                text: "second".into(),
+            },
+            StreamEvent::Done {
+                reason: StopReason::Stop,
+            },
+        ]),
+    ]));
+    let mut engine = EngineRuntime::start(
+        EngineConfig::new("primary"),
+        resolver(vec![("primary", transport)]),
+    );
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "one".into() })
+        .await
+        .unwrap();
+    engine
+        .send(EngineCommand::FollowUp { text: "two".into() })
+        .await
+        .unwrap();
+
+    let first = collect_until_terminal(&mut engine).await;
+    let second = collect_until_terminal(&mut engine).await;
+    assert!(first.iter().any(|event| matches!(event, EngineEvent::StreamDelta { text, .. } if text == "first")));
+    assert!(second.iter().any(|event| matches!(event, EngineEvent::StreamDelta { text, .. } if text == "second")));
+}

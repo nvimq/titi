@@ -131,7 +131,10 @@ fn main() -> io::Result<()> {
                         continue;
                     }
                     match app.handle_canonical(&canonical, &mut input) {
-                        Dispatch::Exit => break,
+                        Dispatch::Exit => {
+                            let _ = engine.try_send(EngineCommand::Shutdown);
+                            break;
+                        }
                         Dispatch::Unhandled => {}
                         Dispatch::Handled(effect) => {
                             if let Some(effect) = effect {
@@ -257,6 +260,12 @@ fn handle_outcome(
         OverlayOutcome::Dismissed => {}
         OverlayOutcome::HubSelected(id) => {
             let _ = engine.try_send(EngineCommand::FocusAgent { agent_id: id.into() });
+        }
+        OverlayOutcome::HubRevive(id) => {
+            let _ = engine.try_send(EngineCommand::ReviveAgent { agent_id: id.into() });
+        }
+        OverlayOutcome::HubStop(id) => {
+            let _ = engine.try_send(EngineCommand::StopAgent { agent_id: id.into() });
         }
     }
 }

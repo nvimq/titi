@@ -14,7 +14,7 @@ use titi_tui::composer::{
     Composer, PASTE_INLINE_MAX_LINES, PasteResult, QueueMode, Queued, render_box_composer,
 };
 use titi_tui::history::{BatchKind, HistoryBatch};
-use titi_tui::hub::{AgentKind, AgentStatus, HubPeer, HubRoster};
+use titi_tui::hub::{AgentKind, AgentStatus, HubCommand, HubPeer, HubRoster};
 use titi_tui::keybindings::{KeybindingsManager, default_manager};
 use titi_tui::markdown::{Section, SectionMode, render_markdown};
 use titi_tui::overlay::{Anchor, composite_rows_inset};
@@ -360,8 +360,15 @@ impl App {
     pub fn overlay_input(&mut self, data: &str) -> Option<OverlayOutcome> {
         let mut active = self.overlay.take()?;
         active.handle_input(data);
-        if let ActiveOverlay::Hub(h) = &active {
+        if let ActiveOverlay::Hub(h) = &mut active {
             self.merge_hub_peers(h.peers());
+              if let Some(command) = h.take_pending_command() {
+                  self.overlay = Some(active);
+                  return Some(match command {
+                      HubCommand::Revive(id) => OverlayOutcome::HubRevive(id),
+                      HubCommand::Stop(id) => OverlayOutcome::HubStop(id),
+                });
+            }
         }
         if !active.is_closed() {
             self.overlay = Some(active);
@@ -1446,6 +1453,10 @@ pub enum OverlayOutcome {
     Dismissed,
     /// Agent Hub Enter: focus the selected peer (no live session switch yet).
     HubSelected(String),
+    /// Agent Hub `r`: revive a parked peer.
+    HubRevive(String),
+    /// Agent Hub `x`: stop a running peer.
+    HubStop(String),
     /// History search: insert the chosen prompt into the composer.
     HistoryPicked(String),
 }

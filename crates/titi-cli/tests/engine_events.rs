@@ -1,7 +1,7 @@
-use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::sync::Arc;
 
-use titi_cli::app::{App, default_theme};
+use titi_cli::app::{default_theme, App};
 use titi_engine::{AgentKind, AgentStatus, EngineEvent, TurnId};
 use titi_providers::StopReason;
 
@@ -78,4 +78,30 @@ fn agents_slash_opens_live_hub() {
     let rendered = app.render().join("\n");
     assert!(rendered.contains("Agent Hub"), "{rendered}");
     assert!(rendered.contains("Worker"), "{rendered}");
+}
+
+#[test]
+fn hub_r_and_x_emit_engine_commands() {
+    let mut app = app();
+    app.ingest_engine_event(EngineEvent::AgentStarted {
+        agent_id: "agent-1".into(),
+        name: "Worker".into(),
+        parent_id: None,
+        kind: AgentKind::Subagent,
+    });
+    app.ingest_engine_event(EngineEvent::AgentStatusChanged {
+        agent_id: "agent-1".into(),
+        status: AgentStatus::Parked,
+    });
+    let mut input = "/agents".to_owned();
+    app.handle_canonical("enter", &mut input);
+    assert_eq!(
+        app.overlay_input("r"),
+        Some(titi_cli::app::OverlayOutcome::HubRevive("agent-1".into()))
+    );
+    assert!(app.overlay_open());
+    assert_eq!(
+        app.overlay_input("x"),
+        Some(titi_cli::app::OverlayOutcome::HubStop("agent-1".into()))
+    );
 }
