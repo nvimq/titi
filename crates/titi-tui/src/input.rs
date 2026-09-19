@@ -237,6 +237,12 @@ impl InputBuffer {
             return;
         }
 
+        // Mode 2031 DSR (`CSI ? 997 ; 1/2 n`) and other private DSR — never keys.
+        if seq.ends_with('n') && seq.contains('?') {
+            events.push(InputEvent::ProbeReply(seq_bytes));
+            return;
+        }
+
         // Terminal resize: \x1b[8;rows;colst
         if let Some(resize) = parse_csi_resize(&seq) {
             events.push(resize);
@@ -665,6 +671,16 @@ mod tests {
         let mut buf = InputBuffer::new();
         let events = buf.feed(b"\x1b]11;rgb:0000/0000/0000\x1b\\");
         assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], InputEvent::ProbeReply(_)), "{events:?}");
+    }
+
+    #[test]
+    fn mode_2031_dsr_is_probe_not_key() {
+        let mut buf = InputBuffer::new();
+        let events = buf.feed(b"\x1b[?997;1n");
+        assert_eq!(events.len(), 1);
+        assert!(matches!(events[0], InputEvent::ProbeReply(_)), "{events:?}");
+        let events = buf.feed(b"\x1b[?997;2n");
         assert!(matches!(events[0], InputEvent::ProbeReply(_)), "{events:?}");
     }
 

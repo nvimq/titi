@@ -8,9 +8,10 @@
 - DoD: cargo test зелёный на слои merge + get/set/reset.
 
 ## M1 — Core Runtime
-- Темы: sessions-persistence, trajectory-gepa, compaction-context, system-prompt-soul, memory-learning
-- Код: сессии + персистентность, trajectory-лог в диск, компакция, сборка системного промпта (SOUL slot #1), memory stores + memory tool, session search FTS (rusqlite).
-- DoD: сессия переживает рестарт; memory full → ошибка консолидации; trajectory пишется при каждом тул-колле.
+- Темы: sessions-persistence, trajectory-gepa, compaction-context, system-prompt-soul, memory-learning, empryo-port.
+- Код: UI-независимый `titi-engine`, `EngineCommand`/`EngineEvent`, bounded provider/tool loop, сессии + персистентность, trajectory, compaction, SOUL и memory.
+- Порядок: engine protocol → provider registry/credentials → TUI vertical slice → tool loop → persistence/headless. GPUI начинается только после рабочего TUI/headless пути.
+- DoD: реальный prompt стримится через engine; cancel работает; transient fallback доказан тестом; permanent errors не повторяются; сессия переживает рестарт.
 
 ## M2 — Providers
 - Темы: providers-streaming, toolconv, model-switching
@@ -47,10 +48,11 @@
 - Код: пер-бот домашние папки, SOUL.md identity, bot-to-bot сообщения, обмен опытом (memory/skills), экспорт/импорт души, проактивный cron, каналы (Telegram первым).
 - DoD: два бота обмениваются сообщениями и переносят скилл.
 
-## M9 — GUI + Headless + Packaging
-- Темы: gui-gpui, packaging-headless
-- Код: gpui-адаптер поверх core-контракта, RPC mode, SDK, collab, установка/подпись macOS.
-- DoD: RPC-клиент управляет сессией; .app собирается и подписывается.
+## M9 — GPUI Workbench + Packaging
+- Темы: gui-gpui, packaging-headless, empryo-port.
+- Код: `titi-desktop` на Zed GPUI поверх того же `EngineCommand`/`EngineEvent`; Work, Files, Changes, Genome, Tools, Costs, Settings, Help; RPC/headless, packaging/signing.
+- Запрет: никаких provider/tool/session реализаций внутри desktop crate.
+- DoD: TUI, headless и GPUI управляют одной engine-сессией; RPC-клиент управляет turn; .app собирается и подписывается.
 
 ## Спринты
 Собираются позже из DoD тем: спринт = подмножество задач одного milestone, закрываемое за итерацию, с общим интеграционным прогоном в конце (runbook в CONVEYOR.md).

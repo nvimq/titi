@@ -3,27 +3,56 @@
 //! Terminal-independent core — tests drive it with an in-memory render; the
 //! binary wraps it with crossterm raw mode + alternate screen.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
+use titi_engine::{AgentKind as EngineAgentKind, AgentStatus as EngineAgentStatus, EngineEvent};
+use titi_tui::caps::{MousePreset, Rgb};
 use titi_tui::component::Component as _;
 use titi_tui::composer::{
-    Composer, PasteResult, QueueMode, Queued, PASTE_INLINE_MAX_LINES,
+    Composer, PASTE_INLINE_MAX_LINES, PasteResult, QueueMode, Queued, render_box_composer,
 };
-use titi_tui::markdown::Section;
-use titi_tui::caps::MousePreset;
-use titi_tui::overlay::{composite_rows, Anchor};
+use titi_tui::history::{BatchKind, HistoryBatch};
+use titi_tui::hub::{AgentKind, AgentStatus, HubPeer, HubRoster};
+use titi_tui::keybindings::{KeybindingsManager, default_manager};
+use titi_tui::markdown::{Section, SectionMode, render_markdown};
+use titi_tui::overlay::{Anchor, composite_rows_inset};
 use titi_tui::panels::{
     ApprovalPanel, CompletionPanel, SelectionPanel, SessionAction, SessionSwitcher,
 };
+use titi_tui::renderer::FramePlan;
 use titi_tui::selection::Selection;
-use titi_tui::status::AgentState;
-use titi_tui::theme::{global, Theme};
-use titi_tui::transcript::{Alert, Entry, Transcript};
 use titi_tui::slash::{Route, SlashRegistry};
+use titi_tui::space_hold::{SpaceHold, SpaceHoldOutcome, delete_before_cursor};
+use titi_tui::status::AgentState;
+use titi_tui::status_bar::{live_snapshot, render_status_bar};
+use titi_tui::theme::{
+    Appearance, AppearanceEvent, AppearanceInputs, ColorMode, SymbolPreset, Theme,
+    appearance_from_rgb, classify_appearance_bytes, global,
+};
+use titi_tui::transcript::{Alert, Entry, Transcript};
 
 use crate::first_frame::{FirstFrame, SubmitOutcome};
+
+/// Result of feeding a terminal appearance probe into the auto-theme.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppearanceIngest {
+    /// No OSC 11 / Mode 2031 payload, or a duplicate OSC 11 report.
+    Unchanged,
+    /// Auto-theme swapped (or first OSC 11 report while auto is on).
+    ThemeChanged,
+    /// Mode 2031 DSR — re-query OSC 11; do not treat 997 as luminance.
+    NeedOsc11Query,
+}
+
+/// Speech-to-text capture state (omp `SttState`). Mic/ASR worker is stubbed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SttState {
+    Idle,
+    Recording,
+    Transcribing,
+}
 
 /// Composite app: startup state machine + transcript.
 pub struct App {
@@ -31,6 +60,8 @@ pub struct App {
     transcript: Transcript,
     theme: Arc<Theme>,
     width: u16,
+    /// Viewport rows used to budget compact overlays (`plan_frame` / PTY size).
+    height: u16,
     selection: Option<Selection>,
     /// The modal overlay panel currently shown, if any.
     overlay: Option<ActiveOverlay>,
@@ -41,11 +72,39 @@ pub struct App {
     /// Slash-command registry (builtin names reserved, then file
     /// expansion, then passthrough to the LLM).
     slash: SlashRegistry,
-    /// Floating non-modal slash autocomplete.
+    /// Slash autocomplete rows (painted inside the box composer).
     completion: CompletionPanel,
     /// A queued message pulled back into the editor via Alt+Up; shown
     /// highlighted until Esc clears the highlight (does not re-queue).
     highlighted: Option<Queued>,
+    /// OMP `app.*` + TUI editor bindings (user YAML overrides applied).
+    keys: KeybindingsManager,
+    /// Index into [`model_choices`] for cycleForward/cycleBackward.
+    current_model: usize,
+    /// Status-line `mode` segment (`app.plan.toggle`).
+    plan_mode: bool,
+    /// Status-line collab/`live` badge (`app.live.toggle`).
+    live_mode: bool,
+    /// omp `stt.enabled` — gates hold-Space. Default false.
+    stt_enabled: bool,
+    stt_state: SttState,
+    space_hold: SpaceHold,
+    /// In-memory Agent Hub roster (Main is filtered at paint time).
+    hub_peers: Vec<HubPeer>,
+    /// Submitted prompts for `app.history.search` / `app.retry`.
+    prompt_history: Vec<String>,
+    last_prompt: Option<String>,
+    /// History-batch handshake (next id, acked prefix, in-flight batch).
+    history_next_id: u64,
+    history_acked: usize,
+    history_pending: Option<HistoryBatch>,
+    history_replay: bool,
+    /// Last OSC 11 classification seen by this app instance.
+    last_terminal_appearance: Option<Appearance>,
+    /// Completed assistant messages rendered above diagnostic sections.
+    assistant_messages: Vec<String>,
+    /// Assistant text currently arriving from the engine stream.
+    streaming_response: String,
 }
 
 impl App {
@@ -56,6 +115,7 @@ impl App {
             transcript: Transcript::new(),
             theme,
             width: 80,
+            height: 20,
             selection: None,
             overlay: None,
             composer: Composer::new(),
@@ -63,21 +123,41 @@ impl App {
             slash: Self::default_slash_registry(),
             completion: CompletionPanel::new(),
             highlighted: None,
+            keys: load_keybindings_manager(),
+            current_model: 0,
+            plan_mode: false,
+            live_mode: false,
+            stt_enabled: false,
+            stt_state: SttState::Idle,
+            space_hold: SpaceHold::new(),
+            hub_peers: Vec::new(),
+            prompt_history: Vec::new(),
+            last_prompt: None,
+            history_next_id: 1,
+            history_acked: 0,
+            history_pending: None,
+            history_replay: false,
+            last_terminal_appearance: None,
+            assistant_messages: Vec::new(),
+            streaming_response: String::new(),
         }
     }
 
     /// The built-in slash commands (names reserved — see the Slash DoD).
-    ///
-    /// `help` lists them, `details` toggles transcript sections, `mouse`
-    /// switches the tracking preset, `model` opens the picker, `sessions`
-    /// opens the switcher.
     fn default_slash_registry() -> SlashRegistry {
         let mut registry = SlashRegistry::new();
         registry.register_builtin("help", "Show available commands");
         registry.register_builtin("model", "Switch the active model");
         registry.register_builtin("sessions", "Open the session switcher");
-        registry.register_builtin("mouse", "Set mouse tracking: off|wheel|buttons|all");
+        registry.register_builtin("agents", "Open the agent hub");
+        registry.register_builtin(
+            "mouse",
+            "Set mouse tracking: off|on|wheel|buttons|all|toggle",
+        );
         registry.register_builtin("details", "Toggle transcript section visibility");
+        registry.register_builtin("pause", "Pause the agent at the next safe boundary");
+        registry.register_builtin("hotkeys", "Show active keybinding chords");
+        registry.register_builtin("switch", "Open the session switcher");
         registry
     }
 
@@ -85,6 +165,38 @@ impl App {
     pub fn overlay_open(&self) -> bool {
         self.overlay.is_some()
     }
+
+    /// OMP pause overlay (`/pause`).
+    pub fn is_paused(&self) -> bool {
+        matches!(self.overlay, Some(ActiveOverlay::Pause { closed: false }))
+    }
+
+    /// Drop the current overlay without extracting an outcome.
+    pub fn close_overlay(&mut self) {
+        self.overlay = None;
+    }
+
+    /// Effective keybindings (tests assert default chords).
+    pub fn keys(&self) -> &KeybindingsManager {
+        &self.keys
+    }
+
+    pub fn plan_mode(&self) -> bool {
+        self.plan_mode
+    }
+
+    pub fn live_mode(&self) -> bool {
+        self.live_mode
+    }
+
+    pub fn stt_state(&self) -> SttState {
+        self.stt_state
+    }
+
+    pub fn set_stt_enabled(&mut self, enabled: bool) {
+        self.stt_enabled = enabled;
+    }
+
     /// Route a `/`-prefixed input line: builtin (reserved name), expanded
     /// file command, or passthrough to the LLM.  Never matches a plain
     /// prompt (no leading `/`).
@@ -169,6 +281,74 @@ impl App {
         self.pending_close.take()
     }
 
+    /// Agent Hub overlay (`app.agents.hub` / `app.session.observe`).
+    pub fn open_agents_hub(&mut self) {
+        self.overlay = Some(ActiveOverlay::Hub(HubRoster::with_theme(
+            self.hub_peers.clone(),
+            Arc::clone(&self.theme),
+        )));
+    }
+
+    /// Replace the in-memory hub roster (tests / future broker ingest).
+    pub fn set_hub_peers(&mut self, peers: Vec<HubPeer>) {
+        self.hub_peers = peers;
+    }
+
+    /// Current hub roster, including `Main` if the caller injected it.
+    pub fn hub_peers(&self) -> &[HubPeer] {
+        &self.hub_peers
+    }
+
+    fn merge_hub_peers(&mut self, visible: &[HubPeer]) {
+        for peer in visible {
+            if let Some(slot) = self.hub_peers.iter_mut().find(|p| p.id == peer.id) {
+                *slot = peer.clone();
+            } else {
+                self.hub_peers.push(peer.clone());
+            }
+        }
+    }
+
+    fn open_help(&mut self) {
+        let items: Vec<(String, String)> = self
+            .slash
+            .catalog()
+            .into_iter()
+            .filter(|c| !c.shadowed)
+            .map(|c| (c.name.clone(), format!("/{}  {}", c.name, c.description)))
+            .collect();
+        let (ids, labels): (Vec<String>, Vec<String>) = items.into_iter().unzip();
+        self.overlay = Some(ActiveOverlay::Help(SelectionPanel::new(
+            "Help", ids, labels,
+        )));
+    }
+
+    fn open_hotkeys(&mut self) {
+        let ids = self.keys.actions();
+        let labels: Vec<String> = ids
+            .iter()
+            .map(|id| {
+                let keys = self.keys.get_keys(id).join(" ");
+                format!("{id}  {keys}")
+            })
+            .collect();
+        self.overlay = Some(ActiveOverlay::Hotkeys(SelectionPanel::new(
+            "Hotkeys", ids, labels,
+        )));
+    }
+
+    fn open_history_search(&mut self) {
+        if self.prompt_history.is_empty() {
+            self.set_alert("history: empty");
+            return;
+        }
+        let items = self.prompt_history.clone();
+        let labels = items.clone();
+        self.overlay = Some(ActiveOverlay::HistorySearch(SelectionPanel::new(
+            "History", items, labels,
+        )));
+    }
+
     /// Route a decoded key to the open overlay.  Returns the panel's
     /// outcome once it closes; `None` while it stays open or no overlay is
     /// shown.  A switcher `Close` never returns directly — it opens the
@@ -177,6 +357,9 @@ impl App {
     pub fn overlay_input(&mut self, data: &str) -> Option<OverlayOutcome> {
         let mut active = self.overlay.take()?;
         active.handle_input(data);
+        if let ActiveOverlay::Hub(h) = &active {
+            self.merge_hub_peers(h.peers());
+        }
         if !active.is_closed() {
             self.overlay = Some(active);
             return None;
@@ -198,7 +381,7 @@ impl App {
     /// than [`PASTE_INLINE_MAX_LINES`] collapse to an inline preview; a
     /// single image path becomes an `[Image #N]` attachment marker.
     pub fn paste(&mut self, text: &str) -> String {
-        match self.composer.collapse_paste(text, PASTE_INLINE_MAX_LINES) {
+        match self.composer.ingest_paste(text, PASTE_INLINE_MAX_LINES) {
             PasteResult::Text(text) => text,
             PasteResult::Collapsed {
                 preview,
@@ -206,6 +389,39 @@ impl App {
             } => format!("{preview}\n… (+{omitted_lines} lines)"),
             PasteResult::Attachment { marker, .. } => marker,
         }
+    }
+
+    /// Apply an OSC 11 / Mode 2031 probe reply (omp live appearance ingest).
+    ///
+    /// Mode 2031 is a re-query trigger, not a luminance source. Zellij-on-macOS
+    /// still ignores OSC 11 inside [`detect_terminal_background`].
+    pub fn ingest_probe_reply(&mut self, bytes: &[u8]) -> AppearanceIngest {
+        match classify_appearance_bytes(bytes) {
+            Some(AppearanceEvent::Osc11(mode)) => self.apply_terminal_appearance(mode),
+            Some(AppearanceEvent::Mode2031Requery) => AppearanceIngest::NeedOsc11Query,
+            None => AppearanceIngest::Unchanged,
+        }
+    }
+
+    /// Feed a probed OSC 11 RGB triple into auto-theme (Capabilities::bg).
+    pub fn apply_bg_rgb(&mut self, rgb: Rgb) -> AppearanceIngest {
+        self.apply_terminal_appearance(appearance_from_rgb(rgb.r, rgb.g, rgb.b))
+    }
+
+    fn apply_terminal_appearance(&mut self, mode: Appearance) -> AppearanceIngest {
+        if self.last_terminal_appearance == Some(mode) {
+            return AppearanceIngest::Unchanged;
+        }
+        self.last_terminal_appearance = Some(mode);
+
+        let inputs = AppearanceInputs::from_env();
+        if !global().on_terminal_appearance_change(mode, &inputs) {
+            return AppearanceIngest::Unchanged;
+        }
+        if let Some(theme) = global().current() {
+            self.theme = theme;
+        }
+        AppearanceIngest::ThemeChanged
     }
 
     /// Set the terminal width (resize).
@@ -216,6 +432,12 @@ impl App {
     /// Current width.
     pub fn width(&self) -> u16 {
         self.width
+    }
+
+    /// Viewport size used by compact overlays.
+    pub fn set_size(&mut self, width: u16, height: u16) {
+        self.width = width;
+        self.height = height.max(1);
     }
 
     /// Mouse press: anchor a drag-select at (x, y).
@@ -266,8 +488,6 @@ impl App {
     pub fn details(&mut self, directive: &str) -> bool {
         let changed = self.transcript.details(directive);
         if changed && self.transcript.all_hidden() {
-            // Floating-alert backstop: all sections hidden — surface a
-            // notice instead of a silent transcript.
             self.transcript.set_alert(Alert {
                 text: "all sections hidden — use /details to show a section".into(),
             });
@@ -285,6 +505,95 @@ impl App {
     /// Append a transcript entry (thinking/tools/subagents/activity).
     pub fn push_transcript(&mut self, section: Section, text: impl Into<String>) {
         self.transcript.push(Entry::new(section, text));
+    }
+
+    /// Apply one engine event to the terminal presentation model.
+    pub fn ingest_engine_event(&mut self, event: EngineEvent) {
+        match event {
+            EngineEvent::TurnStarted { model, .. } => {
+                self.streaming_response.clear();
+                self.set_alert(format!("{model} · running"));
+            }
+            EngineEvent::StreamDelta { text, .. } => self.streaming_response.push_str(&text),
+            EngineEvent::ThinkingDelta { text, .. } => {
+                self.push_transcript(Section::Thinking, text.to_string())
+            }
+            EngineEvent::ToolStarted { name, call_id, .. } => {
+                self.push_transcript(Section::Tools, format!("{name} · {call_id} · running"))
+            }
+            EngineEvent::ToolFinished {
+                call_id,
+                output,
+                is_error,
+                ..
+            } => {
+                let status = if is_error { "failed" } else { "done" };
+                self.push_transcript(Section::Tools, format!("{call_id} · {status}\n{output}"));
+            }
+            EngineEvent::AgentStarted {
+                agent_id,
+                name,
+                parent_id,
+                kind,
+            } => {
+                let kind = match kind {
+                    EngineAgentKind::Subagent => AgentKind::Sub,
+                    EngineAgentKind::Advisor => AgentKind::Advisor,
+                };
+                let peer = HubPeer {
+                    id: agent_id.to_string(),
+                    display_name: name.to_string(),
+                    kind,
+                    parent_id: parent_id
+                        .map(|id| id.to_string())
+                        .or_else(|| Some("Main".to_owned())),
+                    status: AgentStatus::Running,
+                };
+                self.merge_hub_peers(&[peer]);
+                self.push_transcript(Section::Subagents, format!("{name} · started"));
+            }
+            EngineEvent::AgentProgress { agent_id, text } => {
+                self.push_transcript(Section::Subagents, format!("{agent_id} · {text}"))
+            }
+            EngineEvent::AgentStatusChanged { agent_id, status } => {
+                let status = match status {
+                    EngineAgentStatus::Running => AgentStatus::Running,
+                    EngineAgentStatus::Idle | EngineAgentStatus::Completed => AgentStatus::Idle,
+                    EngineAgentStatus::Parked => AgentStatus::Parked,
+                    EngineAgentStatus::Aborted | EngineAgentStatus::Failed => AgentStatus::Aborted,
+                };
+                if let Some(peer) = self.hub_peers.iter_mut().find(|peer| peer.id == agent_id) {
+                    peer.status = status;
+                }
+            }
+            EngineEvent::AgentFinished {
+                agent_id,
+                summary,
+                success,
+            } => {
+                if let Some(peer) = self.hub_peers.iter_mut().find(|peer| peer.id == agent_id) {
+                    peer.status = if success {
+                        AgentStatus::Idle
+                    } else {
+                        AgentStatus::Aborted
+                    };
+                }
+                self.push_transcript(Section::Subagents, format!("{agent_id} · {summary}"));
+            }
+            EngineEvent::ModelSwitched { from, to, .. } => {
+                self.push_transcript(Section::Activity, format!("model fallback: {from} → {to}"));
+                self.set_alert(format!("model: {to}"));
+            }
+            EngineEvent::TurnFinished { .. } => {
+                if !self.streaming_response.is_empty() {
+                    self.assistant_messages
+                        .push(std::mem::take(&mut self.streaming_response));
+                }
+                self.transcript.clear_alert();
+            }
+            EngineEvent::Failed { message, .. } => self.set_alert(format!("error: {message}")),
+            EngineEvent::Cancelled { .. } => self.set_alert("cancelled"),
+        }
     }
 
     /// Set the floating alert directly.
@@ -305,6 +614,7 @@ impl App {
             Vec::new()
         }
     }
+
     /// Queue a message for the stream (Steer / FollowUp).
     pub fn push_queued(&mut self, text: impl Into<String>, mode: QueueMode) {
         self.composer.push_queue(text.into(), mode);
@@ -334,42 +644,579 @@ impl App {
         self.highlighted = None;
     }
 
-    /// Render the full frame: banner, transcript accordion, status line.
-    pub fn render(&mut self) -> Vec<String> {
-        let mut rows = Vec::new();
-        // First frame = banner + status line (painted before provider ready).
-        let (first, _) = self.first_frame.first_frame(self.width);
-        rows.extend(first);
-        rows.push(String::new());
-        rows.extend(self.transcript.render(self.width, &self.theme));
-        rows.push(self.first_frame.status_line(self.width));
-        // Selection coordinates are absolute screen rows; apply the
-        // selectedBg overlay over the whole rendered frame.
+    /// Active model id shown in the status bar.
+    pub fn model(&self) -> String {
+        model_choices()
+            .get(self.current_model)
+            .cloned()
+            .unwrap_or_else(|| "no-model".to_owned())
+    }
+
+    /// Apply a picker selection to the cycle index.
+    pub fn apply_model(&mut self, model: &str) {
+        if let Some(i) = model_choices().iter().position(|m| m == model) {
+            self.current_model = i;
+        }
+    }
+
+    fn cycle_model(&mut self, forward: bool) {
+        let n = model_choices().len();
+        if n == 0 {
+            return;
+        }
+        self.current_model = if forward {
+            (self.current_model + 1) % n
+        } else {
+            (self.current_model + n - 1) % n
+        };
+    }
+
+    fn status_fill(&self, composer_width: u16) -> u16 {
+        composer_width.saturating_sub(6)
+    }
+
+    fn render_layers(&mut self, input: &str) -> FrameLayers {
+        let banner = self.first_frame.banner().to_vec();
+        let mut transcript = Vec::new();
+        for message in &self.assistant_messages {
+            transcript.extend(render_markdown(message, &self.theme, self.width));
+        }
+        if !self.streaming_response.is_empty() {
+            transcript.extend(render_markdown(
+                &self.streaming_response,
+                &self.theme,
+                self.width,
+            ));
+        }
+        transcript.extend(self.transcript.render(self.width, &self.theme));
+        let mut snap = live_snapshot(&self.model(), "session");
+        if self.plan_mode {
+            snap.mode = Some("plan".to_owned());
+        }
+        if self.live_mode {
+            snap.collab = Some("live".to_owned());
+        }
+        let fill = self.status_fill(self.width);
+        let status = render_status_bar(&self.theme, fill, &snap);
+        let inner = self.completion.item_rows();
+        let show_cursor = self.overlay.is_none();
+        let composer = render_box_composer(
+            &self.theme,
+            self.width,
+            &status,
+            input,
+            self.queue_highlighted(),
+            show_cursor,
+            &inner,
+        );
+        FrameLayers {
+            banner,
+            transcript,
+            composer,
+        }
+    }
+
+    fn apply_chrome(&mut self, mut rows: Vec<String>, margin_bottom: usize) -> Vec<String> {
         if let Some(sel) = &self.selection {
             rows = sel.apply_background(&rows, &self.theme);
         }
-        // Modal overlay composites last — panels sit on top of the frame
-        // and of any selection background.
+        let budget = compact_item_budget(self.height as usize, margin_bottom);
+        if let Some(active) = &mut self.overlay {
+            active.set_max_visible(budget);
+        }
         let w = self.width;
         let overlay_rows = match &mut self.overlay {
             Some(active) => active.render(w),
             None => Vec::new(),
         };
         if !overlay_rows.is_empty() {
-            rows = composite_rows(&rows, &overlay_rows, w, Anchor::BottomCenter);
-        }
-        // Floating slash autocomplete sits above the overlay — it is
-        // non-modal, so it renders even while an overlay panel is shown.
-        let completion_rows = self.completion.render(w);
-        if !completion_rows.is_empty() {
-            rows = composite_rows(&rows, &completion_rows, w, Anchor::TopCenter);
+            rows =
+                composite_rows_inset(&rows, &overlay_rows, w, Anchor::BottomCenter, margin_bottom);
         }
         rows
+    }
+
+    /// Render the full frame: banner, transcript accordion, box composer.
+    /// Does **not** pad to terminal height (that broke transcript tests).
+    pub fn render(&mut self) -> Vec<String> {
+        let layers = self.render_layers("");
+        let margin = layers.composer.len();
+        let mut rows = layers.banner;
+        if !rows.is_empty() {
+            rows.push(String::new());
+        }
+        rows.extend(layers.transcript);
+        rows.extend(layers.composer);
+        self.apply_chrome(rows, margin)
+    }
+
+    /// Viewport-diff plan: overflow transcript becomes a history batch;
+    /// the viewport is padded to `height` so compact overlays sit above
+    /// the composer.
+    pub fn plan_frame(&mut self, input: &str, height: u16) -> FramePlan {
+        self.height = height.max(1);
+        let layers = self.render_layers(input);
+        let composer = layers.composer;
+        let composer_h = composer.len();
+        let mut above = Vec::new();
+        above.extend(layers.banner);
+        if !above.is_empty() {
+            above.push(String::new());
+        }
+        above.extend(layers.transcript);
+
+        let view_above = (self.height as usize).saturating_sub(composer_h);
+        let mut history = None;
+
+        if self.history_replay {
+            let id = self.history_next_id;
+            self.history_next_id = self.history_next_id.saturating_add(1);
+            let batch = HistoryBatch {
+                id,
+                rows: above.clone(),
+                kind: BatchKind::Replay,
+            };
+            self.history_pending = Some(batch.clone());
+            history = Some(batch);
+            self.history_acked = above.len();
+            self.history_replay = false;
+        } else if above.len() > view_above {
+            let overflow = above.len() - view_above;
+            if overflow > self.history_acked {
+                let new_rows = above[self.history_acked..overflow].to_vec();
+                if !new_rows.is_empty() {
+                    let id = self.history_next_id;
+                    self.history_next_id = self.history_next_id.saturating_add(1);
+                    let batch = HistoryBatch {
+                        id,
+                        rows: new_rows,
+                        kind: BatchKind::Append,
+                    };
+                    self.history_pending = Some(batch.clone());
+                    history = Some(batch);
+                }
+            }
+            above = above[overflow..].to_vec();
+        }
+
+        while above.len() < view_above {
+            above.insert(0, String::new());
+        }
+        if above.len() > view_above {
+            let skip = above.len() - view_above;
+            above = above[skip..].to_vec();
+        }
+        above.extend(composer);
+        let mut viewport = self.apply_chrome(above, composer_h);
+        let target = self.height as usize;
+        if viewport.len() > target {
+            viewport.truncate(target);
+        }
+        while viewport.len() < target {
+            viewport.push(String::new());
+        }
+        FramePlan { history, viewport }
+    }
+
+    /// Confirm that history batch `id` was written.
+    pub fn acknowledge_history(&mut self, id: u64) {
+        if let Some(pending) = self.history_pending.take() {
+            if pending.id == id {
+                self.history_acked = self.history_acked.saturating_add(pending.rows.len());
+            } else {
+                self.history_pending = Some(pending);
+            }
+        }
+    }
+
+    /// Re-offer acked history under a new id (`app.display.reset` / Ctrl+L).
+    pub fn request_history_replay(&mut self) {
+        self.history_replay = true;
+        self.history_acked = 0;
+        self.history_pending = None;
     }
 
     /// Time-to-first-frame (from construction to first render).
     pub fn time_to_first_frame(&self) -> Duration {
         self.first_frame.frame_elapsed()
+    }
+
+    /// Dispatch a canonical key id (`ctrl+q`, `alt+m`, …) against the
+    /// OMP action table.  Overlay keys are handled by the caller first.
+    pub fn handle_canonical(&mut self, canonical: &str, input: &mut String) -> Dispatch {
+        self.handle_canonical_at(canonical, input, Instant::now())
+    }
+
+    /// Dispatch with an injectable clock (tests drive space-hold cadence).
+    pub fn handle_canonical_at(
+        &mut self,
+        canonical: &str,
+        input: &mut String,
+        now: Instant,
+    ) -> Dispatch {
+        if self.keys.matches_canonical(canonical, "app.interrupt") {
+            return Dispatch::Exit;
+        }
+
+        if self
+            .keys
+            .matches_canonical(canonical, "app.message.followUp")
+        {
+            if !input.is_empty() {
+                let text = std::mem::take(input);
+                self.completion_hide();
+                self.push_queued(text, QueueMode::FollowUp);
+            }
+            return Dispatch::Handled(None);
+        }
+
+        if self
+            .keys
+            .matches_canonical(canonical, "app.message.dequeue")
+        {
+            if let Some(text) = self.pull_last_queued() {
+                *input = text;
+            }
+            return Dispatch::Handled(None);
+        }
+
+        if self.keys.matches_canonical(canonical, "app.session.switch") {
+            self.open_session_switcher();
+            return Dispatch::Handled(None);
+        }
+
+        if self.keys.matches_canonical(canonical, "app.model.select")
+            || self
+                .keys
+                .matches_canonical(canonical, "app.model.selectTemporary")
+        {
+            self.open_model_picker(model_choices());
+            return Dispatch::Handled(None);
+        }
+
+        if self
+            .keys
+            .matches_canonical(canonical, "app.model.cycleForward")
+        {
+            self.cycle_model(true);
+            return Dispatch::Handled(None);
+        }
+        if self
+            .keys
+            .matches_canonical(canonical, "app.model.cycleBackward")
+        {
+            self.cycle_model(false);
+            return Dispatch::Handled(None);
+        }
+
+        if self
+            .keys
+            .matches_canonical(canonical, "app.thinking.toggle")
+            || self.keys.matches_canonical(canonical, "app.thinking.cycle")
+        {
+            self.details("thinking cycle");
+            return Dispatch::Handled(None);
+        }
+        if self.keys.matches_canonical(canonical, "app.tools.expand") {
+            self.details("tools cycle");
+            return Dispatch::Handled(None);
+        }
+        if self
+            .keys
+            .matches_canonical(canonical, "app.tools.toggleVisibility")
+        {
+            if self.transcript.mode(Section::Tools) == SectionMode::Hidden {
+                self.details("tools expanded");
+            } else {
+                self.details("tools hidden");
+            }
+            return Dispatch::Handled(None);
+        }
+
+        if self.keys.matches_canonical(canonical, "app.display.reset") {
+            self.request_history_replay();
+            return Dispatch::Handled(Some(SubmitEffect::DisplayReset));
+        }
+
+        if self.keys.matches_canonical(canonical, "app.plan.toggle") {
+            self.plan_mode = !self.plan_mode;
+            let label = if self.plan_mode { "plan" } else { "agent" };
+            self.set_alert(format!("mode: {label}"));
+            return Dispatch::Handled(None);
+        }
+
+        if self.keys.matches_canonical(canonical, "app.live.toggle") {
+            self.live_mode = !self.live_mode;
+            let label = if self.live_mode { "live" } else { "live off" };
+            self.set_alert(label.to_owned());
+            return Dispatch::Handled(None);
+        }
+
+        if self.keys.matches_canonical(canonical, "app.stt.toggle") {
+            self.toggle_stt();
+            return Dispatch::Handled(None);
+        }
+
+        if self.keys.matches_canonical(canonical, "app.agents.hub")
+            || self
+                .keys
+                .matches_canonical(canonical, "app.session.observe")
+        {
+            self.open_agents_hub();
+            return Dispatch::Handled(None);
+        }
+
+        if self.keys.matches_canonical(canonical, "app.history.search") {
+            self.open_history_search();
+            return Dispatch::Handled(None);
+        }
+
+        if self
+            .keys
+            .matches_canonical(canonical, "app.editor.external")
+        {
+            return Dispatch::Handled(Some(SubmitEffect::ExternalEditor));
+        }
+
+        if self.keys.matches_canonical(canonical, "app.retry") {
+            if let Some(text) = self.last_prompt.clone() {
+                *input = text;
+                return Dispatch::Handled(self.submit_line(input));
+            }
+            self.set_alert("retry: no last prompt");
+            return Dispatch::Handled(None);
+        }
+
+        if self
+            .keys
+            .matches_canonical(canonical, "app.clipboard.copyLine")
+        {
+            return Dispatch::Handled(Some(SubmitEffect::Copy(input.clone())));
+        }
+        if self
+            .keys
+            .matches_canonical(canonical, "app.clipboard.copyPrompt")
+        {
+            let text = if input.is_empty() {
+                self.last_prompt.clone().unwrap_or_default()
+            } else {
+                input.clone()
+            };
+            return Dispatch::Handled(Some(SubmitEffect::Copy(text)));
+        }
+        if self
+            .keys
+            .matches_canonical(canonical, "app.clipboard.pasteTextRaw")
+        {
+            if let Some(text) = read_system_clipboard() {
+                input.push_str(&text);
+                self.slash_completions(input);
+            }
+            return Dispatch::Handled(None);
+        }
+        if self
+            .keys
+            .matches_canonical(canonical, "app.clipboard.pasteImage")
+        {
+            if let Some(text) = read_system_clipboard() {
+                let appended = self.paste(&text);
+                input.push_str(&appended);
+                self.slash_completions(input);
+            }
+            return Dispatch::Handled(None);
+        }
+
+        if canonical == "escape" {
+            if self.completion_visible() {
+                self.completion_hide();
+                return Dispatch::Handled(None);
+            }
+            if self.queue_highlighted() {
+                self.clear_highlight();
+                return Dispatch::Handled(None);
+            }
+            return Dispatch::Handled(None);
+        }
+
+        if canonical == "tab" || (canonical == "enter" && self.completion_visible()) {
+            if let Some(name) = self.completion_accept() {
+                *input = name;
+                return Dispatch::Handled(None);
+            }
+            if canonical == "tab" {
+                return Dispatch::Handled(None);
+            }
+        }
+
+        if canonical == "enter" {
+            return Dispatch::Handled(self.submit_line(input));
+        }
+
+        if self
+            .keys
+            .matches_canonical(canonical, "tui.editor.cursorUp")
+            || canonical == "up"
+        {
+            if self.completion_visible() {
+                self.completion_move(true);
+            }
+            return Dispatch::Handled(None);
+        }
+        if self
+            .keys
+            .matches_canonical(canonical, "tui.editor.cursorDown")
+            || canonical == "down"
+        {
+            if self.completion_visible() {
+                self.completion_move(false);
+            }
+            return Dispatch::Handled(None);
+        }
+
+        if self
+            .keys
+            .matches_canonical(canonical, "tui.editor.deleteCharBackward")
+            || canonical == "backspace"
+        {
+            let _ = input.pop();
+            self.slash_completions(input);
+            return Dispatch::Handled(None);
+        }
+
+        match self
+            .space_hold
+            .handle(canonical, now, self.stt_enabled, self.completion_visible())
+        {
+            SpaceHoldOutcome::Continue => {}
+            SpaceHoldOutcome::InsertSpace => {
+                input.push(' ');
+                self.slash_completions(input);
+                return Dispatch::Handled(None);
+            }
+            SpaceHoldOutcome::Swallow => return Dispatch::Handled(None),
+            SpaceHoldOutcome::Start { retract } => {
+                delete_before_cursor(input, retract);
+                self.slash_completions(input);
+                self.toggle_stt();
+                return Dispatch::Handled(None);
+            }
+            SpaceHoldOutcome::EndThenContinue => {
+                self.toggle_stt();
+            }
+        }
+
+        if let Some(ch) = printable_char(canonical) {
+            input.push(ch);
+            self.slash_completions(input);
+            return Dispatch::Handled(None);
+        }
+
+        Dispatch::Unhandled
+    }
+
+    /// Poll the 250ms space-hold release. Returns true when recording ended.
+    pub fn poll_space_hold(&mut self, now: Instant) -> bool {
+        if self.space_hold.poll(now) {
+            self.toggle_stt();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn toggle_stt(&mut self) {
+        if self.live_mode {
+            self.set_alert("End live mode before using push-to-talk speech input.");
+            return;
+        }
+        if !self.stt_enabled {
+            self.set_alert("Speech-to-text is disabled. Enable it in settings: stt.enabled");
+            return;
+        }
+        self.stt_state = match self.stt_state {
+            SttState::Idle => {
+                self.set_alert("stt: recording");
+                SttState::Recording
+            }
+            SttState::Recording => {
+                self.set_alert("stt: idle");
+                SttState::Idle
+            }
+            SttState::Transcribing => {
+                self.set_alert("Transcription in progress...");
+                SttState::Transcribing
+            }
+        };
+    }
+
+    fn submit_line(&mut self, input: &mut String) -> Option<SubmitEffect> {
+        let line = std::mem::take(input);
+        self.completion_hide();
+        if line.is_empty() {
+            return None;
+        }
+        match self.slash.route(&line) {
+            Route::Builtin(name) => self.dispatch_builtin(&name, &line),
+            Route::Expanded(text) => self.deliver_prompt(text),
+            Route::Passthrough => self.deliver_prompt(line),
+        }
+    }
+
+    fn dispatch_builtin(&mut self, name: &str, line: &str) -> Option<SubmitEffect> {
+        let args = line
+            .split_once(' ')
+            .map(|(_, rest)| rest.trim())
+            .unwrap_or("");
+        match name {
+            "help" => {
+                self.open_help();
+                None
+            }
+            "model" => {
+                self.open_model_picker(model_choices());
+                None
+            }
+            "sessions" | "switch" => {
+                self.open_session_switcher();
+                None
+            }
+            "agents" => {
+                self.open_agents_hub();
+                None
+            }
+            "hotkeys" => {
+                self.open_hotkeys();
+                None
+            }
+            "pause" => {
+                self.overlay = Some(ActiveOverlay::Pause { closed: false });
+                None
+            }
+            "details" => {
+                let _ = self.details(args);
+                None
+            }
+            "mouse" => {
+                if args == "toggle" || args.is_empty() {
+                    Some(SubmitEffect::MouseToggle)
+                } else if let Some(preset) = MousePreset::parse(args) {
+                    Some(SubmitEffect::Mouse(preset))
+                } else {
+                    self.set_alert("usage: /mouse off|on|wheel|buttons|all|toggle");
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+
+    fn deliver_prompt(&mut self, text: String) -> Option<SubmitEffect> {
+        self.prompt_history.push(text.clone());
+        self.last_prompt = Some(text.clone());
+        match self.submit(text.clone()) {
+            SubmitOutcome::Queued => Some(SubmitEffect::Queued(text)),
+            SubmitOutcome::Delivered => Some(SubmitEffect::Delivered(text)),
+        }
     }
 }
 
@@ -403,7 +1250,10 @@ pub fn load_mouse_preset() -> Option<MousePreset> {
 }
 
 /// Persist the mouse preset to the titi config (`display.mouse_tracking`).
-pub fn save_mouse_preset_to(agent_dir: &std::path::Path, preset: MousePreset) -> Result<(), String> {
+pub fn save_mouse_preset_to(
+    agent_dir: &std::path::Path,
+    preset: MousePreset,
+) -> Result<(), String> {
     use titi_config::settings::Settings;
     let mut settings = Settings::load(
         agent_dir,
@@ -421,18 +1271,18 @@ pub fn save_mouse_preset(preset: MousePreset) -> Result<(), String> {
     save_mouse_preset_to(&titi_config::agent_dir(), preset)
 }
 
-/// Load the process-wide default theme (built-in `dark`), falling back to a
-/// minimal theme if the loader fails.
+/// Load the process-wide default theme via auto appearance (COLORFGBG first).
 pub fn default_theme() -> Result<Arc<Theme>, String> {
-    let name = global().init("dark");
+    let inputs = AppearanceInputs::from_env();
+    let name = global().init_auto(&inputs);
     match global().current() {
         Some(theme) => Ok(theme),
         None => Theme::new(
             name,
             std::collections::HashMap::new(),
             std::collections::HashMap::new(),
-            titi_tui::theme::ColorMode::Truecolor,
-            titi_tui::theme::SymbolPreset::Unicode,
+            ColorMode::Truecolor,
+            SymbolPreset::Unicode,
             std::collections::HashMap::new(),
             None,
             None,
@@ -449,14 +1299,43 @@ pub enum ActiveOverlay {
     ModelPicker(SelectionPanel<String>),
     SessionSwitcher(SessionSwitcher),
     Approval(ApprovalPanel),
+    Help(SelectionPanel<String>),
+    Hotkeys(SelectionPanel<String>),
+    HistorySearch(SelectionPanel<String>),
+    Hub(HubRoster),
+    Pause { closed: bool },
 }
 
 impl ActiveOverlay {
+    fn set_max_visible(&mut self, rows: usize) {
+        match self {
+            ActiveOverlay::ModelPicker(p)
+            | ActiveOverlay::Help(p)
+            | ActiveOverlay::Hotkeys(p)
+            | ActiveOverlay::HistorySearch(p) => p.set_max_visible(rows),
+            ActiveOverlay::Hub(h) => h.set_max_visible(rows),
+            ActiveOverlay::Approval(p) => p.set_max_visible(rows),
+            ActiveOverlay::SessionSwitcher(s) => s.set_max_visible(rows),
+            ActiveOverlay::Pause { .. } => {}
+        }
+    }
+
     fn render(&mut self, width: u16) -> Vec<String> {
         match self {
             ActiveOverlay::ModelPicker(p) => p.render(width),
             ActiveOverlay::SessionSwitcher(s) => s.render(width),
             ActiveOverlay::Approval(a) => a.render(width),
+            ActiveOverlay::Help(p)
+            | ActiveOverlay::Hotkeys(p)
+            | ActiveOverlay::HistorySearch(p) => p.render(width),
+            ActiveOverlay::Hub(h) => h.render(width),
+            ActiveOverlay::Pause { closed } => {
+                if *closed {
+                    Vec::new()
+                } else {
+                    pause_rows(width)
+                }
+            }
         }
     }
 
@@ -465,6 +1344,15 @@ impl ActiveOverlay {
             ActiveOverlay::ModelPicker(p) => p.handle_input(data),
             ActiveOverlay::SessionSwitcher(s) => s.handle_input(data),
             ActiveOverlay::Approval(a) => a.handle_input(data),
+            ActiveOverlay::Help(p)
+            | ActiveOverlay::Hotkeys(p)
+            | ActiveOverlay::HistorySearch(p) => p.handle_input(data),
+            ActiveOverlay::Hub(h) => h.handle_input(data),
+            ActiveOverlay::Pause { closed } => {
+                if matches!(data, "\x1b" | "\r" | " " | "\x03") {
+                    *closed = true;
+                }
+            }
         }
     }
 
@@ -473,6 +1361,11 @@ impl ActiveOverlay {
             ActiveOverlay::ModelPicker(p) => p.is_closed(),
             ActiveOverlay::SessionSwitcher(s) => s.is_closed(),
             ActiveOverlay::Approval(a) => a.is_closed(),
+            ActiveOverlay::Help(p)
+            | ActiveOverlay::Hotkeys(p)
+            | ActiveOverlay::HistorySearch(p) => p.is_closed(),
+            ActiveOverlay::Hub(h) => h.is_closed(),
+            ActiveOverlay::Pause { closed } => *closed,
         }
     }
 
@@ -486,21 +1379,32 @@ impl ActiveOverlay {
             ActiveOverlay::SessionSwitcher(s) => {
                 let titles = s.titles().to_vec();
                 match s.into_action() {
-                    Some(SessionAction::Switch(i)) => titles
-                        .get(i)
-                        .cloned()
-                        .map(OverlayOutcome::SessionSwitched),
+                    Some(SessionAction::Switch(i)) => {
+                        titles.get(i).cloned().map(OverlayOutcome::SessionSwitched)
+                    }
                     Some(SessionAction::New) => Some(OverlayOutcome::SessionNew),
                     Some(SessionAction::Cancel) => Some(OverlayOutcome::SessionCancelled),
-                    // Refresh keeps the panel open; Close is intercepted in
-                    // App::overlay_input — neither reaches here.
                     Some(SessionAction::Refresh) | Some(SessionAction::Close(_)) => None,
                     None => None,
                 }
             }
-            ActiveOverlay::Approval(a) => a.into_result().map(|r| {
-                OverlayOutcome::Approval(!r.cancelled && r.selected == Some("Yes"))
-            }),
+            ActiveOverlay::Approval(a) => a
+                .into_result()
+                .map(|r| OverlayOutcome::Approval(!r.cancelled && r.selected == Some("Yes"))),
+            ActiveOverlay::HistorySearch(p) => p
+                .into_result()
+                .and_then(|r| r.selected)
+                .map(OverlayOutcome::HistoryPicked),
+            ActiveOverlay::Hub(h) => {
+                if h.cancelled() {
+                    Some(OverlayOutcome::Dismissed)
+                } else {
+                    h.into_selected().map(OverlayOutcome::HubSelected)
+                }
+            }
+            ActiveOverlay::Help(_) | ActiveOverlay::Hotkeys(_) | ActiveOverlay::Pause { .. } => {
+                Some(OverlayOutcome::Dismissed)
+            }
         }
     }
 }
@@ -519,6 +1423,12 @@ pub enum OverlayOutcome {
     /// Approval panel: `true` only for an explicit Yes; Esc/No/Cancel are
     /// all cancel-without-delete.
     Approval(bool),
+    /// Help / hotkeys / pause / hub Esc — closed without a side effect.
+    Dismissed,
+    /// Agent Hub Enter: focus the selected peer (no live session switch yet).
+    HubSelected(String),
+    /// History search: insert the chosen prompt into the composer.
+    HistoryPicked(String),
 }
 
 /// Models offered by the picker — the fallback chains from
@@ -550,7 +1460,10 @@ pub fn list_sessions_from(agent_dir: &std::path::Path) -> Vec<String> {
         .filter(|e| e.path().extension().is_some_and(|x| x == "jsonl"))
         .filter_map(|e| {
             let modified = e.metadata().ok()?.modified().ok()?;
-            Some((modified, e.path().file_stem()?.to_string_lossy().into_owned()))
+            Some((
+                modified,
+                e.path().file_stem()?.to_string_lossy().into_owned(),
+            ))
         })
         .collect();
     ids.sort_by_key(|a| std::cmp::Reverse(a.0));
@@ -572,4 +1485,93 @@ pub fn delete_session_from(agent_dir: &std::path::Path, id: &str) -> Result<(), 
 /// [`delete_session_from`] against the real agent directory.
 pub fn delete_session(id: &str) -> Result<(), String> {
     delete_session_from(&titi_config::agent_dir(), id)
+}
+
+/// Result of dispatching a canonical key.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Dispatch {
+    /// Action consumed; caller should redraw. Optional slash/prompt side effect.
+    Handled(Option<SubmitEffect>),
+    /// Ctrl+C / app.interrupt — leave the TUI.
+    Exit,
+    /// Key not bound and not printable.
+    Unhandled,
+}
+
+/// Side effect of submitting a composer line (slash or prompt).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SubmitEffect {
+    None,
+    Mouse(MousePreset),
+    /// Cycle off → wheel → buttons → all → off.
+    MouseToggle,
+    Queued(String),
+    Delivered(String),
+    /// OSC 52 copy of the given text.
+    Copy(String),
+    /// ED3 + re-offer history (`app.display.reset`).
+    DisplayReset,
+    /// Open `$VISUAL` / `$EDITOR` on the draft.
+    ExternalEditor,
+}
+
+fn load_keybindings_manager() -> KeybindingsManager {
+    let path = titi_config::agent_dir().join("keybindings.yml");
+    let raw = std::fs::read_to_string(path).unwrap_or_default();
+    let mut user = titi_tui::keybindings::parse_keybindings_config(&raw);
+    let _ = titi_tui::keybindings::migrate_keybinding_names(&mut user);
+    default_manager(user)
+}
+
+fn printable_char(canonical: &str) -> Option<char> {
+    match canonical {
+        "space" => Some(' '),
+        s if s.len() == 1 => s.chars().next(),
+        s if s.starts_with("shift+") && s.len() == 7 => {
+            s.chars().last().map(|c| c.to_ascii_uppercase())
+        }
+        _ => None,
+    }
+}
+
+/// OMP compact picker: ~40% of the terminal, minus chrome, sitting above the composer.
+fn compact_item_budget(term_rows: usize, margin_bottom: usize) -> usize {
+    const HEIGHT_FRACTION: f64 = 0.4;
+    const CHROME_ROWS: usize = 2;
+    const MIN_VISIBLE: usize = 3;
+    let term_rows = term_rows.max(16);
+    let from_fraction = ((term_rows as f64) * HEIGHT_FRACTION).floor() as usize;
+    let from_fraction = from_fraction.saturating_sub(CHROME_ROWS);
+    let from_space = term_rows
+        .saturating_sub(margin_bottom)
+        .saturating_sub(CHROME_ROWS);
+    from_fraction.max(MIN_VISIBLE).min(from_space.max(1))
+}
+
+fn pause_rows(width: u16) -> Vec<String> {
+    let labels = vec!["press Esc / Enter / Space / Ctrl+C to resume".to_owned()];
+    let mut panel = SelectionPanel::new("paused", vec!["resume".to_owned()], labels);
+    panel.render(width)
+}
+
+struct FrameLayers {
+    banner: Vec<String>,
+    transcript: Vec<String>,
+    composer: Vec<String>,
+}
+
+fn read_system_clipboard() -> Option<String> {
+    let candidates: &[(&str, &[&str])] = &[
+        ("pbpaste", &[]),
+        ("wl-paste", &["-n"]),
+        ("xclip", &["-selection", "clipboard", "-o"]),
+    ];
+    for (bin, args) in candidates {
+        if let Ok(out) = std::process::Command::new(bin).args(*args).output()
+            && out.status.success()
+        {
+            return Some(String::from_utf8_lossy(&out.stdout).into_owned());
+        }
+    }
+    None
 }

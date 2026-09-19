@@ -2,6 +2,13 @@
 
 titi = клон харнесса **omp** (весь функционал) + **обучаемость Hermes Agent** (память, SOUL, self-improvement) + **мультиботность и безопасность Vellum** (сеть ботов, actor identity). Реализация — Rust workspace.
 
+## Активный порт Empryo
+
+Текущее направление разработки — функциональная модель Empryo с единым Rust engine и нативным GPUI desktop. Канонические документы для продолжения любой моделью:
+
+- [решения, архитектура и milestones](empryo-port/README.md);
+- [текущий checkpoint, проверки, риски и NEXT](empryo-port/STATE.md).
+
 ## Темы (20)
 
 | # | Slug | Тема | Статус |

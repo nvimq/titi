@@ -10,6 +10,7 @@ use crate::caps;
 use crate::history::{accept_batch, Ack, HistoryBatch, HistoryState};
 use crate::overlay::OverlayStack;
 use crate::viewport::diff_viewport;
+use crate::width::{truncate_to_width, visible_width};
 
 /// A frame the provider produces: optional history batch plus the viewport.
 #[derive(Debug, Clone)]
@@ -69,6 +70,8 @@ pub struct Renderer<W: Write> {
     width: u16,
     /// Terminal height (cells).
     height: u16,
+    /// Fold ED3 into the next `draw` so rebuild/reset is one write.
+    clear_scrollback_on_next_draw: bool,
 }
 
 impl<W: Write> Renderer<W> {
@@ -90,6 +93,17 @@ impl<W: Write> Renderer<W> {
             resize_mode,
             width,
             height,
+            clear_scrollback_on_next_draw: false,
+        }
+    }
+
+    /// Coding-agent default is `Rebuild`; `PI_TUI_RESIZE_SCROLLBACK` overrides.
+    pub fn resize_mode_from_env(default: ResizeScrollbackMode) -> ResizeScrollbackMode {
+        match std::env::var("PI_TUI_RESIZE_SCROLLBACK").ok().as_deref() {
+            Some("append") => ResizeScrollbackMode::Append,
+            Some("rebuild") => ResizeScrollbackMode::Rebuild,
+            Some("preserve") => ResizeScrollbackMode::Preserve,
+            _ => default,
         }
     }
 
@@ -108,41 +122,50 @@ impl<W: Write> Renderer<W> {
     /// Returns the [`Ack`] if a history batch was accepted, or `None` for
     /// viewport-only frames / rejected batches.
     pub fn draw(&mut self, plan: FramePlan) -> io::Result<Option<Ack>> {
-        let ack = self.write_history(plan.history)?;
+        let mut buf = String::new();
+        if self.clear_scrollback_on_next_draw {
+            // ED2 then ED3 in the same write as the replay (`omp://tui-core-renderer`).
+            buf.push_str("\x1b[H\x1b[2J\x1b[3J");
+            self.clear_scrollback_on_next_draw = false;
+        }
 
-        // Composite overlays onto the viewport.
-        let viewport = self.overlays.composite(&plan.viewport, self.width);
+        let ack = self.append_history(&mut buf, plan.history)?;
+
+        let mut viewport = plan.viewport;
+        let cursor = crate::cursor::extract_cursor(&mut viewport);
+        let viewport = self.overlays.composite(&viewport, self.width);
+        let viewport = prepare_rows(&viewport, self.width);
         let updates = diff_viewport(&self.prev_viewport, &viewport);
 
-        // Write viewport updates, wrapped in sync output markers.
+        let mut body = String::new();
+        for update in &updates {
+            let row = update.index + 1;
+            if update.row.is_empty() {
+                body.push_str(&format!("\x1b[{row}H\x1b[2K"));
+            } else {
+                body.push_str(&format!("\x1b[{row}H{}", update.row));
+            }
+        }
         if !updates.is_empty() {
-            if self.sync_output {
-                write!(self.out, "{}", caps::sync_begin())?;
-            }
-
-            for update in &updates {
-                let row = update.index + 1; // 1-based terminal row
-                if update.row.is_empty() {
-                    // Clear the line.
-                    write!(self.out, "\x1b[{}H\x1b[2K", row)?;
-                } else {
-                    write!(self.out, "\x1b[{}H{}", row, update.row)?;
-                }
-            }
-
-            // Park cursor at the bottom of the viewport (row after the last
-            // viewport row, i.e. the status line).
-            let park_row = viewport.len() + 1;
-            write!(self.out, "\x1b[{}H", park_row)?;
-
-            if self.sync_output {
-                write!(self.out, "{}", caps::sync_end())?;
+            if let Some((row, col)) = cursor {
+                body.push_str(&format!("\x1b[{};{}H\x1b[?25h", row + 1, col + 1));
+            } else {
+                body.push_str(&format!("\x1b[{}H", viewport.len() + 1));
             }
         }
 
-        self.out.flush()?;
-        self.prev_viewport = viewport;
+        if !buf.is_empty() || !body.is_empty() {
+            let mut frame = buf;
+            frame.push_str(&body);
+            if self.sync_output {
+                frame.insert_str(0, caps::sync_begin());
+                frame.push_str(caps::sync_end());
+            }
+            write!(self.out, "{frame}")?;
+            self.out.flush()?;
+        }
 
+        self.prev_viewport = viewport;
         Ok(ack)
     }
 
@@ -169,10 +192,7 @@ impl<W: Write> Renderer<W> {
                 self.prev_viewport.clear();
             }
             ResizeScrollbackMode::Rebuild => {
-                // Clear native terminal scrollback (ED3).
-                write!(self.out, "\x1b[3J")?;
-                self.out.flush()?;
-                // Reset state: everything must be replayed.
+                self.clear_scrollback_on_next_draw = true;
                 self.history_state = HistoryState::new();
                 self.history_written = 0;
                 self.prev_viewport.clear();
@@ -196,11 +216,7 @@ impl<W: Write> Renderer<W> {
         &mut self,
         provider: &mut dyn FrameProvider,
     ) -> io::Result<Option<Ack>> {
-        // Clear native scrollback.
-        write!(self.out, "\x1b[3J")?;
-        self.out.flush()?;
-
-        // The provider must re-offer the full history under new ids.
+        self.clear_scrollback_on_next_draw = true;
         self.history_state = HistoryState::new();
         self.history_written = 0;
         self.prev_viewport.clear();
@@ -258,6 +274,13 @@ impl<W: Write> Renderer<W> {
         self.height
     }
 
+    /// Update stored size and drop the diff cache so the next `draw` is full.
+    pub fn set_size(&mut self, width: u16, height: u16) {
+        self.width = width;
+        self.height = height;
+        self.prev_viewport.clear();
+    }
+
     /// Resize mode.
     pub fn resize_mode(&self) -> ResizeScrollbackMode {
         self.resize_mode
@@ -297,31 +320,76 @@ impl<W: Write> Renderer<W> {
     // Internal
     // ------------------------------------------------------------------
 
-    /// Accept and write the history batch (if any).
-    fn write_history(&mut self, batch: Option<HistoryBatch>) -> io::Result<Option<Ack>> {
-        let batch = match batch {
-            Some(b) => b,
-            None => return Ok(None),
+    /// Accept a history batch and append its rows to `buf` (no flush).
+    fn append_history(
+        &mut self,
+        buf: &mut String,
+        batch: Option<HistoryBatch>,
+    ) -> io::Result<Option<Ack>> {
+        let Some(batch) = batch else {
+            return Ok(None);
         };
 
         match accept_batch(&mut self.history_state, batch) {
             Ok(ack) => {
-                // Write all history rows (replay) or only the newly appended
-                // tail (append).
                 let rows = self.history_state.rows();
                 for row in &rows[self.history_written..] {
-                    writeln!(self.out, "{row}")?;
+                    buf.push_str(&prepare_row(row, self.width));
+                    buf.push('\n');
                 }
                 self.history_written = rows.len();
-                self.out.flush()?;
                 Ok(Some(ack))
             }
-            Err(_) => {
-                // Duplicate / non-monotonic — silently skip.
-                Ok(None)
-            }
+            Err(_) => Ok(None),
         }
     }
+}
+
+/// Last-resort width-fit + SGR close (`omp://tui-core-renderer` §4 / `omp://tui`).
+fn prepare_rows(rows: &[String], width: u16) -> Vec<String> {
+    rows.iter().map(|row| prepare_row(row, width)).collect()
+}
+
+fn prepare_row(line: &str, width: u16) -> String {
+    let w = width as usize;
+    if w == 0 {
+        return String::new();
+    }
+    // Kitty APC graphics lines must not be truncated.
+    if line.contains("\x1b_G") {
+        return line.to_owned();
+    }
+    let mut out = if visible_width(line) > w {
+        truncate_to_width(line, w)
+    } else {
+        line.to_owned()
+    };
+    if has_unclosed_sgr(&out) {
+        out.push_str("\x1b[0m");
+    }
+    out
+}
+
+fn has_unclosed_sgr(line: &str) -> bool {
+    let mut active = false;
+    let bytes = line.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'[' {
+            let mut j = i + 2;
+            while j < bytes.len() && !(0x40..=0x7e).contains(&bytes[j]) {
+                j += 1;
+            }
+            if j < bytes.len() && bytes[j] == b'm' {
+                let params = &line[i + 2..j];
+                active = !(params.is_empty() || params.split(';').all(|p| p == "0"));
+            }
+            i = j.saturating_add(1);
+            continue;
+        }
+        i += 1;
+    }
+    active
 }
 
 #[cfg(test)]
@@ -334,10 +402,12 @@ mod tests {
     #[derive(Default)]
     struct TestWriter {
         data: Vec<u8>,
+        writes: usize,
     }
 
     impl Write for TestWriter {
         fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.writes += 1;
             self.data.extend_from_slice(buf);
             Ok(buf.len())
         }
@@ -687,11 +757,13 @@ mod tests {
         });
 
         r.out_mut().data.clear();
+        r.out_mut().writes = 0;
         r.on_resize(100, 30, &mut provider).unwrap();
 
         let output = r.out().output();
         // Rebuild: ED3 first, then full replay.
-        assert!(output.starts_with("\x1b[3J"), "ED3 clears native history");
+        assert!(output.contains("\x1b[3J"), "ED3 clears native history");
+        assert_eq!(r.out().writes, 1, "rebuild is one terminal.write");
         assert!(output.contains("h1"), "history replayed");
         assert!(provider.acked.contains(&2), "ack after write");
     }
@@ -715,10 +787,12 @@ mod tests {
         });
 
         r.out_mut().data.clear();
+        r.out_mut().writes = 0;
         r.reset_display(&mut provider).unwrap();
 
         let output = r.out().output();
-        assert!(output.starts_with("\x1b[3J"), "reset clears native history");
+        assert!(output.contains("\x1b[3J"), "reset clears native history");
+        assert_eq!(r.out().writes, 1, "reset is one terminal.write");
         assert!(provider.acked.contains(&100), "re-offered batch acked");
     }
 
@@ -738,5 +812,38 @@ mod tests {
         let output = r.out().output();
         assert!(!output.contains("floating\n"), "no history write without finalization");
         assert!(output.contains("\x1b[1Hfloating"), "viewport-only render");
+    }
+
+    #[test]
+    fn history_and_viewport_are_one_write() {
+        let mut r = renderer(80, 24, false, ResizeScrollbackMode::Preserve);
+        r.draw(FramePlan {
+            history: Some(hb(1, &["hist"], BatchKind::Append)),
+            viewport: vec!["live".into()],
+        })
+        .unwrap();
+        assert_eq!(r.out().writes, 1, "remainder || viewport in one write");
+        let output = r.out().output();
+        assert!(output.contains("hist\n"), "history remainder");
+        assert!(output.contains("\x1b[1Hlive"), "final viewport");
+    }
+
+    #[test]
+    fn draw_truncates_overwide_rows_and_closes_sgr() {
+        let mut r = renderer(8, 4, false, ResizeScrollbackMode::Preserve);
+        r.draw(FramePlan {
+            history: None,
+            viewport: vec!["\x1b[31mabcdefghijkl".into()],
+        })
+        .unwrap();
+        let output = r.out().output();
+        assert!(
+            !output.contains("ijkl"),
+            "overwide tail dropped: {output:?}"
+        );
+        assert!(
+            output.contains("\x1b[0m"),
+            "SGR closed at row boundary: {output:?}"
+        );
     }
 }

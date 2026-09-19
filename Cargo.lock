@@ -1468,6 +1468,7 @@ dependencies = [
  "serde_json",
  "titi-config",
  "titi-core",
+ "titi-engine",
  "titi-providers",
  "titi-tools",
  "titi-tui",
@@ -1496,6 +1497,18 @@ dependencies = [
  "tempfile",
  "titi-providers",
  "titi-tools",
+]
+
+[[package]]
+name = "titi-engine"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "serde",
+ "smol_str",
+ "thiserror",
+ "titi-providers",
+ "tokio",
 ]
 
 [[package]]

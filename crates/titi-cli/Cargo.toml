@@ -10,6 +10,7 @@ path = "src/main.rs"
 
 [dependencies]
 titi-core = { workspace = true }
+titi-engine = { workspace = true }
 titi-providers = { workspace = true }
 titi-config = { workspace = true }
 titi-tools = { workspace = true }

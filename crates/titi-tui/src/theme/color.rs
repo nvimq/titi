@@ -301,12 +301,14 @@ fn detect_color_mode_from(
     {
         return ColorMode::Truecolor;
     }
-    if let Some(term) = term
-        && term.ends_with("-256color")
-    {
-        return ColorMode::Color256;
+    // After COLORTERM / WT_SESSION: dumb, linux, and empty TERM are 256-color
+    // (`omp://theme.md` detectColorMode table). Other terms default truecolor,
+    // except the explicit `*-256color` suffix.
+    match term {
+        None | Some("") | Some("dumb") | Some("linux") => ColorMode::Color256,
+        Some(t) if t.ends_with("-256color") => ColorMode::Color256,
+        _ => ColorMode::Truecolor,
     }
-    ColorMode::Truecolor
 }
 
 #[cfg(test)]
@@ -477,10 +479,22 @@ mod tests {
             detect_color_mode_from(false, None, Some("xterm-256color")),
             ColorMode::Color256
         );
-        // No signals -> truecolor fallback.
-        assert_eq!(detect_color_mode_from(false, None, None), ColorMode::Truecolor);
+        // No / empty / dumb / linux TERM -> 256color.
+        assert_eq!(detect_color_mode_from(false, None, None), ColorMode::Color256);
+        assert_eq!(
+            detect_color_mode_from(false, None, Some("")),
+            ColorMode::Color256
+        );
         assert_eq!(
             detect_color_mode_from(false, Some("dumb"), Some("dumb")),
+            ColorMode::Color256
+        );
+        assert_eq!(
+            detect_color_mode_from(false, None, Some("linux")),
+            ColorMode::Color256
+        );
+        assert_eq!(
+            detect_color_mode_from(false, None, Some("xterm")),
             ColorMode::Truecolor
         );
         // The env wrapper still returns one of the two modes.

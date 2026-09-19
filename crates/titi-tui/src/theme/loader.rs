@@ -1,7 +1,7 @@
 //! Theme loading — parse JSON, resolve vars, construct Theme instances.
 
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use crate::theme::builtin::{get_builtin_theme, list_builtin_themes};
 use crate::theme::color::{detect_color_mode, ColorMode};
@@ -19,18 +19,19 @@ pub struct CreateThemeOptions {
 
 /// Load a theme JSON by name (built-in or custom dir).
 pub fn load_theme_json(name: &str) -> Result<ThemeJson, String> {
-    // Try built-in
+    load_theme_json_in(name, &custom_themes_dir())
+}
+
+fn load_theme_json_in(name: &str, custom_dir: &Path) -> Result<ThemeJson, String> {
+    // Built-in names win, matching omp `loadThemeJson`.
     if let Some(content) = get_builtin_theme(name) {
         return serde_json::from_str(content)
-            .map_err(|e| format!("Failed to parse built-in theme '{}': {}", name, e));
+            .map_err(|e| format!("Failed to parse built-in theme '{name}': {e}"));
     }
-    // Try custom dir: ~/.titi/themes/{name}.json
-    let custom_dir = custom_themes_dir();
-    let theme_path = custom_dir.join(format!("{}.json", name));
+    let theme_path = custom_dir.join(format!("{name}.json"));
     let content = std::fs::read_to_string(&theme_path)
-        .map_err(|_| format!("Theme not found: {}", name))?;
-    serde_json::from_str(&content)
-        .map_err(|e| format!("Failed to parse theme '{}': {}", name, e))
+        .map_err(|_| format!("Theme not found: {name}"))?;
+    serde_json::from_str(&content).map_err(|e| format!("Failed to parse theme '{name}': {e}"))
 }
 
 /// Load a theme JSON synchronously (for first paint).
@@ -38,10 +39,48 @@ pub fn load_theme_json_sync(name: &str) -> Result<ThemeJson, String> {
     load_theme_json(name)
 }
 
-/// Get the custom themes directory.
+/// Custom themes directory (`omp://theme.md` / `getCustomThemesDir`).
+///
+/// `{agentDir}/themes`, where `agentDir` is `$TITI_AGENT_DIR`, else
+/// `$PI_CODING_AGENT_DIR`, else `~/.titi/profiles/<name>/agent` for a named
+/// profile, else `~/.titi/agent`.
 pub fn custom_themes_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/tmp".to_string());
-    PathBuf::from(home).join(".titi").join("themes")
+    custom_themes_dir_from_env(|key| std::env::var(key).ok())
+}
+
+fn custom_themes_dir_from_env(get: impl Fn(&str) -> Option<String>) -> PathBuf {
+    agent_dir_from_env(&get).join("themes")
+}
+
+fn agent_dir_from_env(get: &impl Fn(&str) -> Option<String>) -> PathBuf {
+    for key in ["TITI_AGENT_DIR", "PI_CODING_AGENT_DIR"] {
+        if let Some(dir) = get(key) {
+            let dir = dir.trim();
+            if !dir.is_empty() {
+                return PathBuf::from(dir);
+            }
+        }
+    }
+    let home = get("HOME")
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "/tmp".to_owned());
+    let root = PathBuf::from(home).join(".titi");
+    match profile_name_from_env(get) {
+        Some(name) => root.join("profiles").join(name).join("agent"),
+        None => root.join("agent"),
+    }
+}
+
+fn profile_name_from_env(get: &impl Fn(&str) -> Option<String>) -> Option<String> {
+    for key in ["TITI_PROFILE", "OMP_PROFILE", "PI_PROFILE"] {
+        if let Some(v) = get(key) {
+            let t = v.trim();
+            if !t.is_empty() && t != "default" {
+                return Some(t.to_owned());
+            }
+        }
+    }
+    None
 }
 
 /// Create a Theme from parsed JSON + options.
@@ -122,9 +161,13 @@ pub fn load_theme_sync(name: &str, options: &CreateThemeOptions) -> Result<Theme
 pub fn get_available_themes() -> Vec<String> {
     let mut names: Vec<String> =
         list_builtin_themes().into_iter().map(|s| s.to_string()).collect();
-    // Scan custom dir
-    let custom_dir = custom_themes_dir();
-    if let Ok(entries) = std::fs::read_dir(&custom_dir) {
+    scan_custom_theme_names(&mut names, &custom_themes_dir());
+    names.sort();
+    names
+}
+
+fn scan_custom_theme_names(names: &mut Vec<String>, custom_dir: &Path) {
+    if let Ok(entries) = std::fs::read_dir(custom_dir) {
         for entry in entries.flatten() {
             if let Some(name) = entry
                 .file_name()
@@ -138,8 +181,6 @@ pub fn get_available_themes() -> Vec<String> {
             }
         }
     }
-    names.sort();
-    names
 }
 
 #[cfg(test)]
@@ -188,5 +229,85 @@ mod tests {
         assert!(themes.contains(&"dark".to_string()));
         assert!(themes.contains(&"light".to_string()));
         assert!(themes.len() >= 100); // 98 defaults + dark + light
+    }
+
+    fn env<'a>(pairs: &'a [(&'a str, &'a str)]) -> impl Fn(&str) -> Option<String> + 'a {
+        |key| {
+            pairs
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| (*v).to_owned())
+        }
+    }
+
+    #[test]
+    fn custom_dir_follows_titi_agent_dir() {
+        let dir = custom_themes_dir_from_env(env(&[("TITI_AGENT_DIR", "/tmp/titi-agent")]));
+        assert_eq!(dir, PathBuf::from("/tmp/titi-agent/themes"));
+    }
+
+    #[test]
+    fn custom_dir_follows_pi_coding_agent_dir() {
+        let dir = custom_themes_dir_from_env(env(&[("PI_CODING_AGENT_DIR", "/tmp/omp-agent")]));
+        assert_eq!(dir, PathBuf::from("/tmp/omp-agent/themes"));
+    }
+
+    #[test]
+    fn titi_agent_dir_wins_over_pi() {
+        let dir = custom_themes_dir_from_env(env(&[
+            ("TITI_AGENT_DIR", "/tmp/titi-agent"),
+            ("PI_CODING_AGENT_DIR", "/tmp/omp-agent"),
+        ]));
+        assert_eq!(dir, PathBuf::from("/tmp/titi-agent/themes"));
+    }
+
+    #[test]
+    fn default_custom_dir_is_dot_titi_agent_themes() {
+        let dir = custom_themes_dir_from_env(env(&[("HOME", "/Users/me")]));
+        assert_eq!(dir, PathBuf::from("/Users/me/.titi/agent/themes"));
+    }
+
+    #[test]
+    fn named_profile_nests_under_profiles() {
+        let dir = custom_themes_dir_from_env(env(&[
+            ("HOME", "/Users/me"),
+            ("TITI_PROFILE", "work"),
+        ]));
+        assert_eq!(
+            dir,
+            PathBuf::from("/Users/me/.titi/profiles/work/agent/themes")
+        );
+    }
+
+    #[test]
+    fn default_profile_name_is_ignored() {
+        let dir = custom_themes_dir_from_env(env(&[
+            ("HOME", "/Users/me"),
+            ("TITI_PROFILE", "default"),
+        ]));
+        assert_eq!(dir, PathBuf::from("/Users/me/.titi/agent/themes"));
+    }
+
+    #[test]
+    fn loads_custom_theme_from_agent_themes_dir() {
+        let tmp = std::env::temp_dir().join(format!(
+            "titi-theme-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0)
+        ));
+        let themes = tmp.join("themes");
+        std::fs::create_dir_all(&themes).unwrap();
+        let src = get_builtin_theme("dark").expect("builtin dark");
+        std::fs::write(themes.join("my-custom.json"), src).unwrap();
+        let json = load_theme_json_in("my-custom", &themes).unwrap();
+        let theme = create_theme(json, &CreateThemeOptions::default()).unwrap();
+        assert!(!theme.is_light());
+        let mut names = Vec::new();
+        scan_custom_theme_names(&mut names, &themes);
+        assert!(names.contains(&"my-custom".to_owned()));
+        let _ = std::fs::remove_dir_all(&tmp);
     }
 }

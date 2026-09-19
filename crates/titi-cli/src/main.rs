@@ -1,12 +1,11 @@
 //! `titi` — omp port in Rust.
 //!
-//! First-frame: banner + status line painted before the provider finishes
-//! initializing; input typed during startup is queued and flushed to the
-//! agent once the provider reports ready.  Transcript accordion sections
-//! render per DoD defaults: `/details <section> <mode>` switches visibility;
-//! floating-alert backstop surfaces when every section is hidden.
+//! First-frame: banner + OMP box composer (status in the top border) painted
+//! before the provider finishes initializing; input typed during startup is
+//! queued and flushed to the agent once the provider reports ready.
+//! Transcript accordion sections render per DoD defaults.
 //!
-//! Mouse: `--mouse <off|wheel|buttons|all>` selects the tracking preset
+//! Mouse: `--mouse <off|on|wheel|buttons|all>` selects the tracking preset
 //! (1000/1002/1003 + SGR 1006); drag-select paints the selection background
 //! (selectedBg) instead of SGR inverse.
 //!
@@ -15,26 +14,25 @@
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use crossterm::cursor::{Hide, MoveTo, Show};
+use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
-    MouseButton, MouseEvent, MouseEventKind,
+    self, DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange,
+    Event, MouseButton, MouseEvent, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, size, Clear, ClearType, EnterAlternateScreen,
-    LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, size, EnterAlternateScreen, LeaveAlternateScreen,
 };
 
 use titi_cli::app::{
-    default_theme, delete_session, load_mouse_preset, model_choices, save_mouse_preset, App,
-    OverlayOutcome,
+    default_theme, delete_session, load_mouse_preset, save_mouse_preset, App,
+    Dispatch, OverlayOutcome, SubmitEffect,
 };
-use titi_cli::first_frame::SubmitOutcome;
-use titi_tui::caps::MousePreset;
-use titi_tui::slash::Route;
+use titi_cli::keys::{canonical_from_key_event, overlay_key_data};
+use titi_tui::caps::{osc52_copy, MousePreset, MODE_2031_DISABLE, MODE_2031_ENABLE, OSC11_QUERY};
+use titi_tui::renderer::{FramePlan, FrameProvider, Renderer, ResizeScrollbackMode};
 
 /// The startup banner shown before the provider is ready.
 fn banner() -> Vec<String> {
@@ -72,180 +70,104 @@ fn main() -> io::Result<()> {
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen, Hide, EnableBracketedPaste)?;
+    execute!(
+        stdout,
+        EnterAlternateScreen,
+        Hide,
+        EnableBracketedPaste,
+        EnableFocusChange
+    )?;
     write!(stdout, "{}", mouse.enable())?;
+    // OMP: Mode 2031 push + startup OSC 11 query. Replies are ProbeReply
+    // bytes (`App::ingest_probe_reply`); crossterm's Event enum drops OSC,
+    // so FocusGained re-queries the same way Mode 2031 would.
+    write!(stdout, "{MODE_2031_ENABLE}{OSC11_QUERY}")?;
 
     let theme = default_theme().map_err(io::Error::other)?;
     let mut app = App::new(Arc::clone(&ready), banner(), theme);
-    if let Ok((w, _)) = size() {
-        app.resize(w);
-    }
-    let rows = app.render();
-    for row in &rows {
-        writeln!(stdout, "{row}")?;
-    }
-    stdout.flush()?;
-    eprintln!("time-to-first-frame: {} ms", app.time_to_first_frame().as_millis());
-    eprintln!("mouse preset: {}", mouse.name());
-
+    let (w, h) = size().unwrap_or((80, 24));
+    app.resize(w);
+    // Coding-agent default is rebuild; `PI_TUI_RESIZE_SCROLLBACK` overrides.
+    let resize = Renderer::<io::Stdout>::resize_mode_from_env(ResizeScrollbackMode::Rebuild);
+    let mut renderer = Renderer::new(stdout, w, h, true, resize);
     let mut input = String::new();
+    paint(&mut renderer, &mut app, &input)?;
 
     loop {
         if event::poll(Duration::from_millis(50))? {
             match event::read()? {
                 Event::Key(key) => {
-                    if key.modifiers.contains(KeyModifiers::CONTROL)
-                        && key.code == KeyCode::Char('c')
+                    let Some(canonical) = canonical_from_key_event(&key) else {
+                        continue;
+                    };
+                    // Pause overlay: Esc/Enter/Space/Ctrl+C resume (OMP /pause).
+                    if app.is_paused()
+                        && matches!(
+                            canonical.as_str(),
+                            "escape" | "enter" | "space" | "ctrl+c"
+                        )
                     {
-                        break;
+                        app.close_overlay();
+                        paint(&mut renderer, &mut app, &input)?;
+                        continue;
                     }
-                    // Modal: an open overlay consumes every key before the
-                    // prompt line sees it.
                     if app.overlay_open() {
                         if let Some(data) = overlay_key_data(&key) {
-                            if let Some(outcome) = app.overlay_input(data) {
-                                handle_outcome(&mut app, outcome);
+                            if let Some(outcome) = app.overlay_input(&data) {
+                                handle_outcome(&mut app, &mut input, outcome);
                             }
-                            render(&mut app, &mut stdout, &input)?;
+                            paint(&mut renderer, &mut app, &input)?;
                         }
-                    } else {
-                        match key.code {
-                            KeyCode::Char('x')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                app.open_session_switcher();
-                                render(&mut app, &mut stdout, &input)?;
+                        continue;
+                    }
+                    match app.handle_canonical(&canonical, &mut input) {
+                        Dispatch::Exit => break,
+                        Dispatch::Unhandled => {}
+                        Dispatch::Handled(effect) => {
+                            if let Some(effect) = effect {
+                                apply_effect(
+                                    &mut mouse,
+                                    &mut renderer,
+                                    &mut app,
+                                    &mut input,
+                                    effect,
+                                )?;
+                            } else {
+                                paint(&mut renderer, &mut app, &input)?;
                             }
-                            KeyCode::Char('m')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
-                                app.open_model_picker(model_choices());
-                                render(&mut app, &mut stdout, &input)?;
-                            }
-                            KeyCode::Char(c) => {
-                                input.push(c);
-                                app.slash_completions(&input);
-                                render(&mut app, &mut stdout, &input)?;
-                            }
-                            KeyCode::Tab => {
-                                if app.completion_visible() {
-                                    if let Some(name) = app.completion_accept() {
-                                        input = name;
-                                    }
-                                    render(&mut app, &mut stdout, &input)?;
-                                }
-                            }
-                            KeyCode::Up if key.modifiers.contains(KeyModifiers::ALT) => {
-                                if let Some(text) = app.pull_last_queued() {
-                                    input = text;
-                                    render(&mut app, &mut stdout, &input)?;
-                                }
-                            }
-                            KeyCode::Up => {
-                                if app.completion_visible() {
-                                    app.completion_move(true);
-                                    render(&mut app, &mut stdout, &input)?;
-                                }
-                            }
-                            KeyCode::Down => {
-                                if app.completion_visible() {
-                                    app.completion_move(false);
-                                    render(&mut app, &mut stdout, &input)?;
-                                }
-                            }
-                            KeyCode::Esc => {
-                                if app.completion_visible() {
-                                    app.completion_hide();
-                                    render(&mut app, &mut stdout, &input)?;
-                                } else if app.queue_highlighted() {
-                                    app.clear_highlight();
-                                    render(&mut app, &mut stdout, &input)?;
-                                }
-                            }
-                            KeyCode::Enter => {
-                                if !input.is_empty() {
-                                    let cmd = std::mem::take(&mut input);
-                                    app.completion_hide();
-                                    match app.route_slash(&cmd) {
-                                        Route::Builtin(name) => match name.as_str() {
-                                            "details" => {
-                                                let directive = cmd.trim_start_matches("/details ");
-                                                app.details(directive);
-                                            }
-                                            "mouse" => {
-                                                let preset = cmd.trim_start_matches("/mouse ");
-                                                if let Some(next) = MousePreset::parse(preset) {
-                                                    write!(stdout, "{}", mouse.disable())?;
-                                                    mouse = next;
-                                                    write!(stdout, "{}", mouse.enable())?;
-                                                    match save_mouse_preset(mouse) {
-                                                        Ok(()) => {
-                                                            eprintln!("mouse preset: {} (saved)", mouse.name());
-                                                        }
-                                                        Err(reason) => {
-                                                            eprintln!(
-                                                                "mouse preset: {} (not saved: {reason})",
-                                                                mouse.name()
-                                                            );
-                                                        }
-                                                    }
-                                                }
-                                            }
-                                            "model" => app.open_model_picker(model_choices()),
-                                            "sessions" => app.open_session_switcher(),
-                                            "help" => eprintln!("commands: help, details, model, sessions, mouse"),
-                                            other => eprintln!("builtin: {other}"),
-                                        },
-                                        Route::Expanded(prompt) => {
-                                            match app.submit(prompt.clone()) {
-                                                SubmitOutcome::Queued => {
-                                                    eprintln!("queued (provider starting): {prompt}");
-                                                }
-                                                SubmitOutcome::Delivered => {
-                                                    eprintln!("delivered: {prompt}");
-                                                }
-                                            }
-                                        }
-                                        Route::Passthrough => {
-                                            match app.submit(cmd.clone()) {
-                                                SubmitOutcome::Queued => {
-                                                    eprintln!("queued (provider starting): {cmd}");
-                                                }
-                                                SubmitOutcome::Delivered => {
-                                                    eprintln!("delivered: {cmd}");
-                                                }
-                                            }
-                                        }
-                                    }
-                                }
-                                render(&mut app, &mut stdout, &input)?;
-                            }
-                            KeyCode::Backspace => {
-                                input.pop();
-                                app.slash_completions(&input);
-                                render(&mut app, &mut stdout, &input)?;
-                            }
-                            _ => {}
                         }
                     }
                 }
-                Event::Resize(w, _h) => {
-                    app.resize(w);
-                    render(&mut app, &mut stdout, &input)?;
+                Event::Resize(w, h) => {
+                    app.set_size(w, h);
+                    renderer.on_resize(w, h, &mut AppFrame {
+                        app: &mut app,
+                        input: &input,
+                    })?;
                 }
                 Event::Mouse(mouse_event) => {
                     handle_mouse(&mut app, mouse_event);
-                    render(&mut app, &mut stdout, &input)?;
+                    paint(&mut renderer, &mut app, &input)?;
                 }
                 Event::Paste(text) if !app.overlay_open() => {
                     // One paste = one event: the whole block is inserted
                     // into the buffer, never executed line-by-line.
                     let appended = app.paste(&text);
                     input.push_str(&appended);
-                    render(&mut app, &mut stdout, &input)?;
+                    paint(&mut renderer, &mut app, &input)?;
+                }
+                Event::FocusGained => {
+                    // Mode 2031 analogue under crossterm: re-query OSC 11.
+                    let out = renderer.out_mut();
+                    write!(out, "{OSC11_QUERY}")?;
+                    out.flush()?;
                 }
                 _ => {}
             }
+        }
+
+        if app.poll_space_hold(Instant::now()) {
+            paint(&mut renderer, &mut app, &input)?;
         }
 
         // Flush queued prompts once the provider is ready.
@@ -254,11 +176,19 @@ fn main() -> io::Result<()> {
             eprintln!("flushed after ready: {prompt}");
         }
         if !flushed.is_empty() {
-            render(&mut app, &mut stdout, &input)?;
+            paint(&mut renderer, &mut app, &input)?;
         }
     }
 
-    execute!(stdout, Show, LeaveAlternateScreen, DisableBracketedPaste)?;
+    let stdout = renderer.out_mut();
+    execute!(
+        stdout,
+        Show,
+        LeaveAlternateScreen,
+        DisableBracketedPaste,
+        DisableFocusChange
+    )?;
+    write!(stdout, "{MODE_2031_DISABLE}")?;
     write!(stdout, "{}", mouse.disable())?;
     disable_raw_mode()?;
     Ok(())
@@ -275,29 +205,17 @@ fn handle_mouse(app: &mut App, event: MouseEvent) {
     }
 }
 
-/// Map a key event to an overlay input sequence — panels consume raw
-/// decoded input (Esc, arrows, Enter, Ctrl+D/N/R, k/j).  Keys without a
-/// mapping are ignored while an overlay is open (modal).
-fn overlay_key_data(key: &KeyEvent) -> Option<&'static str> {
-    match (key.code, key.modifiers) {
-        (KeyCode::Esc, _) => Some("\x1b"),
-        (KeyCode::Enter, _) => Some("\r"),
-        (KeyCode::Up, _) => Some("\x1b[A"),
-        (KeyCode::Down, _) => Some("\x1b[B"),
-        (KeyCode::Char('d'), m) if m.contains(KeyModifiers::CONTROL) => Some("\x04"),
-        (KeyCode::Char('n'), m) if m.contains(KeyModifiers::CONTROL) => Some("\x0e"),
-        (KeyCode::Char('r'), m) if m.contains(KeyModifiers::CONTROL) => Some("\x12"),
-        (KeyCode::Char('k'), m) if !m.contains(KeyModifiers::CONTROL) => Some("k"),
-        (KeyCode::Char('j'), m) if !m.contains(KeyModifiers::CONTROL) => Some("j"),
-        _ => None,
-    }
-}
-
 /// Act on a closed overlay panel's outcome.  An approval Yes is the only
 /// path that deletes; Esc / No / Cancel never do.
-fn handle_outcome(app: &mut App, outcome: OverlayOutcome) {
+fn handle_outcome(app: &mut App, input: &mut String, outcome: OverlayOutcome) {
     match outcome {
-        OverlayOutcome::ModelSelected(model) => eprintln!("model: {model}"),
+        OverlayOutcome::ModelSelected(model) => {
+            app.apply_model(&model);
+            eprintln!("model: {model}");
+        }
+        OverlayOutcome::HistoryPicked(text) => {
+            *input = text;
+        }
         OverlayOutcome::SessionSwitched(id) => eprintln!("session: switched to {id}"),
         OverlayOutcome::SessionNew => eprintln!("session: new"),
         OverlayOutcome::SessionCancelled => {
@@ -314,27 +232,132 @@ fn handle_outcome(app: &mut App, outcome: OverlayOutcome) {
             None => eprintln!("approval: yes (no pending action)"),
         },
         OverlayOutcome::Approval(false) => eprintln!("approval: declined (nothing deleted)"),
+        OverlayOutcome::Dismissed => {}
+        OverlayOutcome::HubSelected(id) => eprintln!("hub: focus {id}"),
     }
 }
 
-/// Repaint: banner + transcript + status line + input line.
-fn render(app: &mut App, stdout: &mut impl Write, input: &str) -> io::Result<()> {
-    execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
-    for row in app.render() {
-        writeln!(stdout, "{row}")?;
+fn apply_effect(
+    mouse: &mut MousePreset,
+    renderer: &mut Renderer<io::Stdout>,
+    app: &mut App,
+    input: &mut String,
+    effect: SubmitEffect,
+) -> io::Result<()> {
+    match effect {
+        SubmitEffect::DisplayReset => {
+            app.request_history_replay();
+            let mut provider = AppFrame { app, input };
+            renderer.reset_display(&mut provider)?;
+        }
+        SubmitEffect::ExternalEditor => {
+            let stdout = renderer.out_mut();
+            execute!(stdout, Show, LeaveAlternateScreen)?;
+            disable_raw_mode()?;
+            *input = run_external_editor(input);
+            enable_raw_mode()?;
+            execute!(stdout, EnterAlternateScreen, Hide)?;
+            renderer.set_size(renderer.width(), renderer.height());
+            paint(renderer, app, input)?;
+        }
+        other => {
+            apply_submit_effect(mouse, renderer.out_mut(), other)?;
+            paint(renderer, app, input)?;
+        }
     }
-    // A queued message pulled back via Alt+Up is highlighted (inverse
-    // video) until Esc clears the highlight — the text stays in the
-    // buffer either way.
-    let prompt = if app.queue_highlighted() { "\x1b[7m" } else { "" };
-    let reset = if app.queue_highlighted() { "\x1b[0m" } else { "" };
-    let mut lines = input.split('\n');
-    if let Some(first) = lines.next() {
-        write!(stdout, "{prompt}> {first}{reset}")?;
+    Ok(())
+}
+
+fn apply_submit_effect(
+    mouse: &mut MousePreset,
+    stdout: &mut impl Write,
+    effect: SubmitEffect,
+) -> io::Result<()> {
+    match effect {
+        SubmitEffect::None => {}
+        SubmitEffect::MouseToggle => {
+            let next = cycle_mouse(*mouse);
+            apply_submit_effect(mouse, stdout, SubmitEffect::Mouse(next))?;
+        }
+        SubmitEffect::Mouse(next) => {
+            write!(stdout, "{}", mouse.disable())?;
+            *mouse = next;
+            write!(stdout, "{}", mouse.enable())?;
+            match save_mouse_preset(*mouse) {
+                Ok(()) => eprintln!("mouse preset: {} (saved)", mouse.name()),
+                Err(reason) => {
+                    eprintln!("mouse preset: {} (not saved: {reason})", mouse.name())
+                }
+            }
+        }
+        SubmitEffect::Queued(prompt) => {
+            eprintln!("queued (provider starting): {prompt}");
+        }
+        SubmitEffect::Delivered(prompt) => {
+            eprintln!("delivered: {prompt}");
+        }
+        SubmitEffect::Copy(text) => {
+            write!(stdout, "{}", osc52_copy(&text))?;
+            stdout.flush()?;
+        }
+        SubmitEffect::DisplayReset | SubmitEffect::ExternalEditor => {}
     }
-    for line in lines {
-        writeln!(stdout)?;
-        write!(stdout, "{prompt}  {line}{reset}")?;
+    Ok(())
+}
+
+fn cycle_mouse(current: MousePreset) -> MousePreset {
+    match current {
+        MousePreset::Off => MousePreset::Wheel,
+        MousePreset::Wheel => MousePreset::Buttons,
+        MousePreset::Buttons => MousePreset::All,
+        MousePreset::All => MousePreset::Off,
     }
-    stdout.flush()
+}
+
+/// Viewport-diff paint via [`Renderer`] — never `Clear(All)`.
+fn paint(
+    renderer: &mut Renderer<io::Stdout>,
+    app: &mut App,
+    input: &str,
+) -> io::Result<()> {
+    let mut provider = AppFrame { app, input };
+    let plan = provider.plan((renderer.width(), renderer.height()));
+    if let Some(ack) = renderer.draw(plan)? {
+        provider.acknowledge(ack.id);
+    }
+    Ok(())
+}
+
+struct AppFrame<'a> {
+    app: &'a mut App,
+    input: &'a str,
+}
+
+impl FrameProvider for AppFrame<'_> {
+    fn plan(&mut self, size: (u16, u16)) -> FramePlan {
+        self.app.plan_frame(self.input, size.1)
+    }
+
+    fn acknowledge(&mut self, id: u64) {
+        self.app.acknowledge_history(id);
+    }
+}
+
+/// `$VISUAL` / `$EDITOR` (fallback `vi`) on a temp file; returns the
+/// edited draft, or the original text if the editor fails.
+fn run_external_editor(draft: &str) -> String {
+    let editor = std::env::var("VISUAL")
+        .or_else(|_| std::env::var("EDITOR"))
+        .unwrap_or_else(|_| "vi".to_owned());
+    let path = std::env::temp_dir().join(format!("titi-draft-{}.txt", std::process::id()));
+    if std::fs::write(&path, draft).is_err() {
+        return draft.to_owned();
+    }
+    let status = std::process::Command::new(&editor).arg(&path).status();
+    let text = std::fs::read_to_string(&path).unwrap_or_else(|_| draft.to_owned());
+    let _ = std::fs::remove_file(&path);
+    match status {
+        Ok(s) if s.success() => text,
+        _ => draft.to_owned(),
+    }
 }

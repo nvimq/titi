@@ -174,7 +174,10 @@ impl ProbeOwner for BgColorOwner {
         let spec = body
             .strip_suffix("\x1b\\")
             .or_else(|| body.strip_suffix('\x07'))?;
-        let spec = spec.strip_prefix("rgb:").unwrap_or(spec);
+        let spec = spec
+            .strip_prefix("rgba:")
+            .or_else(|| spec.strip_prefix("rgb:"))
+            .unwrap_or(spec);
         let parts: Vec<&str> = spec.split('/').collect();
         if parts.len() != 3 {
             return None;
@@ -188,11 +191,31 @@ impl ProbeOwner for BgColorOwner {
 
 /// Parse an xterm-style colour component (`0000`-`ffff`) to u8.
 fn parse_xterm_color(hex: &str) -> Option<u8> {
-    if hex.len() < 2 {
+    if hex.is_empty() || hex.len() > 4 || !hex.bytes().all(|b| b.is_ascii_hexdigit()) {
         return None;
     }
-    u8::from_str_radix(&hex[..2], 16).ok()
+    let value = u32::from_str_radix(hex, 16).ok()?;
+    let max = 16u32.saturating_pow(hex.len() as u32).saturating_sub(1);
+    if max == 0 {
+        return Some(0);
+    }
+    Some(((u64::from(value) * 255 + u64::from(max) / 2) / u64::from(max)) as u8)
 }
+
+/// Parse an OSC 11 background-color reply into RGB.
+pub fn parse_osc11(reply: &[u8]) -> Option<Rgb> {
+    match BgColorOwner.parse(reply) {
+        Some(Cap::Bg(rgb)) => Some(rgb),
+        _ => None,
+    }
+}
+
+/// OSC 11 background-color query (ST-terminated).
+pub const OSC11_QUERY: &str = "\x1b]11;?\x1b\\";
+/// DEC Mode 2031 — terminal pushes DSR `CSI ? 997 ; 1/2 n` on appearance change.
+pub const MODE_2031_ENABLE: &str = "\x1b[?2031h";
+/// Disable Mode 2031 notifications.
+pub const MODE_2031_DISABLE: &str = "\x1b[?2031l";
 
 // ---------------------------------------------------------------------------
 // I/O boundary
@@ -216,6 +239,7 @@ pub struct Capabilities {
     sync_output: bool,
     deccara: bool,
     kitty: bool,
+    bg: Option<Rgb>,
 }
 
 impl Capabilities {
@@ -241,7 +265,8 @@ impl Capabilities {
                             Cap::SyncOutput2026 => caps.sync_output = true,
                             Cap::Deccara => caps.deccara = true,
                             Cap::KittyGraphics => caps.kitty = true,
-                            Cap::Cpr(_) | Cap::Bg(_) => {}
+                            Cap::Cpr(_) => {}
+                            Cap::Bg(rgb) => caps.bg = Some(rgb),
                         }
                     }
                 }
@@ -262,6 +287,11 @@ impl Capabilities {
     pub fn kitty(&self) -> bool {
         self.kitty
     }
+
+    /// OSC 11 background colour, if the probe returned a parseable reply.
+    pub fn bg(&self) -> Option<Rgb> {
+        self.bg
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +311,13 @@ pub fn sync_end() -> &'static str {
 /// Wrap a frame in synchronized-output markers (`CSI ?2026h` … `CSI ?2026l`).
 pub fn wrap_sync(frame: &str) -> String {
     format!("\x1b[?2026h{frame}\x1b[?2026l")
+}
+
+/// OSC 52 clipboard copy (`ESC ] 52 ; c ; <base64> BEL`).
+pub fn osc52_copy(text: &str) -> String {
+    use base64::Engine as _;
+    let b64 = base64::engine::general_purpose::STANDARD.encode(text.as_bytes());
+    format!("\x1b]52;c;{b64}\x07")
 }
 
 // ---------------------------------------------------------------------------
@@ -324,6 +361,7 @@ impl MousePreset {
     pub fn parse(arg: &str) -> Option<Self> {
         match arg.trim().to_lowercase().as_str() {
             "off" => Some(MousePreset::Off),
+            "on" => Some(MousePreset::All),
             "wheel" => Some(MousePreset::Wheel),
             "buttons" => Some(MousePreset::Buttons),
             "all" => Some(MousePreset::All),
@@ -542,6 +580,14 @@ mod tests {
     }
 
     #[test]
+    fn osc52_copy_is_base64_bel() {
+        let seq = osc52_copy("hi");
+        assert!(seq.starts_with("\x1b]52;c;"));
+        assert!(seq.ends_with('\u{07}'));
+        assert!(seq.contains("aGk="), "base64(hi)=aGk=: {seq}");
+    }
+
+    #[test]
     fn mouse_preset_off() {
         let preset = MousePreset::Off;
         assert_eq!(
@@ -611,5 +657,13 @@ mod tests {
         assert!(caps.sync_output());
         assert!(caps.kitty());
         assert!(!caps.deccara());
+        assert_eq!(
+            caps.bg(),
+            Some(Rgb {
+                r: 0x12,
+                g: 0x56,
+                b: 0x9a
+            })
+        );
     }
 }

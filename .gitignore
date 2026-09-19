@@ -3,3 +3,5 @@
 *.gcda
 *.gcno
 .DS_Store
+.empryo
+.tmp_*

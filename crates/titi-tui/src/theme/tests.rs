@@ -381,3 +381,67 @@ fn builtin_lookup_and_unknown() {
     assert!(builtin::get_builtin_theme("alabaster").is_some());
     assert!(builtin::get_builtin_theme("nope").is_none());
 }
+
+#[test]
+fn global_theme_init_auto_maps_light_colorfgbg() {
+    let g = GlobalTheme::new();
+    let mut inputs = AppearanceInputs {
+        platform: "linux".into(),
+        colorfgbg: Some("0;15".into()),
+        ..AppearanceInputs::default()
+    };
+    let name = g.init_auto(&inputs);
+    assert_eq!(name, "light");
+    assert!(g.auto_detected());
+    assert!(g.current().is_some_and(|th| th.is_light()));
+
+    inputs.colorfgbg = Some("15;0".into());
+    assert!(g.on_terminal_appearance_change(Appearance::Dark, &inputs));
+    assert_eq!(g.get_current_theme_name().as_deref(), Some("titanium"));
+
+    g.set("dark").expect("set");
+    assert!(!g.auto_detected());
+    assert_eq!(g.get_current_theme_name().as_deref(), Some("dark"));
+}
+
+#[test]
+fn global_theme_osc11_ignored_when_auto_off() {
+    let g = GlobalTheme::new();
+    g.init("dark");
+    let inputs = AppearanceInputs {
+        platform: "linux".into(),
+        colorfgbg: Some("0;15".into()),
+        ..AppearanceInputs::default()
+    };
+    assert!(!g.on_terminal_appearance_change(Appearance::Light, &inputs));
+    assert_eq!(g.get_current_theme_name().as_deref(), Some("dark"));
+}
+
+#[test]
+fn global_theme_duplicate_osc11_is_noop() {
+    let g = GlobalTheme::new();
+    let inputs = AppearanceInputs {
+        platform: "linux".into(),
+        osc11_appearance: Some(Appearance::Dark),
+        ..AppearanceInputs::default()
+    };
+    g.init_auto(&inputs);
+    assert_eq!(g.get_current_theme_name().as_deref(), Some("titanium"));
+    assert!(!g.on_terminal_appearance_change(Appearance::Dark, &inputs));
+    assert!(g.on_terminal_appearance_change(Appearance::Light, &inputs));
+    assert_eq!(g.get_current_theme_name().as_deref(), Some("light"));
+}
+
+#[test]
+fn global_theme_set_auto_mapping_reevaluates() {
+    let g = GlobalTheme::new();
+    let inputs = AppearanceInputs {
+        platform: "linux".into(),
+        osc11_appearance: Some(Appearance::Dark),
+        ..AppearanceInputs::default()
+    };
+    g.init_auto(&inputs);
+    assert_eq!(g.get_current_theme_name().as_deref(), Some("titanium"));
+    g.set_auto_theme_mapping(Appearance::Dark, "dark", &inputs);
+    assert_eq!(g.get_current_theme_name().as_deref(), Some("dark"));
+}
