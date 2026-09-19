@@ -82,18 +82,38 @@ pub struct EngineRuntime {
     commands: mpsc::Receiver<EngineCommand>,
     events: mpsc::Sender<EngineEvent>,
     next_turn: Arc<AtomicU64>,
+    agents: Option<crate::agents::AgentSupervisor>,
 }
 
 impl EngineRuntime {
     pub fn start(config: EngineConfig, resolver: Arc<dyn TransportResolver>) -> Engine {
+        Self::start_inner(config, resolver, None)
+    }
+
+    pub fn start_with_agents(
+        config: EngineConfig,
+        resolver: Arc<dyn TransportResolver>,
+        runner: Arc<dyn crate::agents::AgentRunner>,
+    ) -> Engine {
+        Self::start_inner(config, resolver, Some(runner))
+    }
+
+    fn start_inner(
+        config: EngineConfig,
+        resolver: Arc<dyn TransportResolver>,
+        runner: Option<Arc<dyn crate::agents::AgentRunner>>,
+    ) -> Engine {
         let (command_tx, command_rx) = mpsc::channel(config.command_capacity);
         let (event_tx, event_rx) = mpsc::channel(config.event_capacity);
+        let agents =
+            runner.map(|runner| crate::agents::AgentSupervisor::new(runner, event_tx.clone()));
         let runtime = Self {
             config,
             resolver,
             commands: command_rx,
             events: event_tx,
             next_turn: Arc::new(AtomicU64::new(1)),
+            agents,
         };
         tokio::spawn(runtime.run());
         Engine {
@@ -135,19 +155,42 @@ impl EngineRuntime {
                             }
                             break;
                         }
-                        EngineCommand::ApproveTool { .. }
-                        | EngineCommand::SpawnAgent { .. }
-                        | EngineCommand::FocusAgent { .. }
-                        | EngineCommand::ReviveAgent { .. }
-                        | EngineCommand::StopAgent { .. } => {
-                            let _ = self
-                                .events
-                                .send(EngineEvent::Failed {
-                                    turn_id: None,
-                                    reason: ErrorReason::Rejected,
-                                    message: "agent supervisor is not configured".into(),
-                                })
-                                .await;
+                        EngineCommand::ApproveTool { .. } => {
+                            self.emit_control_failure("tool approval is not configured").await;
+                        }
+                        EngineCommand::SpawnAgent { name, task, kind } => {
+                            if let Some(agents) = &self.agents {
+                                agents.spawn(name, task, kind).await;
+                            } else {
+                                self.emit_control_failure("agent supervisor is not configured").await;
+                            }
+                        }
+                        EngineCommand::FocusAgent { agent_id } => {
+                            let handled = match &self.agents {
+                                Some(agents) => agents.focus(&agent_id).await,
+                                None => false,
+                            };
+                            if !handled {
+                                self.emit_control_failure("agent is not available").await;
+                            }
+                        }
+                        EngineCommand::ReviveAgent { agent_id } => {
+                            let handled = match &self.agents {
+                                Some(agents) => agents.revive(&agent_id).await,
+                                None => false,
+                            };
+                            if !handled {
+                                self.emit_control_failure("agent cannot be revived").await;
+                            }
+                        }
+                        EngineCommand::StopAgent { agent_id } => {
+                            let handled = match &self.agents {
+                                Some(agents) => agents.stop(&agent_id).await,
+                                None => false,
+                            };
+                            if !handled {
+                                self.emit_control_failure("agent is not available").await;
+                            }
                         }
                     }
                 }
@@ -163,6 +206,17 @@ impl EngineRuntime {
                 }
             }
         }
+    }
+
+    async fn emit_control_failure(&self, message: &str) {
+        let _ = self
+            .events
+            .send(EngineEvent::Failed {
+                turn_id: None,
+                reason: ErrorReason::Rejected,
+                message: message.into(),
+            })
+            .await;
     }
 
     fn spawn_turn(

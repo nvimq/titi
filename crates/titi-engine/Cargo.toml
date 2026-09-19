@@ -8,6 +8,7 @@ license.workspace = true
 workspace = true
 
 [dependencies]
+async-trait = "0.1"
 titi-providers = { workspace = true }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
