@@ -16,6 +16,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Surface protocol расширен lifecycle-командами и событиями агентов (`Spawn/Focus/Revive/Stop`, started/progress/status/finished).
 - `titi-cli::App` отображает streaming answer, thinking, tool activity и subagent progress из `EngineEvent`.
 - `/agents` открывает живой Agent Hub; roster обновляется engine-событиями.
+- Реализован `AgentSupervisor` с injectable `AgentRunner`, lifecycle events, progress, stop и revive state.
+- `EngineRuntime::start_with_agents` подключает supervisor без зависимости engine от конкретного provider/tool implementation.
 
 ## VERIFIED
 
@@ -26,6 +28,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Mouse selection test принимает truecolor и ANSI-256 background: оба режима являются корректным terminal output.
 - `project check` — PASS после TUI engine-event integration.
 - `engine_events` — 2 tests: rendering lifecycle и `/agents` live roster.
+- `agents` — 2 integration tests: полный spawn lifecycle и остановка running agent.
+- `project check` после AgentSupervisor — PASS.
 
 ## DECISIONS
 
@@ -52,8 +56,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 2. Читать descriptors из config, а не hardcode `model_choices()`.
 3. Передавать resolved access material в `RequestCtx`.
 4. Добавить tests: missing credential, unknown model, transient primary → backup с разными transports.
-5. Затем заменить `init_provider`/`eprintln!` в `crates/titi-cli/src/main.rs` на реальный `Engine`.
-6. Реализовать `AgentSupervisor`: команды Spawn/Focus/Revive/Stop сейчас явно возвращают `agent supervisor is not configured`; после подключения они должны порождать lifecycle events, которые TUI уже умеет показывать.
+5. Реализовать provider-backed `AgentRunner`, использующий тот же registry, tools и cancellation policy.
+6. Затем заменить `init_provider`/`eprintln!` в `crates/titi-cli/src/main.rs` на реальный `Engine` и передавать Hub actions как `Focus/Revive/StopAgent`.
 
 ## Verification baseline
 

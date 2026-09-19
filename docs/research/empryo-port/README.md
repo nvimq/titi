@@ -116,7 +116,7 @@ JSONL/SQLite persistence, restore, checkpoints, JSON/events RPC, stable exit cod
 
 Background dispatch, shared read cache, per-file write claims, findings bus, steering, fresh-context reviewer.
 
-Готовый surface foundation: engine protocol содержит lifecycle-команды/события агентов, TUI показывает progress/thinking/tools и живой roster через `/agents`. Следующий слой — `AgentSupervisor`, который реально исполняет эти команды.
+Готовый foundation: engine protocol содержит lifecycle-команды/события агентов, TUI показывает progress/thinking/tools и живой roster через `/agents`, а `AgentSupervisor` исполняет spawn/stop/revive через injectable `AgentRunner`. Следующий слой — provider-backed runner, shared tools и file claims.
 
 ### E5 — GPUI desktop
 
