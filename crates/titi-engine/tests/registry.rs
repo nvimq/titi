@@ -95,6 +95,25 @@ fn registry_resolves_transport_wire_model_and_credential() {
 }
 
 #[test]
+fn settings_value_parses_provider_catalog() {
+    let value = serde_json::json!({
+        "providers": [{
+            "id": "primary",
+            "api": "openai-completions",
+            "base_url": "https://example.invalid/v1",
+            "credential_required": false
+        }],
+        "models": [{
+            "id": "primary/chat",
+            "provider": "primary",
+            "wire_model": "wire-chat"
+        }]
+    });
+    let parsed = titi_engine::ProviderRegistryConfig::from_settings_value(&value).unwrap();
+    assert_eq!(parsed.models[0].wire_model, "wire-chat");
+}
+
+#[test]
 fn registry_rejects_missing_credential_and_unknown_model() {
     let transport: Arc<dyn Transport> = Arc::new(MockTransport::default());
     let registry = registry(

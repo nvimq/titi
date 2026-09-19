@@ -1507,6 +1507,7 @@ dependencies = [
  "async-trait",
  "futures",
  "serde",
+ "serde_json",
  "smol_str",
  "thiserror",
  "titi-providers",

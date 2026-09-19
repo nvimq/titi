@@ -20,6 +20,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `EngineRuntime::start_with_agents` подключает supervisor без зависимости engine от конкретного provider/tool implementation.
 - `ProviderRegistry` резолвит model id → wire model + transport + credential; engine передаёт access material в `RequestCtx`.
 - CLI стартует Tokio runtime, шлёт `SubmitPrompt`/`SwitchModel`/`FocusAgent` в engine и рисует `EngineEvent` в transcript.
+- Registry descriptors читаются из settings (`providers`/`models`), иначе fallback на `default_registry_config()`.
+- `StreamingAgentRunner` исполняет spawn через тот же transport/credential resolver.
+- Hub `r`/`x` шлют `ReviveAgent`/`StopAgent` без закрытия overlay.
 
 ## VERIFIED
 
@@ -34,6 +37,10 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `project check` после AgentSupervisor — PASS.
 - `registry` — 4 tests: resolve, missing credential, engine uses wire model+credential, fallback between providers.
 - `project check` после CLI engine wiring — PASS.
+- `loop` cancel + follow-up tests PASS.
+- `StreamingAgentRunner` progress test PASS.
+- Hub revive/stop overlay tests PASS.
+- `project check` после config descriptors / hub commands / runner — PASS.
 
 ## DECISIONS
 
@@ -47,17 +54,16 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 
 - Текущий `titi-providers::FallbackChain` one-shot; новый engine loop поддерживает ordered список самостоятельно. Позже объединить политики, не держать две расходящиеся реализации.
 - `TransportResolver` возвращает `ResolvedModel`; `ProviderRegistry` реализует этот trait.
-- Cancellation signal существует, но отдельный pending-stream test ещё не добавлен.
-- CLI descriptors пока hardcoded в `default_registry_config()`, не читаются из settings.
+- Cancellation и follow-up покрыты engine tests; pending-stream stall watchdog ещё не отдельный test.
+- Settings catalog читается, если `providers`/`models` валидны; иначе остаётся hardcoded default.
 - Все Empryo fallback models используют один `subscriptions` provider, поэтому общий outage этого provider цепочка не переживёт.
 - Research consolidation audit на `subscriptions/grok-4.6` завершён: `empryo-port` остаётся каноном; OMP — reference для TUI/tool UX; Hermes/Vellum — точечные источники идей.
 
 ## NEXT
 
-1. Читать descriptors из config/settings, а не `default_registry_config()` в CLI.
-2. Реализовать provider-backed `AgentRunner` на том же registry, tools и cancellation policy.
-3. Добавить cancellation и queued-follow-up concurrency tests.
-4. Подключить Hub revive/stop к `ReviveAgent`/`StopAgent`.
+1. Tool loop: registry, schemas, approval, bounded rounds, trajectory.
+2. Читать credentials из secrets store, не только env.
+3. Headless/RPC surface на том же EngineCommand/EngineEvent.
 
 ## Verification baseline
 

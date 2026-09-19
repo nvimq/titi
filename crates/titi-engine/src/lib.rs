@@ -5,7 +5,7 @@ pub mod protocol;
 pub mod registry;
 pub mod runtime;
 
-pub use agents::{AgentContext, AgentRequest, AgentRunner, AgentSupervisor};
+pub use agents::{AgentContext, AgentRequest, AgentRunner, AgentSupervisor, StreamingAgentRunner};
 pub use protocol::{AgentKind, AgentStatus, EngineCommand, EngineEvent, TurnId};
 pub use registry::{
     CredentialSource, EnvCredentialSource, HttpTransportFactory, ModelDescriptor,

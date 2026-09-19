@@ -6,7 +6,11 @@ use async_trait::async_trait;
 use smol_str::SmolStr;
 use tokio::sync::{Mutex, mpsc};
 
+use futures::StreamExt;
+use titi_providers::{ChatMessage, RequestCtx, Role, StreamEvent, WireRequest};
+
 use crate::protocol::{AgentKind, AgentStatus, EngineEvent};
+use crate::runtime::TransportResolver;
 
 #[derive(Debug, Clone)]
 pub struct AgentRequest {
@@ -177,5 +181,67 @@ impl AgentSupervisor {
                 })
                 .await;
         });
+    }
+}
+
+/// Runs a spawned agent as a one-shot provider turn on the given model.
+pub struct StreamingAgentRunner {
+    resolver: Arc<dyn TransportResolver>,
+    model: SmolStr,
+}
+
+impl StreamingAgentRunner {
+    pub fn new(resolver: Arc<dyn TransportResolver>, model: impl Into<SmolStr>) -> Self {
+        Self {
+            resolver,
+            model: model.into(),
+        }
+    }
+}
+
+#[async_trait]
+impl AgentRunner for StreamingAgentRunner {
+    async fn run(&self, request: AgentRequest, context: AgentContext) -> Result<SmolStr, SmolStr> {
+        let resolved = self
+            .resolver
+            .resolve(&self.model)
+            .map_err(|error| SmolStr::from(error.to_string()))?;
+        let mut wire = WireRequest::new(resolved.wire_model.clone());
+        wire.messages.push(ChatMessage {
+            role: Role::User,
+            content: request.task.clone(),
+            tool_calls: Vec::new(),
+        });
+        let aborted = Arc::new(AtomicBool::new(false));
+        let ctx = RequestCtx {
+            api_key: resolved.credential.map(|credential| credential.access),
+            aborted: Arc::clone(&aborted),
+        };
+        let mut stream = resolved
+            .transport
+            .stream(wire, ctx)
+            .await
+            .map_err(|error| SmolStr::from(error.to_string()))?;
+        let mut summary = String::new();
+        while let Some(event) = stream.next().await {
+            if context.is_aborted() {
+                aborted.store(true, Ordering::SeqCst);
+                return Err("aborted".into());
+            }
+            match event {
+                StreamEvent::TextDelta { text, .. } | StreamEvent::ThinkingDelta { text, .. } => {
+                    summary.push_str(&text);
+                    context.progress(text).await;
+                }
+                StreamEvent::Error { message, .. } => return Err(message),
+                StreamEvent::Done { .. } => break,
+                _ => {}
+            }
+        }
+        if summary.is_empty() {
+            Ok(format!("{} complete", request.name).into())
+        } else {
+            Ok(summary.into())
+        }
     }
 }

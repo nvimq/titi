@@ -96,7 +96,7 @@ Empryo используется как внешний supervisor разрабо�
 - [x] Контрактные tests: stream success, transient fallback, permanent stop.
 - [x] Provider registry возвращает transport + credential + descriptor для model id.
 - [x] CLI переводит submit и stream rendering на engine.
-- [ ] Cancellation и queued-follow-up имеют отдельные concurrency tests.
+- [x] Cancellation и queued-follow-up имеют отдельные concurrency tests.
 
 DoD: реальный prompt проходит TUI → engine → configured provider → streaming transcript; Ctrl+X отменяет turn; mock `429` переключает модель; `401` не переключает.
 
@@ -116,7 +116,7 @@ JSONL/SQLite persistence, restore, checkpoints, JSON/events RPC, stable exit cod
 
 Background dispatch, shared read cache, per-file write claims, findings bus, steering, fresh-context reviewer.
 
-Готовый foundation: engine protocol содержит lifecycle-команды/события агентов, TUI показывает progress/thinking/tools и живой roster через `/agents`, а `AgentSupervisor` исполняет spawn/stop/revive через injectable `AgentRunner`. Следующий слой — provider-backed runner, shared tools и file claims.
+Готовый foundation: engine protocol содержит lifecycle-команды/события агентов, TUI показывает progress/thinking/tools и живой roster через `/agents`, `AgentSupervisor` исполняет spawn/stop/revive, `StreamingAgentRunner` ходит в тот же provider registry. Следующий слой — tool loop, shared tools и file claims.
 
 ### E5 — GPUI desktop
 

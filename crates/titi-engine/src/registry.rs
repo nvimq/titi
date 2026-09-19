@@ -34,6 +34,16 @@ pub struct ProviderRegistryConfig {
     pub models: Vec<ModelDescriptor>,
 }
 
+impl ProviderRegistryConfig {
+    pub fn from_settings_value(value: &serde_json::Value) -> Option<Self> {
+        let parsed: Self = serde_json::from_value(value.clone()).ok()?;
+        if parsed.providers.is_empty() || parsed.models.is_empty() {
+            return None;
+        }
+        Some(parsed)
+    }
+}
+
 pub struct ResolvedModel {
     pub id: SmolStr,
     pub wire_model: SmolStr,

@@ -192,8 +192,16 @@ pub struct HubRoster {
     max_visible: Option<usize>,
     closed: bool,
     cancelled: bool,
+    pending: Option<HubCommand>,
     glyphs: HubGlyphs,
     theme: Option<Arc<Theme>>,
+}
+
+/// Hub action that should be forwarded to the engine without closing the overlay.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HubCommand {
+    Revive(String),
+    Stop(String),
 }
 
 impl HubRoster {
@@ -206,11 +214,7 @@ impl HubRoster {
         Self::with_glyphs(visible_peers(peers), glyphs, Some(theme))
     }
 
-    fn with_glyphs(
-        peers: Vec<HubPeer>,
-        glyphs: HubGlyphs,
-        theme: Option<Arc<Theme>>,
-    ) -> Self {
+    fn with_glyphs(peers: Vec<HubPeer>, glyphs: HubGlyphs, theme: Option<Arc<Theme>>) -> Self {
         HubRoster {
             peers,
             selected: 0,
@@ -220,6 +224,7 @@ impl HubRoster {
             max_visible: None,
             closed: false,
             cancelled: false,
+            pending: None,
             glyphs,
             theme,
         }
@@ -242,6 +247,15 @@ impl HubRoster {
             return None;
         }
         self.peers.get(self.selected).map(|p| p.id.clone())
+    }
+
+    /// Engine command requested by a hub key that does not close the overlay.
+    pub fn pending_command(&self) -> Option<HubCommand> {
+        self.pending.clone()
+    }
+
+    pub fn take_pending_command(&mut self) -> Option<HubCommand> {
+        self.pending.take()
     }
 
     pub fn peers(&self) -> &[HubPeer] {
@@ -304,9 +318,11 @@ impl HubRoster {
             ));
             return;
         }
+        let id = peer.id.clone();
         if let Some(peer) = self.selected_peer_mut() {
             peer.status = AgentStatus::Idle;
         }
+        self.pending = Some(HubCommand::Revive(id));
         self.notice = None;
     }
 
@@ -321,9 +337,11 @@ impl HubRoster {
             ));
             return;
         }
+        let id = peer.id.clone();
         if let Some(peer) = self.selected_peer_mut() {
             peer.status = AgentStatus::Aborted;
         }
+        self.pending = Some(HubCommand::Stop(id));
         self.notice = None;
     }
 
@@ -386,9 +404,7 @@ impl HubRoster {
         let raw = if self.details && !self.peers.is_empty() {
             format!("Tab:roster  PgUp/PgDn:scroll  Enter:open  t:{next_view}  Esc:roster")
         } else {
-            format!(
-                "j/k:select  Enter:open  t:{next_view}  Tab:details  r/x:manage  Esc:close"
-            )
+            format!("j/k:select  Enter:open  t:{next_view}  Tab:details  r/x:manage  Esc:close")
         };
         let shown = truncate_to_width(&raw, inner_w);
         match &self.theme {
@@ -498,7 +514,9 @@ fn box_top_title(inner_w: usize, title: &str) -> String {
         return format!("╭{}╮", "─".repeat(inner_w));
     }
     let shown = truncate_to_width(&format!(" {title} "), inner_w.saturating_sub(1));
-    let fill = inner_w.saturating_sub(1).saturating_sub(visible_width(&shown));
+    let fill = inner_w
+        .saturating_sub(1)
+        .saturating_sub(visible_width(&shown));
     format!("╭─{shown}{}╮", "─".repeat(fill))
 }
 
@@ -621,7 +639,9 @@ mod tests {
         assert!(out.contains("○"), "{out}");
         assert!(out.contains("No agents in this session"), "{out}");
         assert!(
-            out.contains("Finished, parked, and killed subagents remain with the session that created them."),
+            out.contains(
+                "Finished, parked, and killed subagents remain with the session that created them."
+            ),
             "{out}"
         );
         assert!(
@@ -685,6 +705,10 @@ mod tests {
         hub.handle_input("x");
         assert_eq!(hub.peers()[0].status, AgentStatus::Aborted);
         assert!(hub.notice().is_none());
+        assert_eq!(
+            hub.take_pending_command(),
+            Some(HubCommand::Stop("W".into()))
+        );
     }
 
     #[test]
@@ -693,6 +717,10 @@ mod tests {
         hub.handle_input("r");
         assert_eq!(hub.peers()[0].status, AgentStatus::Idle);
         assert!(hub.notice().is_none());
+        assert_eq!(
+            hub.take_pending_command(),
+            Some(HubCommand::Revive("Parked".into()))
+        );
     }
 
     #[test]
@@ -713,8 +741,7 @@ mod tests {
         );
         hub.handle_input("x");
         assert!(
-            hub.notice()
-                .is_some_and(|n| n.contains("cannot be killed")),
+            hub.notice().is_some_and(|n| n.contains("cannot be killed")),
             "{:?}",
             hub.notice()
         );
