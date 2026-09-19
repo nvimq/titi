@@ -18,6 +18,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `/agents` открывает живой Agent Hub; roster обновляется engine-событиями.
 - Реализован `AgentSupervisor` с injectable `AgentRunner`, lifecycle events, progress, stop и revive state.
 - `EngineRuntime::start_with_agents` подключает supervisor без зависимости engine от конкретного provider/tool implementation.
+- `ProviderRegistry` резолвит model id → wire model + transport + credential; engine передаёт access material в `RequestCtx`.
+- CLI стартует Tokio runtime, шлёт `SubmitPrompt`/`SwitchModel`/`FocusAgent` в engine и рисует `EngineEvent` в transcript.
 
 ## VERIFIED
 
@@ -30,6 +32,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `engine_events` — 2 tests: rendering lifecycle и `/agents` live roster.
 - `agents` — 2 integration tests: полный spawn lifecycle и остановка running agent.
 - `project check` после AgentSupervisor — PASS.
+- `registry` — 4 tests: resolve, missing credential, engine uses wire model+credential, fallback between providers.
+- `project check` после CLI engine wiring — PASS.
 
 ## DECISIONS
 
@@ -42,22 +46,18 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 ## RISKS
 
 - Текущий `titi-providers::FallbackChain` one-shot; новый engine loop поддерживает ordered список самостоятельно. Позже объединить политики, не держать две расходящиеся реализации.
-- `TransportResolver` пока возвращает только transport; реальный registry должен также вернуть credential и provider metadata.
+- `TransportResolver` возвращает `ResolvedModel`; `ProviderRegistry` реализует этот trait.
 - Cancellation signal существует, но отдельный pending-stream test ещё не добавлен.
-- `titi-cli` всё ещё печатает delivered prompts через `eprintln!`; engine ещё не подключён.
+- CLI descriptors пока hardcoded в `default_registry_config()`, не читаются из settings.
 - Все Empryo fallback models используют один `subscriptions` provider, поэтому общий outage этого provider цепочка не переживёт.
 - Research consolidation audit на `subscriptions/grok-4.6` завершён: `empryo-port` остаётся каноном; OMP — reference для TUI/tool UX; Hermes/Vellum — точечные источники идей.
 
 ## NEXT
 
-Реализовать provider registry перед CLI integration:
-
-1. Ввести `ResolvedModel { model, transport, credential }` или эквивалент без утечки refresh token.
-2. Читать descriptors из config, а не hardcode `model_choices()`.
-3. Передавать resolved access material в `RequestCtx`.
-4. Добавить tests: missing credential, unknown model, transient primary → backup с разными transports.
-5. Реализовать provider-backed `AgentRunner`, использующий тот же registry, tools и cancellation policy.
-6. Затем заменить `init_provider`/`eprintln!` в `crates/titi-cli/src/main.rs` на реальный `Engine` и передавать Hub actions как `Focus/Revive/StopAgent`.
+1. Читать descriptors из config/settings, а не `default_registry_config()` в CLI.
+2. Реализовать provider-backed `AgentRunner` на том же registry, tools и cancellation policy.
+3. Добавить cancellation и queued-follow-up concurrency tests.
+4. Подключить Hub revive/stop к `ReviveAgent`/`StopAgent`.
 
 ## Verification baseline
 

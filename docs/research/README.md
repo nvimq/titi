@@ -1,6 +1,8 @@
-# Research Map — titi: слияние трёх харнессов на Rust
+# Research Map — titi: порт Empryo на Rust
 
-titi = клон харнесса **omp** (весь функционал) + **обучаемость Hermes Agent** (память, SOUL, self-improvement) + **мультиботность и безопасность Vellum** (сеть ботов, actor identity). Реализация — Rust workspace.
+**Канон:** Empryo задаёт продуктовую архитектуру (agent loop, Genome, workbench, surfaces). OMP — reference для TUI и tool UX. Hermes и Vellum — точечные источники идей, не равные источники архитектуры.
+
+Историческая формула «слияние трёх харнессов» сохранена в тематических README как comparative research 2026-08. Действующие решения и crate-карта живут в [empryo-port/README.md](empryo-port/README.md).
 
 ## Активный порт Empryo
 

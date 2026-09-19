@@ -1472,6 +1472,7 @@ dependencies = [
  "titi-providers",
  "titi-tools",
  "titi-tui",
+ "tokio",
 ]
 
 [[package]]

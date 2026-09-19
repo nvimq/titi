@@ -1,5 +1,7 @@
 # Провайдеры и стриминг
 
+> Сравнительный research 2026-08. Продуктовые решения — [`empryo-port/README.md`](../empryo-port/README.md). Действующий registry: `titi-engine::ProviderRegistry` резолвит descriptor + transport + credential. Retry/fallback принадлежит engine и запрещён после visible delta.
+
 Исследование каркаса модельных провайдеров: как харнессы организуют маршрутизацию запросов к LLM-бэкендам (Anthropic, OpenAI, Gemini, OpenRouter, локальные движки), чем различаются их транспорта (SSE / WebSocket / REST), как нормализуется поток событий, где живут учётные данные и как устроены retry/fallback-цепочки.
 
 Подсистемные доки: [transports.md](./transports.md), [streaming-events.md](./streaming-events.md), [auth-credentials.md](./auth-credentials.md).

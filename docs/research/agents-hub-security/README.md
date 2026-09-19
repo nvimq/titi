@@ -1,5 +1,7 @@
 # Агенты, hub и безопасность
 
+> Сравнительный research 2026-08. Продуктовые решения — [`empryo-port/README.md`](../empryo-port/README.md). Действующий слой: `titi-engine::AgentSupervisor` + injectable `AgentRunner`, lifecycle events, TUI `/agents`. Shared bus, file claims, permissions и steering — следующие слои, не готовы.
+
 Тема: task-субагенты и их discovery, hub-сообщения между агентами, checkpoint/rewind, todo-списки, advisor-watchdog; модель безопасности Vellum (actor identity, sandbox на вызов инструмента, креды вне процесса модели, default deny).
 
 ## omp

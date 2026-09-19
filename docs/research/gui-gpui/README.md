@@ -1,6 +1,8 @@
 # GUI поверх общего ядра (gpui)
 
-Как наложить нативный GUI (gpui от Zed) на тот же core-контракт, который обслуживает TUI (Component/history/viewport), и почему для titi это правильная развилка: TUI остаётся основным интерфейсом, gpui — второй адаптер над UI-независимым ядром.
+> Сравнительный research 2026-08. Продуктовые решения — [`empryo-port/README.md`](../empryo-port/README.md). Действующий контракт: `EngineCommand`/`EngineEvent` в `titi-engine`. Crate desktop — `titi-desktop`, не `titi-gpui`. ANSI `Component` не поднимается в ядро.
+
+Как наложить нативный GUI (gpui от Zed) на тот же engine-контракт, который обслуживает TUI и headless. TUI, headless и GPUI — равноправные surfaces; GPUI начинается только после рабочего TUI/headless пути.
 
 ## omp
 
@@ -40,11 +42,11 @@ Hermes решает задачу «много фронтендов над одн
 
 Источники: https://gpui.rs/, https://lib.rs/crates/gpui, https://github.com/zed-industries/awesome-gpui, https://www.boringcactus.com/2025/04/13/2025-survey-of-rust-gui-libraries.html (секция GPUI: отсутствие text input, IME, a11y), http://lukaskalbertodt.github.io/2023/02/03/tauri-iced-egui-performance-comparison.html (startup/binary/input-lag), https://linuxiac.com/zed-code-editor-hits-1-0-with-gpu-accelerated-ui/.
 
-**Выбор: gpui как GUI-адаптер над UI-независимым ядром, по образцу Hermes (entry points + ACP) и omp (hasUI-режим).** Ядро (titi-core) не знает ни о crossterm, ни о gpui: оно публикует типизированный поток событий (сообщение добавлено, стрим идёт, инструмент начат/завершён) и получает команды пользователя. titi-tui и новый titi-gpui — равноправные адаптеры, каждый рендерит этот поток в своём медиуме; TUI-специфичный контракт `Component` (ANSI-строки фиксированной ширины, `CURSOR_MARKER`) остаётся внутренним делом titi-tui и не поднимается в ядро — переиспользовать `render(width) -> string[]` в GUI невозможно и не нужно. gpui выбран потому, что он единственный из тройки с production-доказательством тяжёлого агентно-редакторного UI (Zed 1.0), богатой экосистемой 2026 (gpui-component даёт готовые таблицы/доки/редакторы) и встроенным асинхронным executor'ом, который естественно мостится с tokio-ядром через канал; egui проигрывает по стилю и асинхронности, iced — по экосистеме агентных приложений и зрелости виджетов. Риски gpui (a11y, отсутствие text input из коробки) закрываются gpui-component и остаются приемлемыми, так как TUI остаётся первичным сурфейсом.
+**Выбор: gpui как GUI-адаптер над `titi-engine`.** Ядро не знает ни о crossterm, ни о gpui: surfaces шлют `EngineCommand` и читают `EngineEvent`. `titi-tui` и будущий `titi-desktop` — равноправные адаптеры. TUI-специфичный контракт `Component` остаётся внутренним делом `titi-tui`. Исторический черновик `UiEvent`/`titi-gpui` ниже — reference, не действующий план.
 
 ## Rust-маппинг
 
-Workspace: `titi-core`, `titi-providers`, `titi-tools`, `titi-tui`, `titi-cli` + **новый** `titi-gpui`.
+Workspace: `titi-engine`, `titi-providers`, `titi-tools`, `titi-tui`, `titi-cli` + будущий `titi-desktop`.
 
 **titi-core — без UI-зависимостей** (никаких crossterm/gpui в Cargo.toml):
 

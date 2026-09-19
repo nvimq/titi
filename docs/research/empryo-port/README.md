@@ -94,8 +94,8 @@ Empryo используется как внешний supervisor разрабо�
 - [x] Async runtime, FIFO follow-ups, cancellation signal.
 - [x] Per-model transient retry и ordered fallback.
 - [x] Контрактные tests: stream success, transient fallback, permanent stop.
-- [ ] Provider registry возвращает transport + credential + descriptor для model id.
-- [ ] CLI переводит submit и stream rendering на engine.
+- [x] Provider registry возвращает transport + credential + descriptor для model id.
+- [x] CLI переводит submit и stream rendering на engine.
 - [ ] Cancellation и queued-follow-up имеют отдельные concurrency tests.
 
 DoD: реальный prompt проходит TUI → engine → configured provider → streaming transcript; Ctrl+X отменяет turn; mock `429` переключает модель; `401` не переключает.

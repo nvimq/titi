@@ -4,12 +4,10 @@ use async_trait::async_trait;
 use smol_str::SmolStr;
 use titi_engine::{
     AgentContext, AgentKind, AgentRequest, AgentRunner, AgentStatus, EngineCommand, EngineConfig,
-    EngineEvent, EngineRuntime, TransportResolver,
+    EngineEvent, EngineRuntime, RegistryError, TransportResolver,
 };
-use titi_providers::Transport;
-
 fn no_models() -> Arc<dyn TransportResolver> {
-    Arc::new(|_: &str| None::<Arc<dyn Transport>>)
+    Arc::new(|model: &str| Err(RegistryError::UnknownModel(model.into())))
 }
 
 struct ReportingRunner;

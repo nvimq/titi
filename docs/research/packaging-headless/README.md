@@ -1,5 +1,7 @@
 # Упаковка и headless-поверхности
 
+> Сравнительный research 2026-08. Продуктовые решения — [`empryo-port/README.md`](../empryo-port/README.md). Headless/RPC сериализует тот же `EngineCommand`/`EngineEvent`, что TUI и будущий GPUI.
+
 Тема: CLI parity (паритет интерактивного и headless-поверхностей), установка/подпись macOS, install-id, user-facing packages, RPC mode, SDK, collab.
 
 ## omp

@@ -1,5 +1,7 @@
 # Базовые инструменты
 
+> Сравнительный research 2026-08. Продуктовые решения — [`empryo-port/README.md`](../empryo-port/README.md). OMP остаётся источником конкретной UX/semantics механики (hashline, bash policy). Исполнение инструментов идёт через engine/tool registry и публикует lifecycle events.
+
 Тема: ядро файловых и командных инструментов агента — `read` (anchored snapshots), `edit` (hashline), `write`, `bash` (PTY-рантайм, фоновые задачи), `glob`, `grep`, fs-scan cache. Это самый «горячий» контур harness: именно здесь живёт основная экономия токенов (структурные резюме вместо полных файлов) и основная безопасность (политика запуска команд).
 
 ## omp

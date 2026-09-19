@@ -30,7 +30,9 @@ use titi_cli::app::{
     default_theme, delete_session, load_mouse_preset, save_mouse_preset, App,
     Dispatch, OverlayOutcome, SubmitEffect,
 };
+use titi_cli::engine::start_engine;
 use titi_cli::keys::{canonical_from_key_event, overlay_key_data};
+use titi_engine::EngineCommand;
 use titi_tui::caps::{osc52_copy, MousePreset, MODE_2031_DISABLE, MODE_2031_ENABLE, OSC11_QUERY};
 use titi_tui::renderer::{FramePlan, FrameProvider, Renderer, ResizeScrollbackMode};
 
@@ -62,11 +64,18 @@ fn main() -> io::Result<()> {
         mouse = preset;
     }
 
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .map_err(io::Error::other)?;
+    let _enter = runtime.enter();
+
     let ready = Arc::new(AtomicBool::new(false));
     {
         let ready = Arc::clone(&ready);
         std::thread::spawn(move || init_provider(ready));
     }
+    let (mut engine, models) = start_engine().map_err(io::Error::other)?;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -85,6 +94,7 @@ fn main() -> io::Result<()> {
 
     let theme = default_theme().map_err(io::Error::other)?;
     let mut app = App::new(Arc::clone(&ready), banner(), theme);
+    app.set_available_models(models);
     let (w, h) = size().unwrap_or((80, 24));
     app.resize(w);
     // Coding-agent default is rebuild; `PI_TUI_RESIZE_SCROLLBACK` overrides.
@@ -114,7 +124,7 @@ fn main() -> io::Result<()> {
                     if app.overlay_open() {
                         if let Some(data) = overlay_key_data(&key) {
                             if let Some(outcome) = app.overlay_input(&data) {
-                                handle_outcome(&mut app, &mut input, outcome);
+                                handle_outcome(&mut engine, &mut app, &mut input, outcome);
                             }
                             paint(&mut renderer, &mut app, &input)?;
                         }
@@ -128,9 +138,10 @@ fn main() -> io::Result<()> {
                                 apply_effect(
                                     &mut mouse,
                                     &mut renderer,
+                                    &mut engine,
                                     &mut app,
                                     &mut input,
-                                    effect,
+                                      effect,
                                 )?;
                             } else {
                                 paint(&mut renderer, &mut app, &input)?;
@@ -170,12 +181,16 @@ fn main() -> io::Result<()> {
             paint(&mut renderer, &mut app, &input)?;
         }
 
-        // Flush queued prompts once the provider is ready.
         let flushed = app.flush_queued(&ready);
-        for prompt in &flushed {
-            eprintln!("flushed after ready: {prompt}");
-        }
-        if !flushed.is_empty() {
+        for prompt in flushed {
+              let _ = engine.try_send(EngineCommand::SubmitPrompt { text: prompt.into() });
+          }
+        let mut events = false;
+        while let Ok(event) = engine.try_recv() {
+            app.ingest_engine_event(event);
+              events = true;
+          }
+        if events {
             paint(&mut renderer, &mut app, &input)?;
         }
     }
@@ -207,11 +222,18 @@ fn handle_mouse(app: &mut App, event: MouseEvent) {
 
 /// Act on a closed overlay panel's outcome.  An approval Yes is the only
 /// path that deletes; Esc / No / Cancel never do.
-fn handle_outcome(app: &mut App, input: &mut String, outcome: OverlayOutcome) {
+fn handle_outcome(
+    engine: &mut titi_engine::Engine,
+    app: &mut App,
+    input: &mut String,
+    outcome: OverlayOutcome,
+) {
     match outcome {
         OverlayOutcome::ModelSelected(model) => {
             app.apply_model(&model);
-            eprintln!("model: {model}");
+            let _ = engine.try_send(EngineCommand::SwitchModel {
+                model: model.into(),
+            });
         }
         OverlayOutcome::HistoryPicked(text) => {
             *input = text;
@@ -233,13 +255,16 @@ fn handle_outcome(app: &mut App, input: &mut String, outcome: OverlayOutcome) {
         },
         OverlayOutcome::Approval(false) => eprintln!("approval: declined (nothing deleted)"),
         OverlayOutcome::Dismissed => {}
-        OverlayOutcome::HubSelected(id) => eprintln!("hub: focus {id}"),
+        OverlayOutcome::HubSelected(id) => {
+            let _ = engine.try_send(EngineCommand::FocusAgent { agent_id: id.into() });
+        }
     }
 }
 
 fn apply_effect(
     mouse: &mut MousePreset,
     renderer: &mut Renderer<io::Stdout>,
+    engine: &mut titi_engine::Engine,
     app: &mut App,
     input: &mut String,
     effect: SubmitEffect,
@@ -261,7 +286,7 @@ fn apply_effect(
             paint(renderer, app, input)?;
         }
         other => {
-            apply_submit_effect(mouse, renderer.out_mut(), other)?;
+            apply_submit_effect(engine, mouse, renderer.out_mut(), other)?;
             paint(renderer, app, input)?;
         }
     }
@@ -269,6 +294,7 @@ fn apply_effect(
 }
 
 fn apply_submit_effect(
+    engine: &mut titi_engine::Engine,
     mouse: &mut MousePreset,
     stdout: &mut impl Write,
     effect: SubmitEffect,
@@ -277,7 +303,7 @@ fn apply_submit_effect(
         SubmitEffect::None => {}
         SubmitEffect::MouseToggle => {
             let next = cycle_mouse(*mouse);
-            apply_submit_effect(mouse, stdout, SubmitEffect::Mouse(next))?;
+            apply_submit_effect(engine, mouse, stdout, SubmitEffect::Mouse(next))?;
         }
         SubmitEffect::Mouse(next) => {
             write!(stdout, "{}", mouse.disable())?;
@@ -290,11 +316,8 @@ fn apply_submit_effect(
                 }
             }
         }
-        SubmitEffect::Queued(prompt) => {
-            eprintln!("queued (provider starting): {prompt}");
-        }
-        SubmitEffect::Delivered(prompt) => {
-            eprintln!("delivered: {prompt}");
+        SubmitEffect::Queued(prompt) | SubmitEffect::Delivered(prompt) => {
+            let _ = engine.try_send(EngineCommand::SubmitPrompt { text: prompt.into() });
         }
         SubmitEffect::Copy(text) => {
             write!(stdout, "{}", osc52_copy(&text))?;
