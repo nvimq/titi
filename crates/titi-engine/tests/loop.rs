@@ -1,7 +1,10 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use titi_engine::{EngineCommand, EngineConfig, EngineEvent, EngineRuntime, TransportResolver};
+use titi_engine::{
+    EngineCommand, EngineConfig, EngineEvent, EngineRuntime, RegistryError, ResolvedModel,
+    TransportResolver,
+};
 use titi_providers::{
     BlockId, MockBody, MockTransport, StopReason, StreamEvent, Transport, TransportError,
 };
@@ -9,8 +12,12 @@ use titi_providers::{
 struct MapResolver(HashMap<String, Arc<dyn Transport>>);
 
 impl TransportResolver for MapResolver {
-    fn resolve(&self, model: &str) -> Option<Arc<dyn Transport>> {
-        self.0.get(model).cloned()
+    fn resolve(&self, model: &str) -> Result<ResolvedModel, RegistryError> {
+        self.0
+            .get(model)
+            .cloned()
+            .map(|transport| ResolvedModel::without_credential(model, transport))
+            .ok_or_else(|| RegistryError::UnknownModel(model.into()))
     }
 }
 

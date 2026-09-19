@@ -81,6 +81,8 @@ pub struct App {
     keys: KeybindingsManager,
     /// Index into [`model_choices`] for cycleForward/cycleBackward.
     current_model: usize,
+    /// Runtime model catalog from the engine registry, if provided.
+    available_models: Vec<String>,
     /// Status-line `mode` segment (`app.plan.toggle`).
     plan_mode: bool,
     /// Status-line collab/`live` badge (`app.live.toggle`).
@@ -125,6 +127,7 @@ impl App {
             highlighted: None,
             keys: load_keybindings_manager(),
             current_model: 0,
+            available_models: Vec::new(),
             plan_mode: false,
             live_mode: false,
             stt_enabled: false,
@@ -646,7 +649,7 @@ impl App {
 
     /// Active model id shown in the status bar.
     pub fn model(&self) -> String {
-        model_choices()
+        self.model_choices()
             .get(self.current_model)
             .cloned()
             .unwrap_or_else(|| "no-model".to_owned())
@@ -654,13 +657,29 @@ impl App {
 
     /// Apply a picker selection to the cycle index.
     pub fn apply_model(&mut self, model: &str) {
-        if let Some(i) = model_choices().iter().position(|m| m == model) {
+        if let Some(i) = self.model_choices().iter().position(|m| m == model) {
             self.current_model = i;
         }
     }
 
-    fn cycle_model(&mut self, forward: bool) {
-        let n = model_choices().len();
+    /// Replace the runtime model catalog used by picker and cycle actions.
+      pub fn set_available_models(&mut self, models: Vec<String>) {
+        self.available_models = models;
+        if self.current_model >= self.model_choices().len() {
+            self.current_model = 0;
+        }
+      }
+
+      fn model_choices(&self) -> Vec<String> {
+        if self.available_models.is_empty() {
+            model_choices()
+        } else {
+            self.available_models.clone()
+        }
+      }
+
+      fn cycle_model(&mut self, forward: bool) {
+        let n = self.model_choices().len();
         if n == 0 {
             return;
         }
@@ -890,7 +909,7 @@ impl App {
                 .keys
                 .matches_canonical(canonical, "app.model.selectTemporary")
         {
-            self.open_model_picker(model_choices());
+            self.open_model_picker(self.model_choices());
             return Dispatch::Handled(None);
         }
 
@@ -1173,7 +1192,7 @@ impl App {
                 None
             }
             "model" => {
-                self.open_model_picker(model_choices());
+                self.open_model_picker(self.model_choices());
                 None
             }
             "sessions" | "switch" => {

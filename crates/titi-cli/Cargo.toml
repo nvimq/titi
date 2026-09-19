@@ -17,3 +17,4 @@ titi-tools = { workspace = true }
 titi-tui = { workspace = true }
 crossterm = "0.29"
 serde_json = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time"] }

@@ -10,17 +10,18 @@ use titi_providers::{
 use tokio::sync::mpsc;
 
 use crate::protocol::{EngineCommand, EngineEvent, TurnId};
+use crate::registry::{RegistryError, ResolvedModel};
 
 /// Resolves a model id to its provider transport.
 pub trait TransportResolver: Send + Sync + 'static {
-    fn resolve(&self, model: &str) -> Option<Arc<dyn Transport>>;
+    fn resolve(&self, model: &str) -> Result<ResolvedModel, RegistryError>;
 }
 
 impl<F> TransportResolver for F
 where
-    F: Fn(&str) -> Option<Arc<dyn Transport>> + Send + Sync + 'static,
+    F: Fn(&str) -> Result<ResolvedModel, RegistryError> + Send + Sync + 'static,
 {
-    fn resolve(&self, model: &str) -> Option<Arc<dyn Transport>> {
+    fn resolve(&self, model: &str) -> Result<ResolvedModel, RegistryError> {
         self(model)
     }
 }
@@ -72,6 +73,12 @@ impl Engine {
 
     pub fn try_recv(&mut self) -> Result<EngineEvent, mpsc::error::TryRecvError> {
         self.events.try_recv()
+    }
+
+    pub fn try_send(&self, command: EngineCommand) -> Result<(), EngineError> {
+        self.commands
+            .try_send(command)
+            .map_err(|_| EngineError::CommandChannelClosed)
     }
 }
 
@@ -275,10 +282,22 @@ async fn run_turn(
                 })
                 .await;
         }
-        let Some(transport) = resolver.resolve(&model) else {
-            previous_model = Some(model);
-            continue;
+        let resolved = match resolver.resolve(&model) {
+            Ok(resolved) => resolved,
+            Err(error) => {
+                let _ = events
+                    .send(EngineEvent::Failed {
+                        turn_id: Some(turn_id),
+                        reason: ErrorReason::Rejected,
+                        message: error.to_string().into(),
+                    })
+                    .await;
+                return;
+            }
         };
+        let api_key = resolved.credential.map(|credential| credential.access);
+        let wire_model = resolved.wire_model;
+        let transport = resolved.transport;
         let _ = events
             .send(EngineEvent::TurnStarted {
                 turn_id,
@@ -290,8 +309,9 @@ async fn run_turn(
             match stream_attempt(
                 turn_id,
                 &prompt,
-                &model,
+                &wire_model,
                 Arc::clone(&transport),
+                api_key.clone(),
                 events.clone(),
                 Arc::clone(&aborted),
             )
@@ -329,6 +349,7 @@ async fn stream_attempt(
     prompt: &SmolStr,
     model: &SmolStr,
     transport: Arc<dyn Transport>,
+    api_key: Option<SmolStr>,
     events: mpsc::Sender<EngineEvent>,
     aborted: Arc<AtomicBool>,
 ) -> Result<(), (TransportError, bool)> {
@@ -339,7 +360,7 @@ async fn stream_attempt(
         tool_calls: Vec::new(),
     });
     let context = RequestCtx {
-        api_key: None,
+        api_key,
         aborted: Arc::clone(&aborted),
     };
     let mut stream = transport

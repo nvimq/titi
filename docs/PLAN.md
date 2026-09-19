@@ -14,9 +14,9 @@
 - DoD: реальный prompt стримится через engine; cancel работает; transient fallback доказан тестом; permanent errors не повторяются; сессия переживает рестарт.
 
 ## M2 — Providers
-- Темы: providers-streaming, toolconv, model-switching
-- Код: provider-каркас со стримингом (tokio + reqwest/eventsource), toolconv-матрица, modelRoles + mid-session switch, retry/fallback chains.
-- DoD: стриминг-тест на mock-сервере; смена модели mid-session без потери контекста.
+- Темы: providers-streaming, toolconv, model-switching, reference-product-port.
+- Код: `titi-engine::ProviderRegistry` (descriptor + transport + credential), wire transports в `titi-providers`, engine-owned retry/fallback до visible content, mid-session switch.
+- DoD: registry tests на missing credential / unknown model / fallback между transports; стриминг-тест на mock; смена модели mid-session без потери контекста.
 
 ## M3 — Tools
 - Темы: tools-core, tools-advanced-cua
