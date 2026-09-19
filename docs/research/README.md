@@ -2,6 +2,13 @@
 
 titi = клон харнесса **omp** (весь функционал) + **обучаемость Hermes Agent** (память, SOUL, self-improvement) + **мультиботность и безопасность Vellum** (сеть ботов, actor identity). Реализация — Rust workspace.
 
+## Активный порт reference product
+
+Текущее направление разработки — функциональная модель reference product с единым Rust engine и нативным GPUI desktop. Канонические документы для продолжения любой моделью:
+
+- [решения, архитектура и milestones](reference-product-port/README.md);
+- [текущий checkpoint, проверки, риски и NEXT](reference-product-port/STATE.md).
+
 ## Темы (20)
 
 | # | Slug | Тема | Статус |

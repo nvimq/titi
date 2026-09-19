@@ -240,6 +240,250 @@ pub fn build_delete(id: u32) -> String {
     format!("\x1b_Ga=d,id={id};\x1b\\")
 }
 
+
+// ---------------------------------------------------------------------------
+// Unicode placeholders (`U=1` + U+10EEEE)
+// ---------------------------------------------------------------------------
+
+/// Kitty Unicode placeholder base character (U+10EEEE, Plane 16 PUA).
+pub const KITTY_PLACEHOLDER: char = '\u{10EEEE}';
+
+/// Row/column diacritics (Unicode combining class 230). Index `i` → codepoint.
+/// Kitty `gen/rowcolumn-diacritics.txt` (Unicode 6.0.0 NSM set), 297 entries.
+const ROWCOLUMN_DIACRITICS: &[u32] = &[
+    0x305, 0x30D, 0x30E, 0x310, 0x312, 0x33D, 0x33E, 0x33F, 0x346, 0x34A, 0x34B, 0x34C, 0x350,
+    0x351, 0x352, 0x357, 0x35B, 0x363, 0x364, 0x365, 0x366, 0x367, 0x368, 0x369, 0x36A, 0x36B,
+    0x36C, 0x36D, 0x36E, 0x36F, 0x483, 0x484, 0x485, 0x486, 0x487, 0x592, 0x593, 0x594, 0x595,
+    0x597, 0x598, 0x599, 0x59C, 0x59D, 0x59E, 0x59F, 0x5A0, 0x5A1, 0x5A8, 0x5A9, 0x5AB, 0x5AC,
+    0x5AF, 0x5C4, 0x610, 0x611, 0x612, 0x613, 0x614, 0x615, 0x616, 0x617, 0x657, 0x658, 0x659,
+    0x65A, 0x65B, 0x65D, 0x65E, 0x6D6, 0x6D7, 0x6D8, 0x6D9, 0x6DA, 0x6DB, 0x6DC, 0x6DF, 0x6E0,
+    0x6E1, 0x6E2, 0x6E4, 0x6E7, 0x6E8, 0x6EB, 0x6EC, 0x730, 0x732, 0x733, 0x735, 0x736, 0x73A,
+    0x73D, 0x73F, 0x740, 0x741, 0x743, 0x745, 0x747, 0x749, 0x74A, 0x7EB, 0x7EC, 0x7ED, 0x7EE,
+    0x7EF, 0x7F0, 0x7F1, 0x7F3, 0x816, 0x817, 0x818, 0x819, 0x81B, 0x81C, 0x81D, 0x81E, 0x81F,
+    0x820, 0x821, 0x822, 0x823, 0x825, 0x826, 0x827, 0x829, 0x82A, 0x82B, 0x82C, 0x82D, 0x951,
+    0x953, 0x954, 0xF82, 0xF83, 0xF86, 0xF87, 0x135D, 0x135E, 0x135F, 0x17DD, 0x193A, 0x1A17,
+    0x1A75, 0x1A76, 0x1A77, 0x1A78, 0x1A79, 0x1A7A, 0x1A7B, 0x1A7C, 0x1B6B, 0x1B6D, 0x1B6E, 0x1B6F,
+    0x1B70, 0x1B71, 0x1B72, 0x1B73, 0x1CD0, 0x1CD1, 0x1CD2, 0x1CDA, 0x1CDB, 0x1CE0, 0x1DC0, 0x1DC1,
+    0x1DC3, 0x1DC4, 0x1DC5, 0x1DC6, 0x1DC7, 0x1DC8, 0x1DC9, 0x1DCB, 0x1DCC, 0x1DD1, 0x1DD2, 0x1DD3,
+    0x1DD4, 0x1DD5, 0x1DD6, 0x1DD7, 0x1DD8, 0x1DD9, 0x1DDA, 0x1DDB, 0x1DDC, 0x1DDD, 0x1DDE, 0x1DDF,
+    0x1DE0, 0x1DE1, 0x1DE2, 0x1DE3, 0x1DE4, 0x1DE5, 0x1DE6, 0x1DFE, 0x20D0, 0x20D1, 0x20D4, 0x20D5,
+    0x20D6, 0x20D7, 0x20DB, 0x20DC, 0x20E1, 0x20E7, 0x20E9, 0x20F0, 0x2CEF, 0x2CF0, 0x2CF1, 0x2DE0,
+    0x2DE1, 0x2DE2, 0x2DE3, 0x2DE4, 0x2DE5, 0x2DE6, 0x2DE7, 0x2DE8, 0x2DE9, 0x2DEA, 0x2DEB, 0x2DEC,
+    0x2DED, 0x2DEE, 0x2DEF, 0x2DF0, 0x2DF1, 0x2DF2, 0x2DF3, 0x2DF4, 0x2DF5, 0x2DF6, 0x2DF7, 0x2DF8,
+    0x2DF9, 0x2DFA, 0x2DFB, 0x2DFC, 0x2DFD, 0x2DFE, 0x2DFF, 0xA66F, 0xA67C, 0xA67D, 0xA6F0, 0xA6F1,
+    0xA8E0, 0xA8E1, 0xA8E2, 0xA8E3, 0xA8E4, 0xA8E5, 0xA8E6, 0xA8E7, 0xA8E8, 0xA8E9, 0xA8EA, 0xA8EB,
+    0xA8EC, 0xA8ED, 0xA8EE, 0xA8EF, 0xA8F0, 0xA8F1, 0xAAB0, 0xAAB2, 0xAAB3, 0xAAB7, 0xAAB8, 0xAABE,
+    0xAABF, 0xAAC1, 0xFE20, 0xFE21, 0xFE22, 0xFE23, 0xFE24, 0xFE25, 0xFE26, 0x10A0F, 0x10A38,
+    0x1D185, 0x1D186, 0x1D187, 0x1D188, 0x1D189, 0x1D1AA, 0x1D1AB, 0x1D1AC, 0x1D1AD, 0x1D242,
+    0x1D243, 0x1D244,
+];
+
+/// Largest row/column index expressible with the diacritic table.
+pub const KITTY_PLACEHOLDER_MAX_CELLS: usize = 297;
+
+/// Env + terminal identity used to detect Unicode-placeholder support.
+#[derive(Debug, Clone, Default)]
+pub struct PlaceholderDetect {
+    /// Normalized terminal id (`kitty` / `ghostty` / other).
+    pub terminal_id: String,
+    /// `TMUX` is set.
+    pub tmux: bool,
+    /// `PI_NO_KITTY_PLACEHOLDERS` / `TITI_NO_KITTY_PLACEHOLDERS`.
+    pub no_placeholders: Option<String>,
+    /// `PI_KITTY_PLACEHOLDERS` / `TITI_KITTY_PLACEHOLDERS`.
+    pub placeholders: Option<String>,
+    /// `PI_FORCE_IMAGE_PROTOCOL` / `TITI_FORCE_IMAGE_PROTOCOL`.
+    pub force_image_protocol: Option<String>,
+}
+
+impl PlaceholderDetect {
+    /// Snapshot process env. `terminal_id` is normalized from `TERM_PROGRAM` / `TERM`.
+    pub fn from_env() -> Self {
+        let term_program = std::env::var("TERM_PROGRAM").ok();
+        let term = std::env::var("TERM").ok();
+        PlaceholderDetect {
+            terminal_id: kitty_terminal_id(term_program.as_deref(), term.as_deref()),
+            tmux: std::env::var("TMUX").is_ok(),
+            no_placeholders: first_env(&["PI_NO_KITTY_PLACEHOLDERS", "TITI_NO_KITTY_PLACEHOLDERS"]),
+            placeholders: first_env(&["PI_KITTY_PLACEHOLDERS", "TITI_KITTY_PLACEHOLDERS"]),
+            force_image_protocol: first_env(&["PI_FORCE_IMAGE_PROTOCOL", "TITI_FORCE_IMAGE_PROTOCOL"]),
+        }
+    }
+
+    /// Whether this terminal should render `U=1` + U+10EEEE grids.
+    pub fn supported(&self) -> bool {
+        detect_kitty_unicode_placeholders_support(self)
+    }
+}
+
+fn first_env(keys: &[&str]) -> Option<String> {
+    for key in keys {
+        if let Ok(v) = std::env::var(key) {
+            return Some(v);
+        }
+    }
+    None
+}
+
+/// Normalize TERM / TERM_PROGRAM to OMP's `terminalId` (`kitty` / `ghostty` / raw).
+pub fn kitty_terminal_id(term_program: Option<&str>, term: Option<&str>) -> String {
+    let tp = term_program.unwrap_or("").to_ascii_lowercase();
+    if tp.contains("kitty") {
+        return "kitty".into();
+    }
+    if tp.contains("ghostty") {
+        return "ghostty".into();
+    }
+    let t = term.unwrap_or("").to_ascii_lowercase();
+    if t.contains("kitty") {
+        return "kitty".into();
+    }
+    if t.contains("ghostty") {
+        return "ghostty".into();
+    }
+    t
+}
+
+fn env_on(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("1" | "true" | "on" | "yes" | "y")
+    )
+}
+
+fn env_off(raw: Option<&str>) -> bool {
+    matches!(
+        raw.map(str::trim).map(str::to_ascii_lowercase).as_deref(),
+        Some("0" | "false" | "off" | "no" | "n")
+    )
+}
+
+/// OMP `detectKittyUnicodePlaceholdersSupport`.
+pub fn detect_kitty_unicode_placeholders_support(env: &PlaceholderDetect) -> bool {
+    if env_on(env.no_placeholders.as_deref()) {
+        return false;
+    }
+    if env_on(env.placeholders.as_deref()) {
+        return true;
+    }
+    if env_off(env.placeholders.as_deref()) {
+        return false;
+    }
+    if env.tmux
+        && env
+            .force_image_protocol
+            .as_deref()
+            .map(str::trim)
+            .map(str::to_ascii_lowercase)
+            .as_deref()
+            == Some("kitty")
+    {
+        return true;
+    }
+    env.terminal_id == "kitty" || env.terminal_id == "ghostty"
+}
+
+/// Whether a `columns`×`rows` placeholder grid fits the diacritic table.
+pub fn kitty_placeholders_fit(columns: u16, rows: u16) -> bool {
+    columns >= 1
+        && rows >= 1
+        && (columns as usize) <= KITTY_PLACEHOLDER_MAX_CELLS
+        && (rows as usize) <= KITTY_PLACEHOLDER_MAX_CELLS
+}
+
+fn diacritic(index: usize) -> String {
+    ROWCOLUMN_DIACRITICS
+        .get(index)
+        .and_then(|cp| char::from_u32(*cp))
+        .map(String::from)
+        .unwrap_or_default()
+}
+
+/// tmux DCS passthrough (`ESC P tmux ; … ST`); identity when `tmux` is false.
+pub fn wrap_tmux_passthrough_if_needed(payload: &str, tmux: bool) -> String {
+    if !tmux {
+        return payload.to_owned();
+    }
+    let escaped = payload.replace('\u{1b}', "\u{1b}\u{1b}");
+    format!("\x1bPtmux;{escaped}\x1b\\")
+}
+
+/// Virtual placement APC (`a=p,U=1`).
+pub fn encode_kitty_virtual_placement(
+    image_id: u32,
+    placement_id: Option<u32>,
+    columns: u16,
+    rows: u16,
+    tmux: bool,
+) -> String {
+    let mut params = format!("a=p,U=1,q=2,i={image_id}");
+    if let Some(p) = placement_id {
+        if p != 0 {
+            params.push_str(&format!(",p={p}"));
+        }
+    }
+    params.push_str(&format!(",c={columns},r={rows}"));
+    wrap_tmux_passthrough_if_needed(&format!("\x1b_G{params}\x1b\\"), tmux)
+}
+
+/// Placeholder cell grid: one string per row (`rows` lines).
+pub fn encode_kitty_placeholder_grid(
+    image_id: u32,
+    placement_id: Option<u32>,
+    columns: u16,
+    rows: u16,
+) -> Vec<String> {
+    let fg = format!(
+        "\x1b[38;2;{};{};{}m",
+        (image_id >> 16) & 0xff,
+        (image_id >> 8) & 0xff,
+        image_id & 0xff
+    );
+    let underline = match placement_id {
+        Some(p) if p != 0 => format!(
+            "\x1b[58:2::{}:{}:{}m",
+            (p >> 16) & 0xff,
+            (p >> 8) & 0xff,
+            p & 0xff
+        ),
+        _ => String::new(),
+    };
+    let reset = "\x1b[39;59m";
+    let lead = format!("{fg}{underline}");
+    let mut out = Vec::with_capacity(rows as usize);
+    for r in 0..rows as usize {
+        let row_diacritic = diacritic(r);
+        let mut row = lead.clone();
+        for c in 0..columns as usize {
+            row.push(KITTY_PLACEHOLDER);
+            row.push_str(&row_diacritic);
+            row.push_str(&diacritic(c));
+        }
+        row.push_str(reset);
+        out.push(row);
+    }
+    out
+}
+
+/// Virtual-placement APC prefixes line 0; returns exactly `rows` lines.
+pub fn render_kitty_placeholder_lines(
+    image_id: u32,
+    placement_id: Option<u32>,
+    columns: u16,
+    rows: u16,
+    tmux: bool,
+) -> Option<Vec<String>> {
+    if !kitty_placeholders_fit(columns, rows) {
+        return None;
+    }
+    let mut grid = encode_kitty_placeholder_grid(image_id, placement_id, columns, rows);
+    if let Some(first) = grid.first_mut() {
+        let apc = encode_kitty_virtual_placement(image_id, placement_id, columns, rows, tmux);
+        first.insert_str(0, &apc);
+    }
+    Some(grid)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -473,5 +717,128 @@ mod tests {
                 }
             }
         }
+    }
+
+    // ---- Unicode placeholders --------------------------------------------
+
+    #[test]
+    fn placeholder_is_plane16_pua() {
+        assert_eq!(KITTY_PLACEHOLDER as u32, 0x10EEEE);
+        assert_eq!(ROWCOLUMN_DIACRITICS.len(), KITTY_PLACEHOLDER_MAX_CELLS);
+        assert_eq!(ROWCOLUMN_DIACRITICS[0], 0x305);
+        assert_eq!(*ROWCOLUMN_DIACRITICS.last().unwrap(), 0x1D244);
+    }
+
+    #[test]
+    fn placeholders_fit_bounds() {
+        assert!(kitty_placeholders_fit(1, 1));
+        assert!(kitty_placeholders_fit(297, 297));
+        assert!(!kitty_placeholders_fit(0, 1));
+        assert!(!kitty_placeholders_fit(1, 0));
+        assert!(!kitty_placeholders_fit(298, 1));
+        assert!(!kitty_placeholders_fit(1, 298));
+    }
+
+    #[test]
+    fn virtual_placement_apc() {
+        let apc = encode_kitty_virtual_placement(42, None, 3, 2, false);
+        assert_eq!(apc, "\x1b_Ga=p,U=1,q=2,i=42,c=3,r=2\x1b\\");
+        let with_p = encode_kitty_virtual_placement(42, Some(7), 3, 2, false);
+        assert!(with_p.contains(",p=7,"));
+        let tmux = encode_kitty_virtual_placement(1, None, 1, 1, true);
+        assert!(tmux.starts_with("\x1bPtmux;"));
+        assert!(tmux.contains("\x1b\x1b_G"));
+        assert!(tmux.ends_with("\x1b\\"));
+    }
+
+    #[test]
+    fn placeholder_grid_names_every_cell() {
+        let grid = encode_kitty_placeholder_grid(0x010203, Some(0x0A0B0C), 2, 2);
+        assert_eq!(grid.len(), 2);
+        assert!(grid[0].starts_with("\x1b[38;2;1;2;3m\x1b[58:2::10:11:12m"));
+        assert!(grid[0].contains(KITTY_PLACEHOLDER));
+        assert!(grid[0].ends_with("\x1b[39;59m"));
+        let cell0 = format!(
+            "{}{}{}",
+            KITTY_PLACEHOLDER,
+            char::from_u32(ROWCOLUMN_DIACRITICS[0]).unwrap(),
+            char::from_u32(ROWCOLUMN_DIACRITICS[0]).unwrap()
+        );
+        let cell1 = format!(
+            "{}{}{}",
+            KITTY_PLACEHOLDER,
+            char::from_u32(ROWCOLUMN_DIACRITICS[0]).unwrap(),
+            char::from_u32(ROWCOLUMN_DIACRITICS[1]).unwrap()
+        );
+        assert!(grid[0].contains(&cell0), "{}", grid[0]);
+        assert!(grid[0].contains(&cell1), "{}", grid[0]);
+        let cell_r1c0 = format!(
+            "{}{}{}",
+            KITTY_PLACEHOLDER,
+            char::from_u32(ROWCOLUMN_DIACRITICS[1]).unwrap(),
+            char::from_u32(ROWCOLUMN_DIACRITICS[0]).unwrap()
+        );
+        assert!(grid[1].contains(&cell_r1c0), "{}", grid[1]);
+    }
+
+    #[test]
+    fn render_prefixes_line0_and_rejects_overflow() {
+        let lines = render_kitty_placeholder_lines(9, None, 2, 2, false).unwrap();
+        assert_eq!(lines.len(), 2);
+        assert!(lines[0].starts_with("\x1b_Ga=p,U=1,q=2,i=9,c=2,r=2\x1b\\"));
+        assert!(!lines[1].starts_with("\x1b_G"));
+        assert!(render_kitty_placeholder_lines(1, None, 298, 1, false).is_none());
+    }
+
+    #[test]
+    fn detect_placeholders_kitty_ghostty_and_env() {
+        let kitty = PlaceholderDetect {
+            terminal_id: "kitty".into(),
+            ..PlaceholderDetect::default()
+        };
+        assert!(kitty.supported());
+        let ghostty = PlaceholderDetect {
+            terminal_id: "ghostty".into(),
+            ..PlaceholderDetect::default()
+        };
+        assert!(ghostty.supported());
+        let wez = PlaceholderDetect {
+            terminal_id: "wezterm".into(),
+            ..PlaceholderDetect::default()
+        };
+        assert!(!wez.supported());
+        let off = PlaceholderDetect {
+            terminal_id: "kitty".into(),
+            no_placeholders: Some("1".into()),
+            ..PlaceholderDetect::default()
+        };
+        assert!(!off.supported());
+        let force = PlaceholderDetect {
+            terminal_id: "wezterm".into(),
+            placeholders: Some("true".into()),
+            ..PlaceholderDetect::default()
+        };
+        assert!(force.supported());
+        let force_off = PlaceholderDetect {
+            terminal_id: "kitty".into(),
+            placeholders: Some("0".into()),
+            ..PlaceholderDetect::default()
+        };
+        assert!(!force_off.supported());
+        let tmux_force = PlaceholderDetect {
+            terminal_id: "screen".into(),
+            tmux: true,
+            force_image_protocol: Some("kitty".into()),
+            ..PlaceholderDetect::default()
+        };
+        assert!(tmux_force.supported());
+        let tmux_auto = PlaceholderDetect {
+            terminal_id: "screen".into(),
+            tmux: true,
+            ..PlaceholderDetect::default()
+        };
+        assert!(!tmux_auto.supported());
+        assert_eq!(kitty_terminal_id(Some("iTerm.app"), Some("xterm-kitty")), "kitty");
+        assert_eq!(kitty_terminal_id(Some("ghostty"), Some("xterm-256color")), "ghostty");
     }
 }

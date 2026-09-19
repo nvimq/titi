@@ -1,7 +1,8 @@
 //! Slash command registry — builtin name reservation, route dispatch, file
-//! command expansion with `$1`/`$@`/`$ARGUMENTS`, and floating autocomplete.
+//! command expansion with `$1`/`$@`/`$ARGUMENTS`/`$@[start:length]`,
+//! capability providers with `_shadowed` dedup, and floating autocomplete.
 //!
-//! Contract: `docs/research/agent-ux/README.md`.
+//! Contract: `docs/research/agent-ux/README.md`, `omp://slash-command-internals.md`.
 
 use std::collections::HashMap;
 
@@ -18,6 +19,41 @@ pub struct FileCmd {
     pub name: String,
     pub template: String,
 }
+
+/// Capability provider (`omp://slash-command-internals.md`).
+///
+/// Default priorities: `native` 100, `omp-plugins` 90, `claude` 80,
+/// `claude-plugins` / `agents` / `codex` 70, `opencode` 55.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlashProvider {
+    pub id: String,
+    pub priority: u8,
+}
+
+/// One slash command in the merged catalog. Duplicate names from a
+/// lower-priority provider set [`SlashCatalogItem::shadowed`] (`_shadowed`).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlashCatalogItem {
+    pub name: String,
+    pub description: String,
+    pub provider: String,
+    pub priority: u8,
+    pub shadowed: bool,
+}
+
+#[derive(Debug, Clone)]
+struct CapabilityCmd {
+    provider: String,
+    priority: u8,
+    name: String,
+    description: String,
+    template: Option<String>,
+}
+
+/// Native builtin provider id and priority.
+pub const SLASH_NATIVE: &str = "native";
+/// Priority for native builtins and file templates.
+pub const SLASH_NATIVE_PRIORITY: u8 = 100;
 
 /// Routing result for a slash command.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,13 +79,15 @@ pub struct Completion {
 ///
 /// 1. Built-in names are reserved first (routes as `Builtin`).
 /// 2. File commands with templates are expanded (`$1`, `$@`, `$ARGUMENTS`).
-/// 3. Everything else → `Passthrough` (e.g. `/unknown` → LLM text).
+/// 3. Capability-provider templates (not `_shadowed`) expand next.
+/// 4. Everything else → `Passthrough` (e.g. `/unknown` → LLM text).
 #[derive(Debug, Clone)]
 pub struct SlashRegistry {
     builtins: Vec<BuiltinCmd>,
     files: Vec<FileCmd>,
     /// Index: name → builtin for O(1) lookup.
     builtin_index: HashMap<&'static str, usize>,
+    capabilities: Vec<CapabilityCmd>,
 }
 
 impl SlashRegistry {
@@ -59,6 +97,7 @@ impl SlashRegistry {
             builtins: Vec::new(),
             files: Vec::new(),
             builtin_index: HashMap::new(),
+            capabilities: Vec::new(),
         }
     }
 
@@ -94,6 +133,28 @@ impl SlashRegistry {
         });
     }
 
+    /// Register a command from a named capability provider.
+    ///
+    /// Same name from two providers is allowed: the higher priority wins
+    /// in [`SlashRegistry::catalog`] / [`SlashRegistry::complete`]; the
+    /// rest are `_shadowed`.
+    pub fn register_capability(
+        &mut self,
+        provider: &str,
+        priority: u8,
+        name: &str,
+        description: &str,
+        template: Option<&str>,
+    ) {
+        self.capabilities.push(CapabilityCmd {
+            provider: provider.to_owned(),
+            priority,
+            name: name.to_owned(),
+            description: description.to_owned(),
+            template: template.map(str::to_owned),
+        });
+    }
+
     /// Route an input string.
     ///
     /// If the input starts with `/`, the command name (everything after `/`
@@ -102,7 +163,8 @@ impl SlashRegistry {
     /// 1. Builtin name → `Builtin(name)`.
     /// 2. File command name → `Expanded(template)` with `$1`/`$@`/`$ARGUMENTS`
     ///    replaced by the command arguments.
-    /// 3. Otherwise → `Passthrough`.
+    /// 3. Winning capability template → `Expanded`.
+    /// 4. Otherwise → `Passthrough`.
     ///
     /// Input without a leading `/` is always `Passthrough`.
     pub fn route(&self, input: &str) -> Route {
@@ -117,31 +179,106 @@ impl SlashRegistry {
             let expanded = expand_template(&file.template, &args);
             return Route::Expanded(expanded);
         }
+        if let Some(cap) = self.winner_capability(cmd_name)
+            && let Some(template) = &cap.template
+        {
+            return Route::Expanded(expand_template(template, &args));
+        }
         Route::Passthrough
     }
 
     /// Return completions for the given prefix.
     ///
-    /// Matches both builtins and file commands whose name starts with
-    /// `prefix` (after stripping the leading `/`).
+    /// Matches catalog winners whose name starts with `prefix` (after
+    /// stripping the leading `/`). `_shadowed` duplicates are omitted.
     pub fn complete(&self, prefix: &str) -> Vec<Completion> {
         let name = prefix.strip_prefix('/').unwrap_or(prefix);
-        let mut results: Vec<Completion> = self
-            .builtins
-            .iter()
-            .filter(|cmd| cmd.name.starts_with(name))
-            .map(|cmd| Completion {
-                name: format!("/{}", cmd.name),
-                description: cmd.description.to_owned(),
+        self.catalog()
+            .into_iter()
+            .filter(|item| !item.shadowed && item.name.starts_with(name))
+            .map(|item| Completion {
+                name: format!("/{}", item.name),
+                description: item.description,
             })
-            .collect();
-        results.extend(self.files.iter().filter(|f| f.name.starts_with(name)).map(
-            |f| Completion {
-                name: format!("/{}", f.name),
+            .collect()
+    }
+
+    /// Full catalog including `_shadowed` losers (`result.all` in OMP).
+    pub fn catalog(&self) -> Vec<SlashCatalogItem> {
+        struct Cand {
+            name: String,
+            description: String,
+            provider: String,
+            priority: u8,
+            rank: u8,
+            idx: usize,
+        }
+        let mut cands: Vec<Cand> = Vec::new();
+        for (idx, cmd) in self.builtins.iter().enumerate() {
+            cands.push(Cand {
+                name: cmd.name.to_owned(),
+                description: cmd.description.to_owned(),
+                provider: SLASH_NATIVE.to_owned(),
+                priority: SLASH_NATIVE_PRIORITY,
+                rank: 0,
+                idx,
+            });
+        }
+        for (idx, file) in self.files.iter().enumerate() {
+            cands.push(Cand {
+                name: file.name.clone(),
                 description: String::new(),
-            },
-        ));
-        results
+                provider: SLASH_NATIVE.to_owned(),
+                priority: SLASH_NATIVE_PRIORITY,
+                rank: 1,
+                idx,
+            });
+        }
+        for (idx, cap) in self.capabilities.iter().enumerate() {
+            cands.push(Cand {
+                name: cap.name.clone(),
+                description: cap.description.clone(),
+                provider: cap.provider.clone(),
+                priority: cap.priority,
+                rank: 2,
+                idx,
+            });
+        }
+
+        let mut winner: HashMap<String, (u8, u8, usize)> = HashMap::new();
+        for c in &cands {
+            match winner.get(&c.name) {
+                Some(&(p, r, i))
+                    if p > c.priority
+                        || (p == c.priority && (r < c.rank || (r == c.rank && i <= c.idx))) => {}
+                _ => {
+                    winner.insert(c.name.clone(), (c.priority, c.rank, c.idx));
+                }
+            }
+        }
+        cands
+            .into_iter()
+            .map(|c| {
+                let shadowed = winner.get(&c.name) != Some(&(c.priority, c.rank, c.idx));
+                SlashCatalogItem {
+                    name: c.name,
+                    description: c.description,
+                    provider: c.provider,
+                    priority: c.priority,
+                    shadowed,
+                }
+            })
+            .collect()
+    }
+
+    fn winner_capability(&self, name: &str) -> Option<&CapabilityCmd> {
+        let item = self
+            .catalog()
+            .into_iter()
+            .find(|item| item.name == name && !item.shadowed)?;
+        self.capabilities.iter().find(|c| {
+            c.name == name && c.provider == item.provider && c.priority == item.priority
+        })
     }
 
     /// Number of registered builtins.
@@ -234,11 +371,11 @@ pub fn parse_command_args(input: &str) -> Vec<String> {
 // Template expansion
 // ---------------------------------------------------------------------------
 
-/// Expand a template by replacing `$1`, `$@`, `$ARGUMENTS` with the given
-/// arguments.
+/// Expand a template by replacing `$N`, `$@`, `$@[start:length]`, `$ARGUMENTS`.
 ///
-/// - `$1` → the first argument (or empty string)
+/// - `$1`, `$2`, … → positional argument (1-based; missing → empty)
 /// - `$@` → all arguments joined by spaces
+/// - `$@[start:length]` → a slice of arguments (`start` is 0-based)
 /// - `$ARGUMENTS` → same as `$@`
 pub fn expand_template(template: &str, args: &[String]) -> String {
     let mut result = String::new();
@@ -248,26 +385,67 @@ pub fn expand_template(template: &str, args: &[String]) -> String {
         result.push_str(&rest[..pos]);
         rest = &rest[pos..];
 
-        if rest.starts_with("$1") {
-            result.push_str(args.first().map(|s| s.as_str()).unwrap_or(""));
-            rest = &rest[2..];
-        } else if rest.starts_with("$@") || rest.starts_with("$ARGUMENTS") {
-            let marker = if rest.starts_with("$ARGUMENTS") {
-                "$ARGUMENTS"
-            } else {
-                "$@"
-            };
+        if rest.starts_with("$ARGUMENTS") {
             result.push_str(&args.join(" "));
-            rest = &rest[marker.len()..];
+            rest = &rest["$ARGUMENTS".len()..];
+        } else if rest.starts_with("$@") {
+            rest = &rest[2..];
+            if let Some((start, length, consumed)) = parse_arg_slice(rest) {
+                result.push_str(&join_args_slice(args, start, length));
+                rest = &rest[consumed..];
+            } else {
+                result.push_str(&args.join(" "));
+            }
         } else {
-            // Not a recognised marker — emit `$` literally.
-            result.push('$');
-            rest = &rest[1..];
+            let after = &rest[1..];
+            let n_digits = after.bytes().take_while(u8::is_ascii_digit).count();
+            if n_digits > 0 {
+                if let Ok(idx) = after[..n_digits].parse::<usize>()
+                    && idx >= 1
+                    && let Some(arg) = args.get(idx - 1)
+                {
+                    result.push_str(arg);
+                }
+                rest = &rest[1 + n_digits..];
+            } else {
+                result.push('$');
+                rest = &rest[1..];
+            }
         }
     }
 
     result.push_str(rest);
     result
+}
+
+/// Parse `[start:length]` immediately after `$@`. `consumed` includes the brackets.
+fn parse_arg_slice(after_at: &str) -> Option<(usize, usize, usize)> {
+    let rest = after_at.strip_prefix('[')?;
+    let close = rest.find(']')?;
+    let inner = &rest[..close];
+    let (a, b) = inner.split_once(':')?;
+    if a.is_empty()
+        || b.is_empty()
+        || !a.bytes().all(|c| c.is_ascii_digit())
+        || !b.bytes().all(|c| c.is_ascii_digit())
+    {
+        return None;
+    }
+    let start = a.parse().ok()?;
+    let length = b.parse().ok()?;
+    Some((start, length, close + 2))
+}
+
+fn join_args_slice(args: &[String], start: usize, length: usize) -> String {
+    match args.get(start..) {
+        Some(tail) => tail
+            .iter()
+            .take(length)
+            .map(String::as_str)
+            .collect::<Vec<_>>()
+            .join(" "),
+        None => String::new(),
+    }
 }
 
 #[cfg(test)]
@@ -321,10 +499,7 @@ mod tests {
         let mut reg = SlashRegistry::new();
         reg.register_file("say", "You said: $1");
         let result = reg.route("/say hello world");
-        assert_eq!(
-            result,
-            Route::Expanded("You said: hello".into())
-        );
+        assert_eq!(result, Route::Expanded("You said: hello".into()));
     }
 
     // ---- Completion -------------------------------------------------------
@@ -397,34 +572,22 @@ mod tests {
 
     #[test]
     fn parse_command_args_multiple() {
-        assert_eq!(
-            parse_command_args("a b c"),
-            vec!["a", "b", "c"]
-        );
+        assert_eq!(parse_command_args("a b c"), vec!["a", "b", "c"]);
     }
 
     #[test]
     fn parse_command_args_quoted() {
-        assert_eq!(
-            parse_command_args("a 'b c' d"),
-            vec!["a", "b c", "d"]
-        );
+        assert_eq!(parse_command_args("a 'b c' d"), vec!["a", "b c", "d"]);
     }
 
     #[test]
     fn parse_command_args_double_quoted() {
-        assert_eq!(
-            parse_command_args("a \"b c\" d"),
-            vec!["a", "b c", "d"]
-        );
+        assert_eq!(parse_command_args("a \"b c\" d"), vec!["a", "b c", "d"]);
     }
 
     #[test]
     fn parse_command_args_unmatched_quote() {
-        assert_eq!(
-            parse_command_args("a 'b c"),
-            vec!["a", "b c"]
-        );
+        assert_eq!(parse_command_args("a 'b c"), vec!["a", "b c"]);
     }
 
     // ---- Template expansion -----------------------------------------------
@@ -454,7 +617,7 @@ mod tests {
     }
 
     #[test]
-    fn expand_ARGUMENTS() {
+    fn expand_arguments() {
         let template = "Translate: $ARGUMENTS";
         assert_eq!(
             expand_template(template, &["hello".into(), "world".into()]),
@@ -475,5 +638,62 @@ mod tests {
             expand_template(template, &["alice".into(), "hello".into()]),
             "alice said alice hello"
         );
+    }
+
+    #[test]
+    fn expand_second_arg() {
+        let template = "$1 -> $2";
+        assert_eq!(
+            expand_template(template, &["a".into(), "b".into(), "c".into()]),
+            "a -> b"
+        );
+    }
+
+    #[test]
+    fn expand_arg_slice() {
+        let args = ["one".into(), "two".into(), "three".into(), "four".into()];
+        assert_eq!(expand_template("X $@[1:2] Y", &args), "X two three Y");
+        assert_eq!(expand_template("$@[0:1]", &args), "one");
+        assert_eq!(expand_template("$@[3:8]", &args), "four");
+        assert_eq!(expand_template("$@[9:1]", &args), "");
+    }
+
+    #[test]
+    fn native_shadows_lower_priority_provider() {
+        let mut reg = SlashRegistry::new();
+        reg.register_builtin("help", "Show help");
+        reg.register_capability("claude", 80, "help", "Claude help", Some("ignored $1"));
+        let cat = reg.catalog();
+        let native = cat
+            .iter()
+            .find(|i| i.provider == SLASH_NATIVE && i.name == "help")
+            .expect("native");
+        let claude = cat
+            .iter()
+            .find(|i| i.provider == "claude" && i.name == "help")
+            .expect("claude");
+        assert!(!native.shadowed);
+        assert!(claude.shadowed);
+        assert_eq!(reg.complete("/help").len(), 1);
+        assert_eq!(reg.route("/help extra"), Route::Builtin("help".into()));
+    }
+
+    #[test]
+    fn capability_template_routes_when_not_shadowed() {
+        let mut reg = SlashRegistry::new();
+        reg.register_capability(
+            "omp-plugins",
+            90,
+            "greet",
+            "Greet",
+            Some("hello $1"),
+        );
+        assert_eq!(
+            reg.route("/greet world"),
+            Route::Expanded("hello world".into())
+        );
+        let cat = reg.catalog();
+        assert_eq!(cat.len(), 1);
+        assert!(!cat[0].shadowed);
     }
 }

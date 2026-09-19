@@ -111,7 +111,8 @@ impl BusyIndicator {
         let (frames_str, frame_width) = match preset {
             BusyPreset::Ascii => (&["|", "/", "-", "\\"][..], 1),
             BusyPreset::Braille => {
-                (&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"][..], 1)
+                // OMP status spinner (`omp://theme.md`): ⣾⣽⣻⢿⡿⣟⣯⣷
+                (&["⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"][..], 1)
             }
             BusyPreset::Kaomoji => {
                 // Each frame padded to the max display width of the set.
@@ -192,7 +193,7 @@ impl StatusLine {
             state: AgentState::Starting,
             turn_start: None,
             badges: Badges::default(),
-            busy: BusyIndicator::new(BusyPreset::Ascii),
+            busy: BusyIndicator::new(BusyPreset::Braille),
         }
     }
 }
@@ -248,7 +249,7 @@ impl StatusLine {
     /// Render the status line to a single string at the given width.
     ///
     /// The format is:
-    /// `state-label  ⏱/⏲ timer  ⬡ badge1 ⇉ badge2  busy`
+    /// `state-label  ⏱/⏲ timer  ┃N  ⟳N  ⚠ YOLO  busy`
     ///
     /// The line is truncated to `width` columns if it exceeds the terminal
     /// width, then padded with trailing spaces to exactly `width` columns so
@@ -260,8 +261,8 @@ impl StatusLine {
         let state_label = match self.state {
             AgentState::Starting => "starting",
             AgentState::Ready => "ready",
-            AgentState::Thinking => "think",
-            AgentState::Running => "run",
+            AgentState::Thinking => "thinking",
+            AgentState::Running => "running",
             AgentState::Interrupted => "interrupted",
         };
 
@@ -280,13 +281,13 @@ impl StatusLine {
         // Badges.
         let mut badge_parts = Vec::new();
         if self.badges.compressions > 0 {
-            badge_parts.push(format!("cmp:{}", self.badges.compressions));
+            badge_parts.push(format!("┃{}", self.badges.compressions));
         }
         if self.badges.background_tasks > 0 {
-            badge_parts.push(format!("⇉{}", self.badges.background_tasks));
+            badge_parts.push(format!("⟳{}", self.badges.background_tasks));
         }
         if self.badges.yolo {
-            badge_parts.push("YOLO".to_owned());
+            badge_parts.push("⚠ YOLO".to_owned());
         }
         let badges_str = if badge_parts.is_empty() {
             String::new()

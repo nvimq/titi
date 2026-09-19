@@ -96,7 +96,7 @@ impl OverlayStack {
             if rows.is_empty() {
                 continue;
             }
-            frame = composite_rows(&frame, &rows, width, overlay.anchor);
+            frame = composite_rows_inset(&frame, &rows, width, overlay.anchor, 0);
         }
         frame
     }
@@ -115,28 +115,43 @@ pub fn composite_rows(
     width: u16,
     anchor: Anchor,
 ) -> Vec<String> {
+    composite_rows_inset(viewport, rows, width, anchor, 0)
+}
+
+/// Like [`composite_rows`], but keeps `margin_bottom` viewport rows (the
+/// box composer) uncovered so a compact overlay sits above it.
+pub fn composite_rows_inset(
+    viewport: &[String],
+    rows: &[String],
+    width: u16,
+    anchor: Anchor,
+    margin_bottom: usize,
+) -> Vec<String> {
     let mut frame = viewport.to_vec();
     let n = rows.len();
-    let overflow_n = n.saturating_sub(frame.len());
-    for (i, row) in rows.iter().enumerate() {
-        let target = match anchor {
-            // Bottom-anchored: last rows stay, top rows overflow.
-            Anchor::BottomCenter => {
+    match anchor {
+        Anchor::BottomCenter => {
+            let usable = frame.len().saturating_sub(margin_bottom);
+            if usable == 0 {
+                return frame;
+            }
+            let overflow_n = n.saturating_sub(usable);
+            for (i, row) in rows.iter().enumerate() {
                 if i < overflow_n {
                     continue;
                 }
-                frame.len() - (n - i)
+                let target = usable - (n - i);
+                frame[target] = anchored_line(row, width, anchor);
             }
-            // Top-anchored: first rows stay, bottom rows overflow.
-            Anchor::TopCenter => {
+        }
+        Anchor::TopCenter => {
+            for (i, row) in rows.iter().enumerate() {
                 if i >= frame.len() {
-                    // Row past the bottom of the viewport — drop it.
                     break;
                 }
-                i
+                frame[i] = anchored_line(row, width, anchor);
             }
-        };
-        frame[target] = anchored_line(row, width, anchor);
+        }
     }
     frame
 }
@@ -291,6 +306,22 @@ mod tests {
         assert_eq!(frame[0], " two  ");
         assert_eq!(frame[1], "three ");
     }
+
+    #[test]
+    fn bottom_inset_leaves_composer_rows() {
+        let vp = viewport(&["a", "b", "c", "d"]);
+        let frame = composite_rows_inset(&vp, &["ov".to_owned()], 8, Anchor::BottomCenter, 2);
+        assert_eq!(
+            frame,
+            vec![
+                "a".to_owned(),
+                "   ov   ".to_owned(),
+                "c".to_owned(),
+                "d".to_owned(),
+            ]
+        );
+    }
+
     #[test]
     fn top_anchored_overlay_lands_on_the_top_rows() {
         let mut stack = OverlayStack::new();

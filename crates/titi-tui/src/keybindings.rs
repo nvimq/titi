@@ -12,7 +12,7 @@ use std::collections::{HashMap, HashSet};
 use crate::keys::{add_key_aliases, canonical_key_id, parse_key};
 
 /// A keybinding definition: the action's default keys and a human description.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct KeybindingDefinition {
     pub default_keys: &'static [&'static str],
     pub description: &'static str,
@@ -172,6 +172,120 @@ pub const TUI_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
         KeybindingDefinition { default_keys: &["escape", "ctrl+c"], description: "Cancel selection" },
     ),
 ];
+
+/// App-level actions from `omp://keybindings.md`. Combined with
+/// [`TUI_KEYBINDINGS`] by [`default_manager`].
+pub const APP_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
+    (
+        "app.interrupt",
+        KeybindingDefinition { default_keys: &["ctrl+c"], description: "Interrupt / exit" },
+    ),
+    (
+        "app.model.cycleForward",
+        KeybindingDefinition { default_keys: &["ctrl+p"], description: "Cycle role models forward" },
+    ),
+    (
+        "app.model.cycleBackward",
+        KeybindingDefinition { default_keys: &["ctrl+shift+p"], description: "Cycle role models backward" },
+    ),
+    (
+        "app.model.selectTemporary",
+        KeybindingDefinition { default_keys: &["alt+p"], description: "Pick a model temporarily" },
+    ),
+    (
+        "app.model.select",
+        KeybindingDefinition { default_keys: &["alt+m"], description: "Open the model selector" },
+    ),
+    (
+        "app.plan.toggle",
+        KeybindingDefinition { default_keys: &["alt+shift+p"], description: "Toggle plan mode" },
+    ),
+    (
+        "app.history.search",
+        KeybindingDefinition { default_keys: &["ctrl+r"], description: "Search prompt history" },
+    ),
+    (
+        "app.tools.expand",
+        KeybindingDefinition { default_keys: &["ctrl+o"], description: "Toggle tool-output expansion" },
+    ),
+    (
+        "app.tools.toggleVisibility",
+        KeybindingDefinition { default_keys: &["ctrl+shift+o"], description: "Show or hide tool activity" },
+    ),
+    (
+        "app.thinking.toggle",
+        KeybindingDefinition { default_keys: &["ctrl+t"], description: "Toggle thinking-block visibility" },
+    ),
+    (
+        "app.thinking.cycle",
+        KeybindingDefinition { default_keys: &["shift+tab"], description: "Cycle thinking level" },
+    ),
+    (
+        "app.editor.external",
+        KeybindingDefinition { default_keys: &["ctrl+g"], description: "Edit the draft in $VISUAL / $EDITOR" },
+    ),
+    (
+        "app.message.followUp",
+        KeybindingDefinition { default_keys: &["ctrl+q", "ctrl+enter"], description: "Queue a follow-up message" },
+    ),
+    (
+        "app.message.dequeue",
+        KeybindingDefinition { default_keys: &["alt+up", "shift+up"], description: "Dequeue a queued message back into the editor" },
+    ),
+    (
+        "app.retry",
+        KeybindingDefinition { default_keys: &["alt+r"], description: "Retry the last failed assistant turn" },
+    ),
+    (
+        "app.display.reset",
+        KeybindingDefinition { default_keys: &["alt+l"], description: "Reset terminal display" },
+    ),
+    (
+        "app.clipboard.copyLine",
+        KeybindingDefinition { default_keys: &["alt+shift+l"], description: "Copy the current line" },
+    ),
+    (
+        "app.clipboard.copyPrompt",
+        KeybindingDefinition { default_keys: &["alt+shift+c"], description: "Copy the whole prompt" },
+    ),
+    (
+        "app.clipboard.pasteTextRaw",
+        KeybindingDefinition { default_keys: &["ctrl+shift+v", "alt+shift+v"], description: "Paste clipboard text without collapsing" },
+    ),
+    (
+        "app.clipboard.pasteImage",
+        KeybindingDefinition { default_keys: &["ctrl+v"], description: "Paste from the clipboard (image preferred)" },
+    ),
+    (
+        "app.stt.toggle",
+        KeybindingDefinition { default_keys: &[], description: "Toggle speech-to-text (default gesture: hold Space)" },
+    ),
+    (
+        "app.live.toggle",
+        KeybindingDefinition { default_keys: &["ctrl+l"], description: "Start or stop live voice mode" },
+    ),
+    (
+        "app.agents.hub",
+        KeybindingDefinition { default_keys: &["alt+a"], description: "Open the Agent Hub" },
+    ),
+    (
+        "app.session.observe",
+        KeybindingDefinition { default_keys: &["ctrl+s"], description: "Open the Agent Hub" },
+    ),
+    (
+        "app.session.switch",
+        KeybindingDefinition { default_keys: &["ctrl+x"], description: "Open the session switcher" },
+    ),
+];
+
+/// Build a manager with TUI editor bindings plus OMP `app.*` defaults.
+pub fn default_manager(user_bindings: KeybindingsConfig) -> KeybindingsManager {
+    let mut defs: Vec<(&str, KeybindingDefinition)> =
+        Vec::with_capacity(TUI_KEYBINDINGS.len() + APP_KEYBINDINGS.len());
+    defs.extend(TUI_KEYBINDINGS.iter().copied());
+    defs.extend(APP_KEYBINDINGS.iter().copied());
+    KeybindingsManager::new(&defs, user_bindings)
+}
 
 /// User config value for one action: one key, a list of keys, or none
 /// (`None` = action disabled).
@@ -654,5 +768,13 @@ mod tests {
         assert!(kb.matches("\u{3}", "tui.input.copy")); // ctrl+c
         assert!(kb.matches_canonical("ctrl+c", "tui.input.copy"));
         assert!(!kb.matches_canonical("ctrl+x", "tui.input.copy"));
+    }
+
+    #[test]
+    fn app_hub_and_observe_share_overlay() {
+        let kb = default_manager(KeybindingsConfig::new());
+        assert!(kb.matches_canonical("alt+a", "app.agents.hub"));
+        assert!(kb.matches_canonical("ctrl+s", "app.session.observe"));
+        assert!(kb.get_keys("app.stt.toggle").is_empty());
     }
 }

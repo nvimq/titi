@@ -1,5 +1,11 @@
 # STATE — точка возобновления конвейера titi
 
+## Активное направление: reference product functional port
+
+Статус: **in-progress**, фаза E0. Канонический handoff: [`reference-product-port/STATE.md`](reference-product-port/STATE.md). Решения и roadmap: [`reference-product-port/README.md`](reference-product-port/README.md).
+
+Правило продолжения: сначала прочитать dedicated STATE, прогнать baseline, выполнить только NEXT, затем синхронизировать оба STATE-файла.
+
 Обновляется после каждого шага. Новая сессия начинает отсюда.
 
 ## Артефакты Research Map — все done (2026-08-27)
@@ -60,3 +66,34 @@ titi-tui: 392 тестов (374 unit + 18 integration); titi-cli: 35 интег�
 5. ✅ UI-фикс frame-anchor (`3ce63d4`): `render()` делал `Clear(All)` без `MoveTo(0,0)` — после первого кадра курсор оставался внизу, каждый ре-рендер рисовал кадр с низа экрана (UI «плавал»/дрейфовал по вертикали при наборе и resize). Комментарий «Move cursor to top» был, самой команды — не было никогда. Фикс: `execute!(stdout, Clear(ClearType::All), MoveTo(0, 0))`. Доказано PTY: старый бинарь `\x1b[2J` без cursor-home, новый `\x1b[2J\x1b[1;1H`; кадр стабилен при keystrokes и resize 60→100→50. Workspace 603 passed.
 6. PTY-smoke: full terminal test — kitty+resize+input, drag-select selection background, `/mouse` switching.
 7. Каждый шаг обновляет этот файл — точка возобновления.
+
+
+## OMP TUI 1:1 chrome (2026-08-29)
+
+Не Hermes. Слот dark = `titanium`. Продуктовый статус — default preset:
+
+Left: `pi > model > path > git` (mode/collab/pr/context/cost скрыты пока пустые)
+Right: `session_name`
+Separator: `powerline-thin` (`>` в unicode)
+
+Composer shape **box** (OMP default): статус в верхней `boxRound` границе `╭── … ──╮`, промпт слит с нижней `╰─ {input}{CURSOR_MARKER} ─╯`. Slash complete — inner rows внутри бокса, не TopCenter на баннере. Модалки BottomCenter.
+
+CLI больше не делает `Clear(All)`: `Renderer::draw` + `extract_cursor` паркует курсор на маркере.
+
+`app.*`: followUp Ctrl+Q/Ctrl+Enter, dequeue Alt+Up/Shift+Up, model.select Alt+M, session.switch Ctrl+X, `/pause` `/hotkeys` `/help` `/switch`, `/mouse on|toggle`. Plan Alt+Shift+P, hub Alt+A, live Ctrl+L, history Ctrl+R, retry Alt+R, display.reset Alt+L, external editor Ctrl+G, clipboard copy/paste.
+
+Slash: `$1`/`$2`/`$@`/`$ARGUMENTS`/`$@[start:length]`; capability catalog with `_shadowed` (native 100 > omp-plugins 90 > claude 80 …). OSC 5522 ingest on paste (image/* → `[Image #N]`). Git porcelain `*N +N ?N` cached on HEAD/index mtime. PTY 80×20: box composer, slash inner-rows, Ctrl+X Sessions, `/model` Enter → picker.
+
+Type-to-filter: `SelectionPanel` fuzzy (substring then subsequence); overlay printable keys + Backspace reach the picker. CLI `paint` offers `FramePlan.history` for transcript overflow and acks after `Renderer::draw`. Stub `app.*` chords now toggle plan/live badges, open hub/history overlays, OSC 52 copy, `$VISUAL`/`$EDITOR`, retry last prompt, `reset_display`.
+
+Compact model picker: `SelectList` window (~40% of terminal, title inset in `boxRound` top border) sits above the composer so 80×20 keeps `Model`. Type-to-filter still fuzzy + Enter.
+
+Renderer 1:1: `draw` serializes history remainder + viewport in one write; rebuild/reset fold ED2+ED3 into that write (no mid-frame flush). CLI resize default is `Rebuild` (`PI_TUI_RESIZE_SCROLLBACK` override). Last-resort `truncate_to_width` + SGR close on every drawn row. `detectColorMode`: after WT_SESSION/COLORTERM, `TERM ∈ {dumb, linux, ""}` is 256-color.
+
+Custom themes: `{agentDir}/themes` (`$TITI_AGENT_DIR` else `$PI_CODING_AGENT_DIR` else `~/.titi/agent/themes`, named profile under `~/.titi/profiles/<name>/agent/themes`). Built-in names still win.
+
+Appearance: OSC 11 BT.601 luma (`< 0.5` → dark) → `COLORFGBG` (`bg < 8` → dark) → macOS `defaults` on Zellij-darwin only → dark. Auto-dark = `titanium`, auto-light = `light`. First paint uses COLORFGBG (`init_auto`); live OSC 11 / Mode 2031 go through `classify_appearance_bytes` → `App::ingest_probe_reply` (2031 = re-query, not luma). CLI enables Mode 2031, queries OSC 11 at start, and re-queries on FocusGained. Crossterm still drops raw OSC from `Event::read`.
+
+STT: `app.stt.toggle` has empty default keys (hold Space is the gesture). Space-hold matches omp (`SPACE_REPEAT_MAX_GAP_MS=120`, jitter 18ms/0.35, mechanical run 2, release 250ms). `stt.enabled` defaults false; mic/ASR worker is stubbed (`Idle`/`Recording`). CLI polls the release timeout on the 50ms tick.
+
+Ещё не 1:1: OSC 5522 as a first-class terminal event (crossterm only exposes bracketed paste); live Agent Hub broker IPC (roster overlay exists; inject via `App::set_hub_peers`); Kitty Unicode placeholders; `ctx.ui.custom` mounts; real STT mic/ASR.

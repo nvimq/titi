@@ -54,6 +54,11 @@ impl FirstFrame {
         (rows, elapsed)
     }
 
+    /// Banner rows (no status). Status is the box-composer top border.
+    pub fn banner(&self) -> &[String] {
+        &self.banner
+    }
+
     /// Elapsed since construction — the time-to-first-frame measurement.
     pub fn frame_elapsed(&self) -> Duration {
         self.started_at.elapsed()

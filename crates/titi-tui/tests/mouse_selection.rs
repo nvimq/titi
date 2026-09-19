@@ -62,7 +62,7 @@ fn sgr_events_decode_press_drag_release() {
 fn drag_select_paints_background_over_selected_rows() {
     // Emulate: press at (2, 1), drag to (6, 3), release.
     let events = mouse_events(&["\x1b[<0;2;1M", "\x1b[<32;6;3M", "\x1b[<0;6;3m"]);
-    let (press, drag, release) = (events[0], events[1], events[2]);
+    let (press, drag, _release) = (events[0], events[1], events[2]);
 
     let mut selection = Selection::anchor(press.1, press.2);
     selection.drag(drag.1, drag.2);

@@ -3,8 +3,8 @@
 //!
 //! Ported from omp `coding-agent/src/modes/theme/`:
 //! - `theme-class.ts` → [`Theme`]
-//! - `theme.ts` → [`GlobalTheme`] (minus the file watcher / OSC-11
-//!   appearance auto-detection, deferred to terminal-capabilities layer)
+//! - `theme.ts` → [`GlobalTheme`] (file watcher still deferred)
+//! - `appearance.rs` → OSC 11 / COLORFGBG / macOS-Zellij auto-theme
 //! - `loader.ts` → [`loader`]
 //! - `schema.ts` → [`schema`]
 //! - `color.ts` + `pi-utils/color.ts` → [`color`]
@@ -16,6 +16,7 @@ use std::sync::{Arc, LazyLock, RwLock};
 
 use serde_json::Value;
 
+pub mod appearance;
 pub mod builtin;
 pub mod color;
 pub mod loader;
@@ -23,6 +24,7 @@ pub mod schema;
 pub mod symbols;
 mod symbols_data;
 
+pub use appearance::{appearance_from_rgb, classify_appearance_bytes, Appearance, AppearanceEvent, AppearanceInputs, AUTO_DARK_THEME, AUTO_LIGHT_THEME};
 pub use color::ColorMode;
 pub use schema::{ThemeBg, ThemeColor};
 pub use symbols::{SpinnerFrames, SymbolPreset};
@@ -734,10 +736,30 @@ fn reset_end(text: &str) -> usize {
 /// key cached renders.  Mirrors omp `themeEpoch`.
 static THEME_EPOCH: AtomicU64 = AtomicU64::new(0);
 
+/// Auto-detection mapping (omp `autoDetectedTheme` / `autoDarkTheme` / `autoLightTheme`).
+struct AutoTheme {
+    enabled: bool,
+    dark: String,
+    light: String,
+    reported: Option<appearance::Appearance>,
+}
+
+impl Default for AutoTheme {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            dark: appearance::AUTO_DARK_THEME.to_string(),
+            light: appearance::AUTO_LIGHT_THEME.to_string(),
+            reported: None,
+        }
+    }
+}
+
 /// The process-wide theme handle.
 pub struct GlobalTheme {
     inner: RwLock<Option<Arc<Theme>>>,
     name: RwLock<Option<String>>,
+    auto: RwLock<AutoTheme>,
 }
 
 /// The singleton global theme.
@@ -748,31 +770,158 @@ impl GlobalTheme {
         GlobalTheme {
             inner: RwLock::new(None),
             name: RwLock::new(None),
+            auto: RwLock::new(AutoTheme::default()),
+        }
+    }
+
+    fn load_or_dark(name: &str) -> Theme {
+        loader::load_theme(name, &loader::CreateThemeOptions::default())
+            .or_else(|_| loader::load_theme("dark", &loader::CreateThemeOptions::default()))
+            .expect("built-in dark theme must load")
+    }
+
+    fn commit(&self, name: &str, theme: Theme) {
+        if let Ok(mut g) = self.inner.write() {
+            *g = Some(Arc::new(theme));
+        }
+        if let Ok(mut n) = self.name.write() {
+            *n = Some(name.to_string());
+        }
+        self.bump_epoch();
+    }
+
+    fn disable_auto(&self) {
+        if let Ok(mut a) = self.auto.write() {
+            a.enabled = false;
         }
     }
 
     /// Initialize the global theme from a name (built-in or custom dir).
     ///
-    /// On load failure, falls back to the built-in `dark` theme so the TUI
-    /// always has a usable theme.  Returns the active theme name.
+    /// Explicit name (omp `setTheme`): disables auto-detection. On load
+    /// failure, falls back to the built-in `dark` theme so the TUI always
+    /// has a usable theme. Returns the active theme name.
     pub fn init(&self, name: &str) -> String {
-        let theme = loader::load_theme(name, &loader::CreateThemeOptions::default())
-            .or_else(|_| loader::load_theme("dark", &loader::CreateThemeOptions::default()))
-            .expect("built-in dark theme must load");
-        if let Ok(mut g) = self.inner.write() {
-            *g = Some(Arc::new(theme));
+        self.disable_auto();
+        let theme = Self::load_or_dark(name);
+        self.commit(name, theme);
+        name.to_string()
+    }
+
+    /// Initialize from terminal appearance (omp `initThemeSync` / `configureTheme`).
+    ///
+    /// Dark slot defaults to [`AUTO_DARK_THEME`] (`titanium`); light to
+    /// [`AUTO_LIGHT_THEME`] (`light`).
+    pub fn init_auto(&self, inputs: &appearance::AppearanceInputs) -> String {
+        self.init_auto_mapped(
+            appearance::AUTO_DARK_THEME,
+            appearance::AUTO_LIGHT_THEME,
+            inputs,
+        )
+    }
+
+    /// Auto-init with explicit dark/light theme names.
+    pub fn init_auto_mapped(
+        &self,
+        dark: &str,
+        light: &str,
+        inputs: &appearance::AppearanceInputs,
+    ) -> String {
+        if let Ok(mut a) = self.auto.write() {
+            a.enabled = true;
+            a.dark = dark.to_string();
+            a.light = light.to_string();
+            a.reported = inputs.osc11_appearance;
         }
-        let name = name.to_string();
-        if let Ok(mut n) = self.name.write() {
-            *n = Some(name.clone());
-        }
-        self.bump_epoch();
+        let name = appearance::resolve_auto_theme(dark, light, inputs);
+        let theme = Self::load_or_dark(&name);
+        self.commit(&name, theme);
         name
     }
 
+    /// Enable auto-detection and re-evaluate (omp `enableAutoTheme`).
+    pub fn enable_auto_theme(&self, inputs: &appearance::AppearanceInputs) {
+        if let Ok(mut a) = self.auto.write() {
+            a.enabled = true;
+        }
+        self.reevaluate_auto(inputs);
+    }
+
+    /// Update the auto dark/light mapping (omp `setAutoThemeMapping`).
+    pub fn set_auto_theme_mapping(
+        &self,
+        slot: appearance::Appearance,
+        theme_name: &str,
+        inputs: &appearance::AppearanceInputs,
+    ) {
+        if let Ok(mut a) = self.auto.write() {
+            match slot {
+                appearance::Appearance::Dark => a.dark = theme_name.to_string(),
+                appearance::Appearance::Light => a.light = theme_name.to_string(),
+            }
+        }
+        self.reevaluate_auto(inputs);
+    }
+
+    /// OSC 11 / Mode 2031 classified appearance (omp `onTerminalAppearanceChange`).
+    ///
+    /// Returns `true` when the reported slot changed (and auto-theme may have
+    /// swapped). Duplicate reports are ignored.
+    pub fn on_terminal_appearance_change(
+        &self,
+        mode: appearance::Appearance,
+        inputs: &appearance::AppearanceInputs,
+    ) -> bool {
+        {
+            let mut a = match self.auto.write() {
+                Ok(guard) => guard,
+                Err(_) => return false,
+            };
+            if a.reported == Some(mode) {
+                return false;
+            }
+            a.reported = Some(mode);
+            if !a.enabled {
+                return false;
+            }
+        }
+        let mut merged = inputs.clone();
+        merged.osc11_appearance = Some(mode);
+        self.reevaluate_auto(&merged);
+        true
+    }
+
+    /// Re-run auto mapping against `inputs` (no-op when auto is off).
+    pub fn reevaluate_auto(&self, inputs: &appearance::AppearanceInputs) {
+        let (enabled, dark, light, reported) = match self.auto.read() {
+            Ok(a) => (a.enabled, a.dark.clone(), a.light.clone(), a.reported),
+            Err(_) => return,
+        };
+        if !enabled {
+            return;
+        }
+        let mut merged = inputs.clone();
+        if merged.osc11_appearance.is_none() {
+            merged.osc11_appearance = reported;
+        }
+        let name = appearance::resolve_auto_theme(&dark, &light, &merged);
+        if self.get_current_theme_name().as_deref() == Some(name.as_str()) {
+            return;
+        }
+        let theme = Self::load_or_dark(&name);
+        self.commit(&name, theme);
+    }
+
+    /// Whether auto-detection is currently enabled.
+    pub fn auto_detected(&self) -> bool {
+        self.auto.read().ok().is_some_and(|a| a.enabled)
+    }
+
     /// Swap the active theme to `name`, returning an error string on failure.
+    /// Disables auto-detection (omp `setTheme`).
     pub fn set(&self, name: &str) -> Result<(), String> {
         let theme = loader::load_theme(name, &loader::CreateThemeOptions::default())?;
+        self.disable_auto();
         if let Ok(mut g) = self.inner.write() {
             *g = Some(Arc::new(theme));
         }
@@ -784,6 +933,7 @@ impl GlobalTheme {
     }
 
     /// Preview a theme without committing the name (ephemeral swap).
+    /// Does not disable auto-detection (omp `previewTheme`).
     pub fn preview(&self, name: &str) -> Result<(), String> {
         let theme = loader::load_theme(name, &loader::CreateThemeOptions::default())?;
         if let Ok(mut g) = self.inner.write() {
@@ -794,7 +944,9 @@ impl GlobalTheme {
     }
 
     /// Install an already-constructed theme instance.
+    /// Disables auto-detection (omp `setThemeInstance`).
     pub fn set_instance(&self, theme: Theme) {
+        self.disable_auto();
         if let Ok(mut g) = self.inner.write() {
             *g = Some(Arc::new(theme));
         }

@@ -85,19 +85,36 @@ impl Transcript {
         self.alert.as_ref()
     }
 
-    /// Apply a `/details` directive: `"<section> <mode>"`.
+    /// Apply a `/details` directive: `"<section> <mode>"` or a global
+    /// `"<mode>"` (hidden|collapsed|expanded|cycle) applied to every section.
     ///
-    /// Returns `true` if visibility changed.  `mode` is one of `hidden`,
-    /// `collapsed`, `expanded`, `cycle` (see [`SectionVisibility::apply`]).
+    /// Returns `true` if visibility changed.
     pub fn details(&mut self, directive: &str) -> bool {
         let mut parts = directive.split_whitespace();
-        let (Some(section_name), Some(mode)) = (parts.next(), parts.next()) else {
+        let Some(first) = parts.next() else {
             return false;
         };
-        let Some(section) = Section::parse(section_name) else {
-            return false;
-        };
-        self.visibility.apply(section, mode)
+        match parts.next() {
+            Some(mode) => {
+                let Some(section) = Section::parse(first) else {
+                    return false;
+                };
+                self.visibility.apply(section, mode)
+            }
+            None => {
+                // Global: `/details cycle` / `/details hidden` / …
+                let mut changed = false;
+                for section in [
+                    Section::Thinking,
+                    Section::Tools,
+                    Section::Subagents,
+                    Section::Activity,
+                ] {
+                    changed |= self.visibility.apply(section, first);
+                }
+                changed
+            }
+        }
     }
 
     /// Whether every section is hidden — the app should surface the alert.
@@ -319,5 +336,16 @@ mod tests {
         assert!(idx_tools < idx_subagents);
         // No activity header (hidden).
         assert!(!rows.iter().any(|r| r.contains("activity")));
+    }
+
+    #[test]
+    fn global_details_mode_applies_to_every_section() {
+        let mut t = Transcript::new();
+        t.push(Entry::new(Section::Thinking, "think"));
+        t.push(Entry::new(Section::Tools, "tool"));
+        assert!(t.details("hidden"));
+        assert!(t.all_hidden());
+        // A lone section name is not a valid global mode.
+        assert!(!t.details("tools"));
     }
 }

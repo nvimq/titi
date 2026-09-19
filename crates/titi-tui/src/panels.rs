@@ -11,6 +11,28 @@
 use crate::component::Component;
 use crate::width::{truncate_to_width, visible_width};
 
+/// OMP overlay chrome: `boxRound` corners + `boxSharp` tees (`omp://theme.md`).
+fn box_top(inner_w: usize) -> String {
+    format!("╭{}╮", "─".repeat(inner_w))
+}
+#[allow(dead_code)]
+fn box_mid(inner_w: usize) -> String {
+    format!("├{}┤", "─".repeat(inner_w))
+}
+fn box_bot(inner_w: usize) -> String {
+    format!("╰{}╯", "─".repeat(inner_w))
+}
+
+/// OMP `topBorder`: title inset into the top rule (`╭─ Title ────╮`).
+fn box_top_title(inner_w: usize, title: &str) -> String {
+    if title.is_empty() {
+        return box_top(inner_w);
+    }
+    let shown = truncate_to_width(&format!(" {title} "), inner_w.saturating_sub(1));
+    let fill = inner_w.saturating_sub(1).saturating_sub(visible_width(&shown));
+    format!("╭─{shown}{}╮", "─".repeat(fill))
+}
+
 /// Result of a closed panel.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct PanelResult<T> {
@@ -24,14 +46,19 @@ pub struct PanelResult<T> {
 ///
 /// Renders a bordered box with a title and scrollable list.  Navigation:
 ///
-/// - `↑`/`↓` or `k`/`j` — move selection
-/// - `Enter` — confirm selection
+/// - `↑`/`↓` — move selection in the filtered list
+/// - printable characters — type-to-filter (OMP fuzzy / subsequence)
+/// - Backspace — delete the last filter character
+/// - `Enter` — confirm the highlighted visible item
 /// - `Esc` — cancel (no selection)
 pub struct SelectionPanel<T> {
     title: String,
     items: Vec<T>,
     labels: Vec<String>,
     selected: usize,
+    filter: String,
+    /// When set, only this many filtered rows are painted (windowed around the highlight).
+    max_visible: Option<usize>,
     result: Option<PanelResult<T>>,
     closed: bool,
 }
@@ -56,6 +83,8 @@ impl<T> SelectionPanel<T> {
             items,
             labels,
             selected: 0,
+            filter: String::new(),
+            max_visible: None,
             result: None,
             closed: false,
         }
@@ -76,9 +105,58 @@ impl<T> SelectionPanel<T> {
         self.result
     }
 
-    /// Selected index (0-based).
+    /// Selected index (0-based) into the **visible** (filtered) list.
     pub fn selected_index(&self) -> usize {
         self.selected
+    }
+
+    /// Current type-to-filter query.
+    pub fn filter(&self) -> &str {
+        &self.filter
+    }
+
+    /// Number of labels that match the current filter.
+    pub fn visible_count(&self) -> usize {
+        self.visible_indices().len()
+    }
+
+    /// Cap painted item rows (OMP compact overlay / `SelectList.setMaxVisible`).
+    pub fn set_max_visible(&mut self, rows: usize) {
+        self.max_visible = Some(rows.max(1));
+    }
+
+    fn visible_indices(&self) -> Vec<usize> {
+        self.labels
+            .iter()
+            .enumerate()
+            .filter(|(_, label)| fuzzy_match(label, &self.filter))
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    fn windowed_indices(&self) -> Vec<usize> {
+        let vis = self.visible_indices();
+        let Some(cap) = self.max_visible else {
+            return vis;
+        };
+        if vis.len() <= cap {
+            return vis;
+        }
+        let cap = cap.max(1);
+        let mut start = self.selected.saturating_sub(cap / 2);
+        if start + cap > vis.len() {
+            start = vis.len() - cap;
+        }
+        vis[start..start + cap].to_vec()
+    }
+
+    fn clamp_selected(&mut self) {
+        let n = self.visible_indices().len();
+        if n == 0 {
+            self.selected = 0;
+        } else if self.selected >= n {
+            self.selected = n - 1;
+        }
     }
 
     fn move_up(&mut self) {
@@ -88,16 +166,21 @@ impl<T> SelectionPanel<T> {
     }
 
     fn move_down(&mut self) {
-        if !self.items.is_empty() && self.selected + 1 < self.items.len() {
+        let n = self.visible_indices().len();
+        if n > 0 && self.selected + 1 < n {
             self.selected += 1;
         }
     }
 
     fn confirm(&mut self) {
-        if self.items.is_empty() {
+        let indices = self.visible_indices();
+        let Some(&orig) = indices.get(self.selected) else {
+            return;
+        };
+        if orig >= self.items.len() {
             return;
         }
-        let item = self.items.swap_remove(self.selected);
+        let item = self.items.swap_remove(orig);
         self.result = Some(PanelResult {
             selected: Some(item),
             cancelled: false,
@@ -121,50 +204,47 @@ impl<T> Component for SelectionPanel<T> {
         }
 
         let w = width as usize;
+        let visible = self.visible_indices();
+        let window = self.windowed_indices();
         if w < 8 {
-            // Too narrow for a border — plain list.
-            return self
-                .labels
+            return window
                 .iter()
-                .enumerate()
-                .map(|(i, label)| {
-                    if i == self.selected {
+                .filter_map(|&orig| {
+                    let vis_i = visible.iter().position(|&i| i == orig)?;
+                    let label = self.labels.get(orig)?;
+                    Some(if vis_i == self.selected {
                         format!("> {label}")
                     } else {
                         format!("  {label}")
-                    }
+                    })
                 })
                 .collect();
         }
 
         let inner_w = w.saturating_sub(4).max(6);
-        let title_w = inner_w.saturating_sub(2);
-
-        // Title line (centred, truncated).
-        let display_title = truncate_to_width(&self.title, title_w);
-        let title_pad = title_w.saturating_sub(visible_width(&display_title));
-        let left_pad = title_pad / 2;
-        let right_pad = title_pad - left_pad;
-        let title_line = format!(
-            "│ {}{}{} │",
-            " ".repeat(left_pad),
-            display_title,
-            " ".repeat(right_pad)
-        );
+        let title = if self.filter.is_empty() {
+            self.title.clone()
+        } else {
+            format!("{}  {}", self.title, self.filter)
+        };
 
         let mut rows = Vec::new();
-        rows.push(format!("┌{}┐", "─".repeat(inner_w)));
-        rows.push(title_line);
-        rows.push(format!("├{}┤", "─".repeat(inner_w)));
+        rows.push(box_top_title(inner_w, &title));
 
-        for (i, label) in self.labels.iter().enumerate() {
+        for &orig in &window {
+            let Some(label) = self.labels.get(orig) else {
+                continue;
+            };
+            let Some(vis_i) = visible.iter().position(|&i| i == orig) else {
+                continue;
+            };
             let truncated = truncate_to_width(label, inner_w.saturating_sub(2));
             let pad = inner_w.saturating_sub(2) - visible_width(&truncated);
-            let marker = if i == self.selected { "▶" } else { " " };
+            let marker = if vis_i == self.selected { "▶" } else { " " };
             rows.push(format!("│ {marker}{truncated}{} │", " ".repeat(pad)));
         }
 
-        rows.push(format!("└{}┘", "─".repeat(inner_w)));
+        rows.push(box_bot(inner_w));
         rows
     }
 
@@ -173,17 +253,55 @@ impl<T> Component for SelectionPanel<T> {
             return;
         }
         match data {
-            "\x1b" | "\x1b\x1b" => self.cancel(), // Esc
-            "\x1b[A" | "k" => self.move_up(),     // Up / k
-            "\x1b[B" | "j" => self.move_down(),   // Down / j
-            "\r" | "\n" => self.confirm(),        // Enter
-            _ => {}
+            "\x1b" | "\x1b\x1b" => self.cancel(),
+            "\x1b[A" => self.move_up(),
+            "\x1b[B" => self.move_down(),
+            "\r" | "\n" => self.confirm(),
+            "\x7f" | "\x08" => {
+                self.filter.pop();
+                self.selected = 0;
+                self.clamp_selected();
+            }
+            other => {
+                let mut chars = other.chars();
+                if let Some(ch) = chars.next()
+                    && chars.next().is_none()
+                    && !ch.is_control()
+                {
+                    self.filter.push(ch);
+                    self.selected = 0;
+                    self.clamp_selected();
+                }
+            }
         }
     }
 
     fn wants_key_release(&self) -> bool {
         false
     }
+}
+
+/// Case-insensitive substring, then in-order subsequence (OMP type-to-filter).
+fn fuzzy_match(label: &str, query: &str) -> bool {
+    if query.is_empty() {
+        return true;
+    }
+    let label_lc: String = label.to_lowercase();
+    let query_lc: String = query.to_lowercase();
+    if label_lc.contains(&query_lc) {
+        return true;
+    }
+    let mut chars = label_lc.chars();
+    for q in query_lc.chars() {
+        loop {
+            match chars.next() {
+                Some(c) if c == q => break,
+                Some(_) => continue,
+                None => return false,
+            }
+        }
+    }
+    true
 }
 
 // ---------------------------------------------------------------------------
@@ -294,7 +412,7 @@ impl CompletionPanel {
 
         let inner_w = w.saturating_sub(4).max(6);
         let mut rows = Vec::new();
-        rows.push(format!("┌{}┐", "─".repeat(inner_w)));
+        rows.push(box_top(inner_w));
         rows.push(format!("│ {:<inner_w$} │", "commands"));
 
         for (i, item) in self.items.iter().enumerate() {
@@ -308,8 +426,27 @@ impl CompletionPanel {
             let pad = inner_w.saturating_sub(2) - visible_width(&truncated);
             rows.push(format!("│ {marker}{truncated}{} │", " ".repeat(pad)));
         }
-        rows.push(format!("└{}┘", "─".repeat(inner_w)));
+        rows.push(box_bot(inner_w));
         rows
+    }
+
+    /// Suggestion rows without chrome — embed inside the box composer.
+    pub fn item_rows(&self) -> Vec<String> {
+        if !self.visible {
+            return Vec::new();
+        }
+        self.items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                let marker = if i == self.selected { "▶" } else { " " };
+                if item.description.is_empty() {
+                    format!("{marker}{}", item.name)
+                } else {
+                    format!("{marker}{}  {}", item.name, item.description)
+                }
+            })
+            .collect()
     }
 }
 
@@ -364,6 +501,7 @@ pub enum SessionAction {
 pub struct SessionSwitcher {
     titles: Vec<String>,
     selected: usize,
+    max_visible: Option<usize>,
     action: Option<SessionAction>,
     closed: bool,
 }
@@ -374,6 +512,7 @@ impl SessionSwitcher {
         SessionSwitcher {
             titles,
             selected: 0,
+            max_visible: None,
             action: None,
             closed: false,
         }
@@ -397,6 +536,11 @@ impl SessionSwitcher {
     /// The session titles the switcher was built over.
     pub fn titles(&self) -> &[String] {
         &self.titles
+    }
+
+    /// Cap painted session rows (compact overlay).
+    pub fn set_max_visible(&mut self, rows: usize) {
+        self.max_visible = Some(rows.max(1));
     }
 
     fn close_with(&mut self, action: SessionAction) {
@@ -440,22 +584,30 @@ impl Component for SessionSwitcher {
 
         let inner_w = w.saturating_sub(4).max(6);
         let mut rows = Vec::new();
-        rows.push(format!("┌{}┐", "─".repeat(inner_w)));
-        rows.push(format!(
-            "│ {}{} │",
-            "Sessions".to_owned(),
-            " ".repeat(inner_w.saturating_sub(9))
-        ));
-        rows.push(format!("├{}┤", "─".repeat(inner_w)));
+        rows.push(box_top_title(inner_w, "Sessions"));
 
-        for (i, title) in self.titles.iter().enumerate() {
+        let cap = self.max_visible.unwrap_or(self.titles.len()).max(1);
+        let n = self.titles.len();
+        let (start, end) = if n <= cap {
+            (0, n)
+        } else {
+            let mut start = self.selected.saturating_sub(cap / 2);
+            if start + cap > n {
+                start = n - cap;
+            }
+            (start, start + cap)
+        };
+        for i in start..end {
+            let Some(title) = self.titles.get(i) else {
+                continue;
+            };
             let truncated = truncate_to_width(title, inner_w.saturating_sub(2));
             let pad = inner_w.saturating_sub(2) - visible_width(&truncated);
             let marker = if i == self.selected { "▶" } else { " " };
             rows.push(format!("│ {marker}{truncated}{} │", " ".repeat(pad)));
         }
 
-        rows.push(format!("└{}┘", "─".repeat(inner_w)));
+        rows.push(box_bot(inner_w));
         rows
     }
 
@@ -560,18 +712,83 @@ mod tests {
     }
 
     #[test]
-    fn panel_vim_keys_work() {
+    fn panel_type_to_filter_confirms_match() {
+        let mut p = SelectionPanel::new(
+            "Choose",
+            vec!["apple", "banana", "cherry"],
+            vec!["Apple".into(), "Banana".into(), "Cherry".into()],
+        );
+        p.handle_input("b");
+        p.handle_input("a");
+        assert_eq!(p.filter(), "ba");
+        assert_eq!(p.visible_count(), 1);
+        p.handle_input("\r");
+        assert!(p.is_closed());
+        assert_eq!(p.result().unwrap().selected, Some("banana"));
+    }
+
+    #[test]
+    fn panel_fuzzy_subsequence_matches() {
+        let mut p = SelectionPanel::new(
+            "Model",
+            vec!["opencode-go/glm-5.3-flash", "clinepass/deepseek-v4-flash"],
+            vec![
+                "opencode-go/glm-5.3-flash".into(),
+                "clinepass/deepseek-v4-flash".into(),
+            ],
+        );
+        p.handle_input("g");
+        p.handle_input("l");
+        p.handle_input("m");
+        assert_eq!(p.visible_count(), 1);
+        p.handle_input("\r");
+        assert_eq!(
+            p.result().unwrap().selected,
+            Some("opencode-go/glm-5.3-flash")
+        );
+    }
+
+    #[test]
+    fn panel_backspace_edits_filter() {
         let mut p = SelectionPanel::new(
             "X",
-            vec!["a", "b", "c"],
-            vec!["a".into(), "b".into(), "c".into()],
+            vec!["aa", "ab"],
+            vec!["aa".into(), "ab".into()],
         );
-        p.handle_input("j");
-        assert_eq!(p.selected, 1);
-        p.handle_input("j");
-        assert_eq!(p.selected, 2);
-        p.handle_input("k");
-        assert_eq!(p.selected, 1);
+        p.handle_input("b");
+        assert_eq!(p.visible_count(), 1);
+        p.handle_input("\x7f");
+        assert_eq!(p.filter(), "");
+        assert_eq!(p.visible_count(), 2);
+    }
+
+    #[test]
+    fn panel_windows_list_keeps_title() {
+        let items: Vec<String> = (0..20).map(|i| format!("m{i}")).collect();
+        let labels = items.clone();
+        let mut p = SelectionPanel::new("Model", items, labels);
+        p.set_max_visible(5);
+        let rows = p.render(40);
+        assert!(
+            rows[0].contains("Model"),
+            "title stays in top border: {rows:?}"
+        );
+        assert!(
+            rows.len() <= 7,
+            "chrome + 5 items: {}",
+            rows.len()
+        );
+        p.handle_input("\x1b[B");
+        p.handle_input("\x1b[B");
+        p.handle_input("\x1b[B");
+        p.handle_input("\x1b[B");
+        p.handle_input("\x1b[B");
+        let rows = p.render(40);
+        assert!(rows[0].contains("Model"), "title after scroll: {rows:?}");
+        assert!(
+            rows.iter().any(|r| r.contains("m5")),
+            "window follows highlight: {rows:?}"
+        );
     }
 
     #[test]
@@ -630,9 +847,9 @@ mod tests {
     fn render_wide_panel_has_border() {
         let mut p = SelectionPanel::new("Choose", vec!["x"], vec!["Item".into()]);
         let rows = p.render(40);
-        assert!(rows[0].starts_with('┌'), "should start with top border: {rows:?}");
+        assert!(rows[0].starts_with('╭'), "should start with top border: {rows:?}");
         assert!(
-            rows.last().unwrap().starts_with('└'),
+            rows.last().unwrap().starts_with('╰'),
             "should end with bottom border"
         );
     }
@@ -759,8 +976,8 @@ mod tests {
         let mut p = CompletionPanel::new();
         p.refresh(completions());
         let rows = p.render(80);
-        assert!(rows[0].starts_with('┌'), "top border");
-        assert!(rows.last().unwrap().starts_with('└'), "bottom border");
+        assert!(rows[0].starts_with('╭'), "top border");
+        assert!(rows.last().unwrap().starts_with('╰'), "bottom border");
         let joined = rows.join("\n");
         assert!(joined.contains("commands"), "title");
         assert!(joined.contains("/model"), "first suggestion");

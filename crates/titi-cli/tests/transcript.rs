@@ -38,7 +38,10 @@ fn transcript_defaults_render_accordion() {
     assert!(text.contains("▾ tools"), "tools header: {text}");
     assert!(text.contains("tool ran"), "tools body: {text}");
     assert!(text.contains("▸ subagents"), "subagents collapsed: {text}");
-    assert!(!text.contains("agent report"), "subagents body hidden: {text}");
+    assert!(
+        !text.contains("agent report"),
+        "subagents body hidden: {text}"
+    );
     assert!(!text.contains("ambient"), "activity hidden: {text}");
     assert!(!text.contains("activity"), "no activity header: {text}");
 }
@@ -83,8 +86,14 @@ fn all_hidden_shows_floating_alert_backstop() {
     // Backstop: the transcript renders the alert instead of nothing.
     let rows = app.render();
     let text = rows.join("\n");
-    assert!(text.contains("all sections hidden"), "alert backstop: {text}");
-    assert!(!text.contains("hidden thought"), "content suppressed: {text}");
+    assert!(
+        text.contains("all sections hidden"),
+        "alert backstop: {text}"
+    );
+    assert!(
+        !text.contains("hidden thought"),
+        "content suppressed: {text}"
+    );
 }
 
 #[test]
@@ -107,9 +116,12 @@ fn mouse_drag_select_applies_background() {
     app.mouse_press(0, 3);
     app.mouse_drag(8, 5);
     let after = app.render();
-    assert!(after[3].contains("\x1b[48;2;"), "row 3 painted: {:?}", after[3]);
-    assert!(after[4].contains("\x1b[48;2;"), "row 4 painted: {:?}", after[4]);
-    assert!(after[5].contains("\x1b[48;2;"), "row 5 painted: {:?}", after[5]);
+    for row in &after[3..=5] {
+        assert!(
+            row.contains("\x1b[48;2;") || row.contains("\x1b[48;5;"),
+            "selected row painted with a background: {row:?}"
+        );
+    }
     // Row 2 (header) outside the selection region untouched.
     assert_eq!(after[2], before[2], "header unchanged");
 
@@ -137,7 +149,10 @@ fn mouse_preset_roundtrips_through_config() {
     assert_eq!(load_mouse_preset_from(&agent_dir), None);
     // Save buttons → load buttons.
     save_mouse_preset_to(&agent_dir, MousePreset::Buttons).unwrap();
-    assert_eq!(load_mouse_preset_from(&agent_dir), Some(MousePreset::Buttons));
+    assert_eq!(
+        load_mouse_preset_from(&agent_dir),
+        Some(MousePreset::Buttons)
+    );
     // Save all → load all.
     save_mouse_preset_to(&agent_dir, MousePreset::All).unwrap();
     assert_eq!(load_mouse_preset_from(&agent_dir), Some(MousePreset::All));
@@ -170,10 +185,17 @@ fn first_frame_still_queues_input_with_transcript() {
     );
     let rows = app.render();
     assert!(rows[0].contains("titi v0.1.0"), "banner: {rows:?}");
-    assert!(rows.iter().any(|r| r.contains("starting")), "status: {rows:?}");
+    assert!(
+        rows.iter().any(|r| r.contains('╭')) && rows.iter().any(|r| r.contains('╰')),
+        "OMP box composer: {rows:?}"
+    );
+    assert_eq!(app.state(), titi_tui::status::AgentState::Starting);
     assert!(app.time_to_first_frame().as_millis() < 150, "ttff too slow");
 
     use titi_cli::first_frame::SubmitOutcome;
-    assert_eq!(app.submit("queued prompt".to_owned()), SubmitOutcome::Queued);
+    assert_eq!(
+        app.submit("queued prompt".to_owned()),
+        SubmitOutcome::Queued
+    );
     assert_eq!(app.queue_len(), 1);
 }

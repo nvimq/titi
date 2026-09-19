@@ -6,6 +6,7 @@ members = [
     "crates/titi-soul",
     "crates/titi-memory",
     "crates/titi-providers",
+    "crates/titi-engine",
     "crates/titi-tools",
     "crates/titi-tui",
     "crates/titi-cli",
@@ -20,6 +21,7 @@ repository = "https://github.com/workie/titi"
 [workspace.dependencies]
 titi-config = { path = "crates/titi-config" }
 titi-core = { path = "crates/titi-core" }
+titi-engine = { path = "crates/titi-engine" }
 titi-providers = { path = "crates/titi-providers" }
 titi-soul = { path = "crates/titi-soul" }
 titi-memory = { path = "crates/titi-memory" }

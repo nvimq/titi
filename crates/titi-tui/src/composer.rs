@@ -5,6 +5,10 @@
 
 use std::collections::VecDeque;
 
+use crate::cursor::CURSOR_MARKER;
+use crate::theme::{Theme, ThemeColor};
+use crate::width::{truncate_to_width, visible_width};
+
 /// Mode for a queued message.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueMode {
@@ -135,6 +139,26 @@ impl Composer {
     ///   attachment counter increments per image pasted).
     /// - If the text has ≤ `max_lines` lines → `Text` verbatim.
     /// - Otherwise → `Collapsed` with the first line and omitted count.
+    /// Bracketed paste or OSC 5522 enhanced paste (`mime;base64` or full OSC).
+    pub fn ingest_paste(&mut self, text: &str, max_lines: usize) -> PasteResult {
+        if let Some(osc) = extract_osc5522(text).or_else(|| parse_osc5522(text.trim())) {
+            return self.apply_osc5522(osc, max_lines);
+        }
+        self.collapse_paste(text, max_lines)
+    }
+
+    fn apply_osc5522(&mut self, osc: Osc5522, max_lines: usize) -> PasteResult {
+        if osc.mime.starts_with("image/") {
+            self.attach_seq += 1;
+            return PasteResult::Attachment {
+                name: osc.mime,
+                marker: format!("[Image #{}]", self.attach_seq),
+            };
+        }
+        let decoded = String::from_utf8_lossy(&osc.data).into_owned();
+        self.collapse_paste(&decoded, max_lines)
+    }
+
     pub fn collapse_paste(&mut self, text: &str, max_lines: usize) -> PasteResult {
         // Check for a single image path.
         let trimmed = text.trim();
@@ -189,6 +213,17 @@ pub fn parse_osc5522(payload: &str) -> Option<Osc5522> {
     })
 }
 
+/// Pull an OSC 5522 payload out of a raw terminal sequence.
+///
+/// Looks for `ESC ] 5522 ; <mime>;<base64> ST/BEL`.
+pub fn extract_osc5522(raw: &str) -> Option<Osc5522> {
+    const PREFIX: &str = "\x1b]5522;";
+    let start = raw.find(PREFIX)?;
+    let rest = &raw[start + PREFIX.len()..];
+    let end = rest.find("\x1b\\").or_else(|| rest.find('\u{07}'))?;
+    parse_osc5522(&rest[..end])
+}
+
 /// Check whether `s` looks like a single image file path (no newlines, known
 /// extension).
 fn is_image_path(s: &str) -> bool {
@@ -203,6 +238,93 @@ fn is_image_path(s: &str) -> bool {
         ext.as_str(),
         "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico"
     )
+}
+
+
+/// Default box-composer padding (OMP `boxComposerStyle.defaultPaddingX`).
+const BOX_PADDING_X: usize = 2;
+
+/// Render the OMP **box** composer: status in the top `boxRound` border,
+/// optional inner rows (slash complete), prompt merged into the bottom
+/// border. Embed `CURSOR_MARKER` at the caret in `input`.
+pub fn render_box_composer(
+    theme: &Theme,
+    width: u16,
+    status: &str,
+    input: &str,
+    highlighted: bool,
+    show_cursor: bool,
+    inner_rows: &[String],
+) -> Vec<String> {
+    let w = width as usize;
+    if w < 8 {
+        let mut rows = inner_rows.to_vec();
+        rows.push(prompt_text(input, highlighted, show_cursor));
+        return rows;
+    }
+    let tl = glyph(theme, "boxRound.topLeft", "╭");
+    let tr = glyph(theme, "boxRound.topRight", "╮");
+    let bl = glyph(theme, "boxRound.bottomLeft", "╰");
+    let br = glyph(theme, "boxRound.bottomRight", "╯");
+    let h = glyph(theme, "boxRound.horizontal", "─");
+    let v = glyph(theme, "boxRound.vertical", "│");
+    let border = |s: &str| theme.fg(ThemeColor::Border, s);
+
+    let pad_h = h.repeat(BOX_PADDING_X);
+    let top_left = border(&format!("{tl}{pad_h}"));
+    let top_right = border(&format!("{pad_h}{tr}"));
+    let side = BOX_PADDING_X + 1;
+    let fill_w = w.saturating_sub(side * 2);
+    let status_trim = truncate_to_width(status, fill_w);
+    let fill = fill_w.saturating_sub(visible_width(&status_trim));
+    let top = format!("{top_left}{status_trim}{}{top_right}", border(&h.repeat(fill)));
+
+    let mut rows = vec![top];
+    let inner_w = w.saturating_sub(2);
+    for row in inner_rows {
+        let body = truncate_to_width(row, inner_w.saturating_sub(BOX_PADDING_X));
+        let pad = inner_w
+            .saturating_sub(BOX_PADDING_X)
+            .saturating_sub(visible_width(&body));
+        let left = border(&format!("{v}{}", " ".repeat(BOX_PADDING_X)));
+        let right = border(v);
+        rows.push(format!("{left}{body}{}{right}", " ".repeat(pad)));
+    }
+
+    let prompt = prompt_text(input, highlighted, show_cursor);
+    let left_pad = " ".repeat(BOX_PADDING_X.saturating_sub(1));
+    let bottom_left = border(&format!("{bl}{h}{left_pad}"));
+    let bottom_right = border(&format!("{h}{br}"));
+    let used = visible_width(&bottom_left) + visible_width(&prompt) + visible_width(&bottom_right);
+    let mid = w.saturating_sub(used);
+    rows.push(format!(
+        "{bottom_left}{prompt}{}{bottom_right}",
+        border(&h.repeat(mid))
+    ));
+    rows
+}
+
+fn glyph<'a>(theme: &'a Theme, key: &str, fallback: &'a str) -> &'a str {
+    let s = theme.symbol(key);
+    if s.is_empty() {
+        fallback
+    } else {
+        s
+    }
+}
+
+fn prompt_text(input: &str, highlighted: bool, show_cursor: bool) -> String {
+    let marker = if show_cursor {
+        CURSOR_MARKER.to_string()
+    } else {
+        String::new()
+    };
+    let body = if highlighted {
+        format!("\x1b[7m{input}\x1b[27m")
+    } else {
+        input.to_owned()
+    };
+    format!("{body}{marker}")
 }
 
 #[cfg(test)]
@@ -334,6 +456,24 @@ mod tests {
     }
 
     #[test]
+    fn extract_osc5522_from_sequence() {
+        let raw = "\x1b]5522;image/png;aGVsbG8=\x07trailing";
+        let parsed = extract_osc5522(raw).unwrap();
+        assert_eq!(parsed.mime, "image/png");
+        assert_eq!(parsed.data, b"hello");
+    }
+
+    #[test]
+    fn ingest_osc5522_image_is_attachment() {
+        let mut c = Composer::new();
+        let raw = "\x1b]5522;image/png;aGVsbG8=\x1b\\";
+        match c.ingest_paste(raw, 6) {
+            PasteResult::Attachment { marker, .. } => assert_eq!(marker, "[Image #1]"),
+            other => panic!("expected attachment, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn parse_osc5522_empty_mime() {
         assert!(parse_osc5522(";aGVsbG8=").is_none());
     }
@@ -366,5 +506,18 @@ mod tests {
         let mut c = Composer::new();
         c.set_buffer("hello");
         assert_eq!(c.buffer, "hello");
+    }
+
+    #[test]
+    fn box_composer_round_corners_and_cursor_marker() {
+        use crate::theme::global;
+        global().init("titanium");
+        let theme = global().current().expect("theme");
+        let rows = render_box_composer(&theme, 40, "π model", "hi", false, true, &[]);
+        assert!(rows[0].contains('╭') && rows[0].contains('╮'), "top: {}", rows[0]);
+        let last = rows.last().expect("bottom");
+        assert!(last.contains('╰') && last.contains('╯'), "bottom: {last}");
+        assert!(last.contains(CURSOR_MARKER), "cursor marker in prompt: {last}");
+        assert!(rows.iter().any(|r| r.contains("π model") || r.contains("model")), "{rows:?}");
     }
 }

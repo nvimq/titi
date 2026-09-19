@@ -1,0 +1,123 @@
+use serde::{Deserialize, Serialize};
+use smol_str::SmolStr;
+use titi_providers::{ErrorReason, StopReason};
+
+/// Stable identifier correlating commands and events for one agent turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TurnId(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentKind {
+    Subagent,
+    Advisor,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentStatus {
+    Running,
+    Idle,
+    Parked,
+    Aborted,
+    Completed,
+    Failed,
+}
+
+/// Commands accepted by every engine surface.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EngineCommand {
+    SubmitPrompt {
+        text: SmolStr,
+    },
+    FollowUp {
+        text: SmolStr,
+    },
+    Cancel,
+    SwitchModel {
+        model: SmolStr,
+    },
+    ApproveTool {
+        call_id: SmolStr,
+        approved: bool,
+    },
+    SpawnAgent {
+        name: SmolStr,
+        task: SmolStr,
+        kind: AgentKind,
+    },
+    FocusAgent {
+        agent_id: SmolStr,
+    },
+    ReviveAgent {
+        agent_id: SmolStr,
+    },
+    StopAgent {
+        agent_id: SmolStr,
+    },
+    Shutdown,
+}
+
+/// UI-independent events rendered by TUI, GPUI, or serialized by headless RPC.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum EngineEvent {
+    TurnStarted {
+        turn_id: TurnId,
+        model: SmolStr,
+    },
+    StreamDelta {
+        turn_id: TurnId,
+        text: SmolStr,
+    },
+    ThinkingDelta {
+        turn_id: TurnId,
+        text: SmolStr,
+    },
+    ToolStarted {
+        turn_id: TurnId,
+        call_id: SmolStr,
+        name: SmolStr,
+    },
+    ToolFinished {
+        turn_id: TurnId,
+        call_id: SmolStr,
+        output: SmolStr,
+        is_error: bool,
+    },
+    AgentStarted {
+        agent_id: SmolStr,
+        name: SmolStr,
+        parent_id: Option<SmolStr>,
+        kind: AgentKind,
+    },
+    AgentProgress {
+        agent_id: SmolStr,
+        text: SmolStr,
+    },
+    AgentStatusChanged {
+        agent_id: SmolStr,
+        status: AgentStatus,
+    },
+    AgentFinished {
+        agent_id: SmolStr,
+        summary: SmolStr,
+        success: bool,
+    },
+    ModelSwitched {
+        turn_id: TurnId,
+        from: SmolStr,
+        to: SmolStr,
+    },
+    TurnFinished {
+        turn_id: TurnId,
+        reason: StopReason,
+    },
+    Failed {
+        turn_id: Option<TurnId>,
+        reason: ErrorReason,
+        message: SmolStr,
+    },
+    Cancelled {
+        turn_id: TurnId,
+    },
+}

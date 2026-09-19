@@ -22,6 +22,10 @@ pub trait Component {
     fn wants_key_release(&self) -> bool {
         false
     }
+    /// Clear cached render state (theme change). Default: no-op.
+    fn invalidate(&mut self) {}
+    /// Release resources when the component is unmounted. Default: no-op.
+    fn dispose(&mut self) {}
 }
 
 /// Stable content hash of rendered rows (length + bytes of every row).

@@ -89,20 +89,59 @@ fn model_picker_esc_cancels_without_effect() {
     assert!(!app.overlay_open());
 }
 
+
+#[test]
+fn model_picker_type_to_filter_selects_glm() {
+    let mut app = app();
+    app.open_model_picker(model_choices());
+    assert_eq!(app.overlay_input("g"), None, "filter stays open");
+    assert_eq!(app.overlay_input("l"), None);
+    assert_eq!(app.overlay_input("m"), None);
+    let outcome = app.overlay_input("\r");
+    match outcome {
+        Some(titi_cli::app::OverlayOutcome::ModelSelected(id)) => {
+            assert!(id.contains("glm"), "filtered confirm: {id}");
+        }
+        other => panic!("expected glm model, got {other:?}"),
+    }
+    assert!(!app.overlay_open());
+}
+
 #[test]
 fn overlay_frame_composites_picker_rows() {
     let mut app = app();
     app.open_model_picker(model_choices());
-    let rows = app.render();
+    let rows = app.plan_frame("", 20).viewport;
     let last = rows.last().unwrap();
     assert!(
-        last.contains('└') && last.contains('┘'),
-        "picker box bottom border composited into the frame bottom: {last:?}"
+        last.contains('╰') && last.contains('╯'),
+        "composer boxRound bottom stays at the frame bottom: {last:?}"
     );
-    // The frame is short, so only the bottom part of the picker is
-    // visible (top rows are dropped by the composite contract).
-    let any = rows.iter().any(|r| r.contains("qwen3.8-max"));
-    assert!(any, "last picker item visible in the frame");
+    let joined = rows.join("\n");
+    assert!(joined.contains("Model"), "compact picker title visible: {joined}");
+}
+
+#[test]
+fn model_picker_fits_80x20_with_title_above_composer() {
+    let mut app = app();
+    app.set_size(80, 20);
+    app.open_model_picker(model_choices());
+    let plan = app.plan_frame("", 20);
+    assert_eq!(plan.viewport.len(), 20);
+    let joined = plan.viewport.join("\n");
+    assert!(joined.contains("Model"), "title must not clip: {joined}");
+    let last = plan.viewport.last().unwrap();
+    assert!(
+        last.contains('╰') && last.contains('╯'),
+        "composer remains under the picker: {last:?}"
+    );
+    // Title is above the composer: first overlay row is not the last frame row.
+    let title_i = plan
+        .viewport
+        .iter()
+        .position(|r| r.contains("Model"))
+        .expect("title");
+    assert!(title_i + 1 < plan.viewport.len(), "title above composer");
 }
 
 // ---------------------------------------------------------------------------
