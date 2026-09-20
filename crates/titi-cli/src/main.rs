@@ -79,7 +79,7 @@ fn main() -> io::Result<()> {
         let ready = Arc::clone(&ready);
         std::thread::spawn(move || init_provider(ready));
     }
-    let (mut engine, models) = start_engine().map_err(io::Error::other)?;
+    let (mut engine, models, session_id) = start_engine().map_err(io::Error::other)?;
     if headless {
         let code = runtime.block_on(titi_cli::headless::run(engine))?;
         std::process::exit(code);
@@ -103,6 +103,7 @@ fn main() -> io::Result<()> {
     let theme = default_theme().map_err(io::Error::other)?;
     let mut app = App::new(Arc::clone(&ready), banner(), theme);
     app.set_available_models(models);
+    app.set_session_id(session_id);
     let (w, h) = size().unwrap_or((80, 24));
     app.resize(w);
     // Coding-agent default is rebuild; `PI_TUI_RESIZE_SCROLLBACK` overrides.

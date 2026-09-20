@@ -52,7 +52,9 @@ pub fn load_registry_config() -> ProviderRegistryConfig {
     default_registry_config()
 }
 
-pub fn start_engine() -> Result<(Engine, Vec<String>), String> {
+/// Starts the engine, returning it with the model catalog and the session id
+/// it resumed or created.
+pub fn start_engine() -> Result<(Engine, Vec<String>, String), String> {
     let config = load_registry_config();
     let models: Vec<String> = config
         .models
@@ -110,5 +112,6 @@ pub fn start_engine() -> Result<(Engine, Vec<String>), String> {
     Ok((
         EngineRuntime::start_with_session(engine_config, registry, Some(runner), tools, trajectory),
         models,
+        session_id,
     ))
 }
