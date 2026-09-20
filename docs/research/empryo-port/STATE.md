@@ -53,6 +53,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-tools::ReadCache` — LRU-bounded кэш содержимого файлов, ключ `(size, mtime)`; `workspace_tools` даёт один кэш на все тулы, `write`/`edit` его инвалидируют. Удалённый файл из кэша не отдаётся.
 - **FIX (critical)**: `ToolcallDelta.json` — это ФРАГМЕНТ, а не накопленный буфер. OpenAI-декодер слал весь буфер на каждый chunk + финальный полный JSON на close, а engine-коллектор конкатенирует → аргументы тулов получались мусорными (`{"path":{"path":{"`), т.е. ЛЮБОЙ вызов тула с аргументами через реальный OpenAI-совместимый провайдер ломался. Anthropic слал фрагменты правильно. Теперь openai шлёт только новый фрагмент и на close — только `ToolcallEnd`.
 - Прогон реального сквозного пути (локальный OpenAI-совместимый SSE-сервер + `TITI_AGENT_DIR`): `settings → registry → HTTP → SSE → decoder → engine → tool loop → handler → replay → ответ` — работает; `read Cargo.toml` вернул 1056 байт.
+- `titi --set-key <provider> <key>` пишет в `<agent_dir>/auth.db` — ту самую ступень credential ladder, которая была недостижима без env/.env; `--list-keys` показывает провайдеров без токенов.
+- Сквозная проверка ключа: без ключа turn падает с `requires a credential`; после `--set-key` запрос уходит с `Authorization: Bearer <key>` и turn стримится до конца.
+- Записан `~/.titi/agent/config.yml` с реальным провайдером пользователя: `opencode-go` → `https://opencode.ai/zen/go/v1`, модели `glm-5.3-flash`, `deepseek-v4-flash`, `grok-4.6`, `grok-4.5`.
 - `titi-engine::review` — fresh-context reviewer: `Verdict` (PASS/FAIL/PARTIAL, exit 0/3/1), `ReviewRequest::prompt` собирает brief + goal + evidence, `AgentReviewer` гоняет один turn через `AgentRunner` с `AgentContext::detached()`.
 - Verdict читается только с первой непустой строки: эхо brief-а, отговорка или токен на второй строке дают `PARTIAL`.
 
@@ -139,7 +142,7 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 
 ## NEXT
 
-0. **Рабочий TUI упирается только в конфиг провайдера**: `providers`/`models` в titi-settings не заданы → fallback на openai/anthropic без ключей (`provider openai requires a credential from Some("OPENAI_API_KEY")`). Empryo отдаёт `opencode-go` (Ready) и `subscriptions` (Ready), но их endpoint/ключ titi не видит. Нужно: `providers`/`models` в `~/.titi/agent/config.yml` + ключ в env или `.env`.
+0. **Остался один шаг до рабочего TUI с реальной моделью**: `titi --set-key opencode-go <ключ>` (конфиг провайдера уже записан, endpoint `https://opencode.ai/zen/go/v1`). Ключ пользователя я не извлекаю — он должен быть введён им. Проверено, что после этого шага путь до HTTP работает.
 1. E5: GPUI desktop workbench поверх того же `EngineCommand`/`EngineEvent`.
 2. Genome: tree-sitter для остальных языков и symbol-level граф.
 3. Goal loop поверх reviewer-а (coder ⟷ reviewer rounds с oscillation-детекцией).
