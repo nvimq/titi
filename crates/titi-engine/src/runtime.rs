@@ -1,19 +1,22 @@
 use std::collections::VecDeque;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use futures::StreamExt;
 use smol_str::SmolStr;
+use titi_genome::Genome;
 use titi_providers::{
-    ChatMessage, ErrorReason, RequestCtx, Role, StreamEvent, Transport, TransportError,
-    WireRequest,
+    ChatMessage, ErrorReason, RequestCtx, Role, StreamEvent, Transport, TransportError, WireRequest,
 };
 use titi_tools::{ApprovalMode, ToolRegistry};
 use tokio::sync::mpsc;
 
 use crate::protocol::{EngineCommand, EngineEvent, TurnId};
 use crate::registry::{RegistryError, ResolvedModel};
-use crate::tool_loop::{execute_tools, ApprovalWaiters, ToolCallCollector, TrajectorySink};
+use crate::tool_loop::{
+    ApprovalWaiters, ToolCallCollector, TouchedSink, TrajectorySink, execute_tools,
+};
 
 /// Resolves a model id to its provider transport.
 pub trait TransportResolver: Send + Sync + 'static {
@@ -36,9 +39,12 @@ pub struct EngineConfig {
     pub max_transient_retries: u32,
     pub command_capacity: usize,
     pub event_capacity: usize,
-      pub max_tool_rounds: u32,
+    pub max_tool_rounds: u32,
     pub approval_mode: ApprovalMode,
-      pub genome: Option<String>,
+    /// Workspace root kept indexed turn-by-turn. `None` disables the Genome.
+    pub genome_root: Option<PathBuf>,
+    /// Ranked files injected per prompt.
+    pub genome_limit: usize,
 }
 
 impl EngineConfig {
@@ -49,9 +55,10 @@ impl EngineConfig {
             max_transient_retries: 2,
             command_capacity: 64,
             event_capacity: 256,
-              max_tool_rounds: 8,
+            max_tool_rounds: 8,
             approval_mode: ApprovalMode::Write,
-              genome: None,
+            genome_root: None,
+            genome_limit: 24,
         }
     }
 }
@@ -99,14 +106,24 @@ pub struct EngineRuntime {
     events: mpsc::Sender<EngineEvent>,
     next_turn: Arc<AtomicU64>,
     agents: Option<crate::agents::AgentSupervisor>,
-      tools: ToolRegistry,
+    tools: ToolRegistry,
     approval_waiters: ApprovalWaiters,
-      trajectory: TrajectorySink,
+    trajectory: TrajectorySink,
+    /// Live index, refreshed from `config.genome_root` before each turn.
+    genome: Arc<tokio::sync::Mutex<Option<Genome>>>,
+    /// Files this session read or edited; boosts their rank in the projection.
+    touched: TouchedSink,
 }
 
 impl EngineRuntime {
     pub fn start(config: EngineConfig, resolver: Arc<dyn TransportResolver>) -> Engine {
-        Self::start_inner(config, resolver, None, ToolRegistry::new(), TrajectorySink::default())
+        Self::start_inner(
+            config,
+            resolver,
+            None,
+            ToolRegistry::new(),
+            TrajectorySink::default(),
+        )
     }
 
     pub fn start_with_agents(
@@ -114,7 +131,13 @@ impl EngineRuntime {
         resolver: Arc<dyn TransportResolver>,
         runner: Arc<dyn crate::agents::AgentRunner>,
     ) -> Engine {
-        Self::start_inner(config, resolver, Some(runner), ToolRegistry::new(), TrajectorySink::default())
+        Self::start_inner(
+            config,
+            resolver,
+            Some(runner),
+            ToolRegistry::new(),
+            TrajectorySink::default(),
+        )
     }
 
     pub fn start_with_tools(
@@ -123,36 +146,42 @@ impl EngineRuntime {
         tools: ToolRegistry,
     ) -> Engine {
         Self::start_inner(config, resolver, None, tools, TrajectorySink::default())
-      }
+    }
 
-      pub fn start_with_agents_and_tools(
+    pub fn start_with_agents_and_tools(
         config: EngineConfig,
         resolver: Arc<dyn TransportResolver>,
         runner: Arc<dyn crate::agents::AgentRunner>,
         tools: ToolRegistry,
-      ) -> Engine {
-        Self::start_inner(config, resolver, Some(runner), tools, TrajectorySink::default())
-      }
+    ) -> Engine {
+        Self::start_inner(
+            config,
+            resolver,
+            Some(runner),
+            tools,
+            TrajectorySink::default(),
+        )
+    }
 
-      pub fn start_with_session(
+    pub fn start_with_session(
         config: EngineConfig,
-          resolver: Arc<dyn TransportResolver>,
-          runner: Option<Arc<dyn crate::agents::AgentRunner>>,
-          tools: ToolRegistry,
-          trajectory: TrajectorySink,
-      ) -> Engine {
+        resolver: Arc<dyn TransportResolver>,
+        runner: Option<Arc<dyn crate::agents::AgentRunner>>,
+        tools: ToolRegistry,
+        trajectory: TrajectorySink,
+    ) -> Engine {
         Self::start_inner(config, resolver, runner, tools, trajectory)
-      }
+    }
 
-      fn start_inner(
+    fn start_inner(
         config: EngineConfig,
-          resolver: Arc<dyn TransportResolver>,
-          runner: Option<Arc<dyn crate::agents::AgentRunner>>,
-          tools: ToolRegistry,
-          trajectory: TrajectorySink,
-      ) -> Engine {
-          let (command_tx, command_rx) = mpsc::channel(config.command_capacity);
-          let (event_tx, event_rx) = mpsc::channel(config.event_capacity);
+        resolver: Arc<dyn TransportResolver>,
+        runner: Option<Arc<dyn crate::agents::AgentRunner>>,
+        tools: ToolRegistry,
+        trajectory: TrajectorySink,
+    ) -> Engine {
+        let (command_tx, command_rx) = mpsc::channel(config.command_capacity);
+        let (event_tx, event_rx) = mpsc::channel(config.event_capacity);
         let agents =
             runner.map(|runner| crate::agents::AgentSupervisor::new(runner, event_tx.clone()));
         let runtime = Self {
@@ -165,6 +194,8 @@ impl EngineRuntime {
             tools,
             approval_waiters: ApprovalWaiters::default(),
             trajectory,
+            genome: Arc::new(tokio::sync::Mutex::new(None)),
+            touched: TouchedSink::default(),
         };
         tokio::spawn(runtime.run());
         Engine {
@@ -188,8 +219,9 @@ impl EngineRuntime {
                             if active.is_some() {
                                 queued.push_back(text);
                             } else {
-                                active = Some(self.spawn_turn(text, primary_model.clone(), done_tx.clone()));
-                            }
+                                let system = self.genome_system().await;
+                                  active = Some(self.spawn_turn(text, primary_model.clone(), system, done_tx.clone()));
+                              }
                         }
                         EngineCommand::Cancel => {
                             if let Some((turn_id, aborted)) = active.take() {
@@ -253,7 +285,8 @@ impl EngineRuntime {
                     {
                         active = None;
                         if let Some(text) = queued.pop_front() {
-                            active = Some(self.spawn_turn(text, primary_model.clone(), done_tx.clone()));
+                            let system = self.genome_system().await;
+                          active = Some(self.spawn_turn(text, primary_model.clone(), system, done_tx.clone()));
                         }
                     }
                 }
@@ -272,10 +305,29 @@ impl EngineRuntime {
             .await;
     }
 
+    /// Refresh the live index off the async threads and render this turn's map.
+    async fn genome_system(&self) -> Option<SmolStr> {
+        let root = self.config.genome_root.clone()?;
+        let genome = Arc::clone(&self.genome);
+        let touched = Arc::clone(&self.touched);
+        let limit = self.config.genome_limit;
+        tokio::task::spawn_blocking(move || {
+            let mut guard = genome.blocking_lock();
+            let index = guard.get_or_insert_with(Genome::default);
+            index.refresh(&root).ok()?;
+            let touched: Vec<String> = touched.blocking_lock().iter().cloned().collect();
+            Some(SmolStr::from(index.project_with(limit, &touched)))
+        })
+        .await
+        .ok()
+        .flatten()
+    }
+
     fn spawn_turn(
         &self,
         prompt: SmolStr,
         primary_model: SmolStr,
+        system: Option<SmolStr>,
         done: mpsc::Sender<TurnId>,
     ) -> (TurnId, Arc<AtomicBool>) {
         let turn_id = TurnId(self.next_turn.fetch_add(1, Ordering::SeqCst));
@@ -285,20 +337,23 @@ impl EngineRuntime {
         let resolver = Arc::clone(&self.resolver);
         let events = self.events.clone();
         let tools = self.tools.clone();
-          let waiters = Arc::clone(&self.approval_waiters);
-          let trajectory = Arc::clone(&self.trajectory);
-            tokio::spawn(async move {
-                run_turn(
+        let waiters = Arc::clone(&self.approval_waiters);
+        let trajectory = Arc::clone(&self.trajectory);
+        let touched = Arc::clone(&self.touched);
+        tokio::spawn(async move {
+            run_turn(
                 turn_id,
                 prompt,
                 primary_model,
+                system,
                 config,
-                  resolver,
-                  events,
-                    task_abort,
+                resolver,
+                events,
+                task_abort,
                 tools,
-                  waiters,
-                  trajectory,
+                waiters,
+                trajectory,
+                touched,
             )
             .await;
             let _ = done.send(turn_id).await;
@@ -311,13 +366,15 @@ async fn run_turn(
     turn_id: TurnId,
     prompt: SmolStr,
     primary_model: SmolStr,
+    system: Option<SmolStr>,
     config: EngineConfig,
     resolver: Arc<dyn TransportResolver>,
     events: mpsc::Sender<EngineEvent>,
     aborted: Arc<AtomicBool>,
-      tools: ToolRegistry,
+    tools: ToolRegistry,
     waiters: ApprovalWaiters,
-      trajectory: TrajectorySink,
+    trajectory: TrajectorySink,
+    touched: TouchedSink,
 ) {
     let mut models = Vec::with_capacity(1 + config.fallback_models.len());
     models.push(primary_model);
@@ -362,45 +419,45 @@ async fn run_turn(
 
         if let Some(recorder) = trajectory.lock().await.as_mut() {
             let _ = recorder.record(titi_core::trajectory::EventKind::UserMessage {
-                  text: prompt.to_string(),
-              });
-          }
-          let mut messages = Vec::new();
-            if let Some(genome) = &config.genome {
-                messages.push(ChatMessage {
-                    role: Role::System,
-                    content: genome.clone().into(),
-                  tool_calls: Vec::new(),
-              });
-          }
-          messages.push(ChatMessage {
-              role: Role::User,
-              content: prompt.clone(),
-              tool_calls: Vec::new(),
-          });
-          let mut tool_rounds = 0;
-          loop {
-              let mut last_error = None;
-              let mut completed = false;
+                text: prompt.to_string(),
+            });
+        }
+        let mut messages = Vec::new();
+        if let Some(system) = &system {
+            messages.push(ChatMessage {
+                role: Role::System,
+                content: system.clone(),
+                tool_calls: Vec::new(),
+            });
+        }
+        messages.push(ChatMessage {
+            role: Role::User,
+            content: prompt.clone(),
+            tool_calls: Vec::new(),
+        });
+        let mut tool_rounds = 0;
+        loop {
+            let mut last_error = None;
+            let mut completed = false;
             for _attempt in 0..=config.max_transient_retries {
-                  match stream_attempt(
-                      turn_id,
-                      &messages,
-                      &wire_model,
+                match stream_attempt(
+                    turn_id,
+                    &messages,
+                    &wire_model,
                     Arc::clone(&transport),
-                      api_key.clone(),
+                    api_key.clone(),
                     events.clone(),
                     Arc::clone(&aborted),
-                      &tools,
-                  )
-                  .await
-                  {
-                      Ok(calls) if calls.is_empty() => {
+                    &tools,
+                )
+                .await
+                {
+                    Ok(calls) if calls.is_empty() => {
                         completed = true;
-                          break;
-                      }
-                      Ok(calls) => {
-                          if tool_rounds >= config.max_tool_rounds {
+                        break;
+                    }
+                    Ok(calls) => {
+                        if tool_rounds >= config.max_tool_rounds {
                             let _ = events
                                 .send(EngineEvent::Failed {
                                     turn_id: Some(turn_id),
@@ -419,7 +476,8 @@ async fn run_turn(
                             &waiters,
                             &events,
                             &aborted,
-                              &trajectory,
+                            &trajectory,
+                            &touched,
                         )
                         .await;
                         messages.extend(extra);
@@ -440,7 +498,7 @@ async fn run_turn(
             }
             if completed {
                 if let Some(recorder) = trajectory.lock().await.as_mut() {
-                      let _ = recorder.record(titi_core::trajectory::EventKind::TurnEnd);
+                    let _ = recorder.record(titi_core::trajectory::EventKind::TurnEnd);
                 }
                 return;
             }
@@ -468,11 +526,11 @@ async fn stream_attempt(
     api_key: Option<SmolStr>,
     events: mpsc::Sender<EngineEvent>,
     aborted: Arc<AtomicBool>,
-      tools: &ToolRegistry,
-  ) -> Result<Vec<crate::tool_loop::PendingToolCall>, (TransportError, bool)> {
+    tools: &ToolRegistry,
+) -> Result<Vec<crate::tool_loop::PendingToolCall>, (TransportError, bool)> {
     let mut request = WireRequest::new(model.clone());
-      request.messages = messages.to_vec();
-      request.tools = tools.specs();
+    request.messages = messages.to_vec();
+    request.tools = tools.specs();
     let context = RequestCtx {
         api_key,
         aborted: Arc::clone(&aborted),
@@ -484,49 +542,49 @@ async fn stream_attempt(
     let mut visible_content = false;
     let mut collector = ToolCallCollector::default();
 
-      while let Some(event) = stream.next().await {
-          if aborted.load(Ordering::SeqCst) {
-              return Ok(Vec::new());
+    while let Some(event) = stream.next().await {
+        if aborted.load(Ordering::SeqCst) {
+            return Ok(Vec::new());
         }
         visible_content |= event.is_content();
-          collector.observe(&event);
-          match event {
-              StreamEvent::TextDelta { text, .. } => {
-                  let _ = events
-                      .send(EngineEvent::StreamDelta { turn_id, text })
-                      .await;
-              }
-              StreamEvent::ThinkingDelta { text, .. } => {
-                  let _ = events
-                      .send(EngineEvent::ThinkingDelta { turn_id, text })
-                      .await;
-              }
-              StreamEvent::Done { reason } => {
-                  let calls = collector.take();
-                  if calls.is_empty() {
-                      let _ = events
-                          .send(EngineEvent::TurnFinished { turn_id, reason })
-                          .await;
-                  }
-                  return Ok(calls);
-              }
-              StreamEvent::Error { reason, message } => {
-                  let error = if reason == ErrorReason::Connection && !visible_content {
-                      TransportError::Retryable {
-                          status: None,
-                          message,
-                      }
-                  } else {
-                      TransportError::Fatal {
+        collector.observe(&event);
+        match event {
+            StreamEvent::TextDelta { text, .. } => {
+                let _ = events
+                    .send(EngineEvent::StreamDelta { turn_id, text })
+                    .await;
+            }
+            StreamEvent::ThinkingDelta { text, .. } => {
+                let _ = events
+                    .send(EngineEvent::ThinkingDelta { turn_id, text })
+                    .await;
+            }
+            StreamEvent::Done { reason } => {
+                let calls = collector.take();
+                if calls.is_empty() {
+                    let _ = events
+                        .send(EngineEvent::TurnFinished { turn_id, reason })
+                        .await;
+                }
+                return Ok(calls);
+            }
+            StreamEvent::Error { reason, message } => {
+                let error = if reason == ErrorReason::Connection && !visible_content {
+                    TransportError::Retryable {
                         status: None,
-                          message,
-                      }
-                  };
-                  return Err((error, visible_content));
-              }
-              _ => {}
-          }
-      }
+                        message,
+                    }
+                } else {
+                    TransportError::Fatal {
+                        status: None,
+                        message,
+                    }
+                };
+                return Err((error, visible_content));
+            }
+            _ => {}
+        }
+    }
 
     Err((
         TransportError::Retryable {

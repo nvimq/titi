@@ -2,7 +2,7 @@
 
 ## Активное направление: reference product functional port
 
-Статус: **in-progress**, фаза E3 (Genome index + prompt projection done). Канонический handoff: [`reference-product-port/STATE.md`](reference-product-port/STATE.md). Решения и roadmap: [`reference-product-port/README.md`](reference-product-port/README.md). NEXT: incremental Genome (mtime + personalized rank).
+Статус: **in-progress**, фаза E3 (live Genome: incremental refresh + personalized rank + prompt projection done). Канонический handoff: [`reference-product-port/STATE.md`](reference-product-port/STATE.md). Решения и roadmap: [`reference-product-port/README.md`](reference-product-port/README.md). NEXT: symbol-level Genome (tree-sitter), checkpoints/RPC, background agents.
 
 Правило продолжения: сначала прочитать dedicated STATE, прогнать baseline, выполнить только NEXT, затем синхронизировать оба STATE-файла.
 

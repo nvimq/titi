@@ -1,3 +1,7 @@
+// The regexes below are compile-time literals; a bad pattern is a bug the unit
+// tests catch, not a runtime condition worth threading through callers.
+#![allow(clippy::expect_used)]
+
 use std::path::Path;
 use std::sync::OnceLock;
 

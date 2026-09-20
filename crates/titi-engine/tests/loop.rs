@@ -6,7 +6,8 @@ use titi_engine::{
     TransportResolver,
 };
 use titi_providers::{
-    BlockId, MockBody, MockTransport, Role, StopReason, StreamEvent, Transport, TransportError,
+    BlockId, MockBody, MockTransport, Role, StopReason, StreamEvent, ToolCallRef, Transport,
+    TransportError,
 };
 
 struct MapResolver(HashMap<String, Arc<dyn Transport>>);
@@ -84,8 +85,17 @@ async fn streams_prompt_to_completion() {
     ));
 }
 
+fn workspace_with_hub_and_leaf() -> tempfile::TempDir {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir_all(dir.path().join("src")).unwrap();
+    std::fs::write(dir.path().join("src/hub.rs"), "pub fn hub() {}\n").unwrap();
+    std::fs::write(dir.path().join("src/leaf.rs"), "pub fn leaf() {}\n").unwrap();
+    dir
+}
+
 #[tokio::test]
-async fn genome_is_injected_as_system_message() {
+async fn genome_is_indexed_and_injected_as_system_message() {
+    let workspace = workspace_with_hub_and_leaf();
     let transport = Arc::new(MockTransport::new(vec![MockBody::Events(vec![
         StreamEvent::TextDelta {
             id: BlockId::new("text"),
@@ -96,7 +106,7 @@ async fn genome_is_injected_as_system_message() {
         },
     ])]));
     let mut config = EngineConfig::new("primary");
-    config.genome = Some("<genome>\nsrc/lib.rs:(→3)\n</genome>".to_owned());
+    config.genome_root = Some(workspace.path().to_path_buf());
     let mut engine = EngineRuntime::start(
         config,
         resolver(vec![("primary", Arc::clone(&transport) as _)]),
@@ -113,9 +123,57 @@ async fn genome_is_injected_as_system_message() {
     let messages = &requests[0].messages;
     assert_eq!(messages.len(), 2, "system + user");
     assert_eq!(messages[0].role, Role::System);
-    assert!(messages[0].content.contains("src/lib.rs:(→3)"));
+    assert!(
+        messages[0].content.starts_with("<genome>\n"),
+        "{}",
+        messages[0].content
+    );
+    assert!(messages[0].content.contains("src/hub.rs"));
+    assert!(messages[0].content.contains("src/leaf.rs"));
     assert_eq!(messages[1].role, Role::User);
     assert_eq!(messages[1].content, "hi");
+}
+
+#[tokio::test]
+async fn genome_refreshes_between_turns() {
+    let workspace = workspace_with_hub_and_leaf();
+    let transport = Arc::new(MockTransport::new(vec![
+        MockBody::Events(vec![StreamEvent::Done {
+            reason: StopReason::Stop,
+        }]),
+        MockBody::Events(vec![StreamEvent::Done {
+            reason: StopReason::Stop,
+        }]),
+    ]));
+    let mut config = EngineConfig::new("primary");
+    config.genome_root = Some(workspace.path().to_path_buf());
+    let mut engine = EngineRuntime::start(
+        config,
+        resolver(vec![("primary", Arc::clone(&transport) as _)]),
+    );
+
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "one".into() })
+        .await
+        .unwrap();
+    let _ = collect_until_terminal(&mut engine).await;
+
+    // A file created after startup is in the next turn's map.
+    std::fs::write(workspace.path().join("src/fresh.rs"), "pub fn fresh() {}\n").unwrap();
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "two".into() })
+        .await
+        .unwrap();
+    let _ = collect_until_terminal(&mut engine).await;
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    assert!(!requests[0].messages[0].content.contains("src/fresh.rs"));
+    assert!(
+        requests[1].messages[0].content.contains("src/fresh.rs"),
+        "second turn must see the new file: {}",
+        requests[1].messages[0].content
+    );
 }
 
 #[tokio::test]
@@ -138,6 +196,90 @@ async fn no_genome_means_prompt_only() {
     let requests = transport.requests();
     assert_eq!(requests[0].messages.len(), 1);
     assert_eq!(requests[0].messages[0].role, Role::User);
+}
+
+#[tokio::test]
+async fn touched_file_leads_the_next_projection() {
+    use titi_tools::{ApprovalMode, EchoTool, ReadFileTool, ToolRegistry};
+
+    let workspace = workspace_with_hub_and_leaf();
+    let transport = Arc::new(MockTransport::new(vec![
+        MockBody::Events(vec![
+            StreamEvent::ToolcallStart {
+                id: BlockId::new("tool"),
+                call: ToolCallRef {
+                    call_id: "call-1".into(),
+                    name: "read".into(),
+                },
+            },
+            StreamEvent::ToolcallDelta {
+                id: BlockId::new("tool"),
+                json: r#"{"path":"src/leaf.rs"}"#.into(),
+            },
+            StreamEvent::ToolcallEnd {
+                id: BlockId::new("tool"),
+            },
+            StreamEvent::Done {
+                reason: StopReason::ToolUse,
+            },
+        ]),
+        MockBody::Events(vec![StreamEvent::Done {
+            reason: StopReason::Stop,
+        }]),
+        MockBody::Events(vec![StreamEvent::Done {
+            reason: StopReason::Stop,
+        }]),
+    ]));
+    let mut tools = ToolRegistry::new();
+    tools.register(Arc::new(ReadFileTool {
+        root: workspace.path().to_path_buf(),
+    }));
+    tools.register(Arc::new(EchoTool));
+
+    let mut config = EngineConfig::new("primary");
+    config.genome_root = Some(workspace.path().to_path_buf());
+    config.approval_mode = ApprovalMode::Yolo;
+    let mut engine = EngineRuntime::start_with_tools(
+        config,
+        resolver(vec![("primary", Arc::clone(&transport) as _)]),
+        tools,
+    );
+
+    // Turn 1 reads src/leaf.rs; turn 2 should lead with it.
+    engine
+        .send(EngineCommand::SubmitPrompt {
+            text: "read leaf".into(),
+        })
+        .await
+        .unwrap();
+    let _ = collect_until_terminal(&mut engine).await;
+    engine
+        .send(EngineCommand::SubmitPrompt {
+            text: "again".into(),
+        })
+        .await
+        .unwrap();
+    let _ = collect_until_terminal(&mut engine).await;
+
+    let requests = transport.requests();
+    let second = requests
+        .iter()
+        .find(|request| {
+            request.messages.first().is_some_and(|message| {
+                message.role == Role::System && message.content.contains("src/leaf.rs")
+            }) && request
+                .messages
+                .iter()
+                .any(|message| message.content == "again")
+        })
+        .expect("second turn reached the provider");
+    let system = &second.messages[0].content;
+    let leaf_at = system.find("src/leaf.rs").unwrap();
+    let hub_at = system.find("src/hub.rs").unwrap();
+    assert!(
+        leaf_at < hub_at,
+        "touched file must lead the map:\n{system}"
+    );
 }
 
 #[tokio::test]
@@ -290,6 +432,14 @@ async fn follow_up_runs_after_active_turn() {
 
     let first = collect_until_terminal(&mut engine).await;
     let second = collect_until_terminal(&mut engine).await;
-    assert!(first.iter().any(|event| matches!(event, EngineEvent::StreamDelta { text, .. } if text == "first")));
-    assert!(second.iter().any(|event| matches!(event, EngineEvent::StreamDelta { text, .. } if text == "second")));
+    assert!(
+        first
+            .iter()
+            .any(|event| matches!(event, EngineEvent::StreamDelta { text, .. } if text == "first"))
+    );
+    assert!(
+        second.iter().any(
+            |event| matches!(event, EngineEvent::StreamDelta { text, .. } if text == "second")
+        )
+    );
 }
