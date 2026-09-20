@@ -117,13 +117,18 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 
 ### E3 — Genome
 
-37-language parsing по мере необходимости, import/symbol graph, PageRank, git co-change, incremental updates, prompt projection.
+- [x] Crate `titi-genome`: file scan, exports/imports parse, import graph, PageRank, prompt projection.
+- [x] `.gitignore` + `.empryoignore` с gitignore-семантикой; prune build/dot-каталогов; cap 1 MB.
+- [x] Rust (`crate::`/`super::`/`self::`/`mod`), TypeScript (relative), Python (relative) resolution.
+- [x] `EngineConfig.genome` → отдельный `Role::System` message в каждом request.
+- [ ] Incremental re-index по mtime и personalized rank.
+- [ ] Tree-sitter для остальных языков и symbol-level (не file-level) граф.
 
 ### E4 — Agents
 
 Background dispatch, shared read cache, per-file write claims, findings bus, steering, fresh-context reviewer.
 
-Готовый foundation: engine protocol, provider registry, tools, session trajectory, headless JSONL, TUI tool-approval overlay. Следующий слой — Genome, затем background agents.
+Готовый foundation: engine protocol, provider registry, tools, session trajectory, headless JSONL, TUI tool-approval overlay, Genome-индекс с prompt-проекцией. Следующий слой — incremental Genome и background agents.
 
 ### E5 — GPUI desktop
 

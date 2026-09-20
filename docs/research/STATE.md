@@ -2,7 +2,7 @@
 
 ## Активное направление: Empryo functional port
 
-Статус: **in-progress**, фаза E1 (TUI approval overlay done). Канонический handoff: [`empryo-port/STATE.md`](empryo-port/STATE.md). Решения и roadmap: [`empryo-port/README.md`](empryo-port/README.md). NEXT: Genome indexing (E3).
+Статус: **in-progress**, фаза E3 (Genome index + prompt projection done). Канонический handoff: [`empryo-port/STATE.md`](empryo-port/STATE.md). Решения и roadmap: [`empryo-port/README.md`](empryo-port/README.md). NEXT: incremental Genome (mtime + personalized rank).
 
 Правило продолжения: сначала прочитать dedicated STATE, прогнать baseline, выполнить только NEXT, затем синхронизировать оба STATE-файла.
 

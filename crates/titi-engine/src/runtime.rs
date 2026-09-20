@@ -38,6 +38,7 @@ pub struct EngineConfig {
     pub event_capacity: usize,
       pub max_tool_rounds: u32,
     pub approval_mode: ApprovalMode,
+      pub genome: Option<String>,
 }
 
 impl EngineConfig {
@@ -50,6 +51,7 @@ impl EngineConfig {
             event_capacity: 256,
               max_tool_rounds: 8,
             approval_mode: ApprovalMode::Write,
+              genome: None,
         }
     }
 }
@@ -363,11 +365,19 @@ async fn run_turn(
                   text: prompt.to_string(),
               });
           }
-          let mut messages = vec![ChatMessage {
-            role: Role::User,
-                content: prompt.clone(),
+          let mut messages = Vec::new();
+            if let Some(genome) = &config.genome {
+                messages.push(ChatMessage {
+                    role: Role::System,
+                    content: genome.clone().into(),
+                  tool_calls: Vec::new(),
+              });
+          }
+          messages.push(ChatMessage {
+              role: Role::User,
+              content: prompt.clone(),
               tool_calls: Vec::new(),
-          }];
+          });
           let mut tool_rounds = 0;
           loop {
               let mut last_error = None;

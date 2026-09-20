@@ -1,7 +1,7 @@
 # STATE — Empryo port
 
 Updated: 2026-09-20
-Phase: E1 — Tool loop (TUI approval overlay)
+Phase: E3 — Genome (index + prompt projection)
 Status: in-progress
 Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 
@@ -33,6 +33,10 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Engine шлёт `ToolApprovalNeeded` перед ожиданием `ApproveTool`.
 - TUI открывает Approval overlay на exec-tier tool; Yes/Esc шлют `ApproveTool { approved }`.
 - Session-close и tool-approval не смешиваются: `pending_close` остаётся отдельным от `pending_tool_approval`.
+- Добавлен crate `titi-genome`: обход файлов (`scan`), парсер Rust/TS/Python (`parse`), граф + PageRank (`graph`), prompt-проекция (`project`).
+- `scan` соблюдает `.gitignore` и `.empryoignore` (gitignore-семантика: `*` не пересекает `/`, `**` пересекает, `dir/` только каталоги), prune build/dot-каталогов, сорс-расширения, cap 1 MB/файл.
+- `EngineConfig.genome: Option<String>` — готовая проекция уходит отдельным `Role::System` message перед user-prompt.
+- CLI строит индекс на старте; `TITI_NO_GENOME=1` отключает.
 
 ## VERIFIED
 
@@ -62,6 +66,11 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `exec_tool_waits_for_approval` ждёт `ToolApprovalNeeded` перед `ApproveTool` — PASS.
 - `engine_events`: overlay Yes → `ToolApproval { approved: true }`; Esc не трогает session close — PASS.
 - `overlays_paste` session-close gate — PASS.
+- `titi-genome` unit tests: glob `*`/`**`/anchor/`dir/` семантика — PASS.
+- `titi-genome` integration: Rust-граф + PageRank + проекция, `.empryoignore`, TS relative imports — PASS.
+- `indexes_this_workspace`: реальный titi-репозиторий индексируется за 0.10s, `target/` отсечён, runtime.rs выше leaf-модуля — PASS.
+- `genome_is_injected_as_system_message` / `no_genome_means_prompt_only`: mock transport получил ровно system+user (или только user) — PASS.
+- `project check` после Genome — PASS.
 
 ## DECISIONS
 
@@ -79,10 +88,12 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Settings catalog читается, если `providers`/`models` валидны; иначе остаётся hardcoded default.
 - Все Empryo fallback models используют один `subscriptions` provider, поэтому общий outage этого provider цепочка не переживёт.
 - Research consolidation audit на `subscriptions/grok-4.6` завершён: `empryo-port` остаётся каноном; OMP — reference для TUI/tool UX; Hermes/Vellum — точечные источники идей.
+- Genome знает Rust/TS/Python; прочие языки дают файл без рёбер (сознательно, до tree-sitter).
+- Индекс строится синхронно на старте CLI: на titi это 0.10s, на очень больших репо потребуется фон + incremental.
 
 ## NEXT
 
-1. Genome indexing (E3): crate `titi-genome`, incremental parse, prompt projection.
+1. Genome: incremental re-index по mtime и personalized rank (edited/read файлы бустятся).
 2. Restore/checkpoints и versioned RPC framing (остаток E2).
 3. Background agents / file claims (E4).
 
