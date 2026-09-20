@@ -78,6 +78,11 @@ pub enum EngineEvent {
         call_id: SmolStr,
         name: SmolStr,
     },
+    ToolApprovalNeeded {
+        turn_id: TurnId,
+        call_id: SmolStr,
+        name: SmolStr,
+    },
     ToolFinished {
         turn_id: TurnId,
         call_id: SmolStr,

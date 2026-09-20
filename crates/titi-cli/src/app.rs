@@ -69,6 +69,8 @@ pub struct App {
     composer: Composer,
     /// Session id awaiting close approval (`SessionAction::Close`).
     pending_close: Option<String>,
+    /// Exec-tier tool call waiting on the approval overlay (`call_id`, `name`).
+    pending_tool_approval: Option<(String, String)>,
     /// Slash-command registry (builtin names reserved, then file
     /// expansion, then passthrough to the LLM).
     slash: SlashRegistry,
@@ -122,6 +124,7 @@ impl App {
             overlay: None,
             composer: Composer::new(),
             pending_close: None,
+            pending_tool_approval: None,
             slash: Self::default_slash_registry(),
             completion: CompletionPanel::new(),
             highlighted: None,
@@ -284,6 +287,22 @@ impl App {
         self.pending_close.take()
     }
 
+    /// Open (or queue) an approval overlay for an exec-tier tool call.
+    pub fn request_tool_approval(&mut self, call_id: &str, name: &str) {
+        self.pending_tool_approval = Some((call_id.to_owned(), name.to_owned()));
+        self.open_pending_tool_approval();
+    }
+
+    fn open_pending_tool_approval(&mut self) {
+        if self.overlay.is_some() {
+            return;
+        }
+        if let Some((_, name)) = &self.pending_tool_approval {
+            let prompt = format!("Run tool {name}?");
+            self.open_approval(&prompt);
+        }
+    }
+
     /// Agent Hub overlay (`app.agents.hub` / `app.session.observe`).
     pub fn open_agents_hub(&mut self) {
         self.overlay = Some(ActiveOverlay::Hub(HubRoster::with_theme(
@@ -362,11 +381,11 @@ impl App {
         active.handle_input(data);
         if let ActiveOverlay::Hub(h) = &mut active {
             self.merge_hub_peers(h.peers());
-              if let Some(command) = h.take_pending_command() {
-                  self.overlay = Some(active);
-                  return Some(match command {
-                      HubCommand::Revive(id) => OverlayOutcome::HubRevive(id),
-                      HubCommand::Stop(id) => OverlayOutcome::HubStop(id),
+            if let Some(command) = h.take_pending_command() {
+                self.overlay = Some(active);
+                return Some(match command {
+                    HubCommand::Revive(id) => OverlayOutcome::HubRevive(id),
+                    HubCommand::Stop(id) => OverlayOutcome::HubStop(id),
                 });
             }
         }
@@ -383,7 +402,24 @@ impl App {
             self.request_session_close(&id);
             return None;
         }
-        active.outcome()
+        let outcome = match active.outcome() {
+            Some(OverlayOutcome::Approval(approved)) if self.pending_close.is_some() => {
+                if !approved {
+                    self.pending_close = None;
+                }
+                Some(OverlayOutcome::Approval(approved))
+            }
+            Some(OverlayOutcome::Approval(approved)) => {
+                if let Some((call_id, _)) = self.pending_tool_approval.take() {
+                    Some(OverlayOutcome::ToolApproval { call_id, approved })
+                } else {
+                    Some(OverlayOutcome::Approval(approved))
+                }
+            }
+            other => other,
+        };
+        self.open_pending_tool_approval();
+        outcome
     }
 
     /// Append a bracketed paste to the input buffer.  Multi-line pastes are
@@ -531,6 +567,13 @@ impl App {
             EngineEvent::ToolStarted { name, call_id, .. } => {
                 self.push_transcript(Section::Tools, format!("{name} · {call_id} · running"))
             }
+            EngineEvent::ToolApprovalNeeded { name, call_id, .. } => {
+                self.push_transcript(
+                    Section::Tools,
+                    format!("{name} · {call_id} · waiting for approval"),
+                );
+                self.request_tool_approval(&call_id, &name);
+            }
             EngineEvent::ToolFinished {
                 call_id,
                 output,
@@ -670,22 +713,22 @@ impl App {
     }
 
     /// Replace the runtime model catalog used by picker and cycle actions.
-      pub fn set_available_models(&mut self, models: Vec<String>) {
+    pub fn set_available_models(&mut self, models: Vec<String>) {
         self.available_models = models;
         if self.current_model >= self.model_choices().len() {
             self.current_model = 0;
         }
-      }
+    }
 
-      fn model_choices(&self) -> Vec<String> {
+    fn model_choices(&self) -> Vec<String> {
         if self.available_models.is_empty() {
             model_choices()
         } else {
             self.available_models.clone()
         }
-      }
+    }
 
-      fn cycle_model(&mut self, forward: bool) {
+    fn cycle_model(&mut self, forward: bool) {
         let n = self.model_choices().len();
         if n == 0 {
             return;
@@ -1449,6 +1492,8 @@ pub enum OverlayOutcome {
     /// Approval panel: `true` only for an explicit Yes; Esc/No/Cancel are
     /// all cancel-without-delete.
     Approval(bool),
+    /// Exec-tier tool gate: Yes runs the call, Esc/No/Cancel deny it.
+    ToolApproval { call_id: String, approved: bool },
     /// Help / hotkeys / pause / hub Esc — closed without a side effect.
     Dismissed,
     /// Agent Hub Enter: focus the selected peer (no live session switch yet).

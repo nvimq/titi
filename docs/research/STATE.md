@@ -2,7 +2,7 @@
 
 ## Активное направление: reference product functional port
 
-Статус: **in-progress**, фаза E0. Канонический handoff: [`reference-product-port/STATE.md`](reference-product-port/STATE.md). Решения и roadmap: [`reference-product-port/README.md`](reference-product-port/README.md).
+Статус: **in-progress**, фаза E1 (TUI approval overlay done). Канонический handoff: [`reference-product-port/STATE.md`](reference-product-port/STATE.md). Решения и roadmap: [`reference-product-port/README.md`](reference-product-port/README.md). NEXT: Genome indexing (E3).
 
 Правило продолжения: сначала прочитать dedicated STATE, прогнать baseline, выполнить только NEXT, затем синхронизировать оба STATE-файла.
 
