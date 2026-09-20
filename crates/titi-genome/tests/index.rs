@@ -343,3 +343,58 @@ export class Session {}
     );
     assert_eq!(genome.dependents["src/auth.ts"], 1);
 }
+
+#[test]
+fn zero_limit_still_emits_one_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root, "src/a.rs", "pub fn a() {}\n");
+    write(root, "src/b.rs", "pub fn b() {}\n");
+
+    let genome = Genome::index(root).unwrap();
+    let projected = genome.project(0);
+    assert!(projected.starts_with("<genome>\n"), "{projected}");
+    let rows = projected
+        .lines()
+        .filter(|line| line.starts_with("src/"))
+        .count();
+    assert_eq!(rows, 1, "limit is floored at 1: {projected}");
+}
+
+#[test]
+fn touched_path_outside_the_index_is_ignored() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root, "src/a.rs", "pub fn a() {}\n");
+    write(root, "src/b.rs", "pub fn b() {}\n");
+
+    let genome = Genome::index(root).unwrap();
+    let plain = genome.project(2);
+    let biased = genome.project_with(2, &["src/not/indexed.rs".to_owned()]);
+    assert_eq!(
+        plain, biased,
+        "an unknown touched path must not reorder the map"
+    );
+}
+
+#[test]
+fn angle_bracket_names_cannot_forge_the_frame() {
+    let dir = tempfile::tempdir().unwrap();
+    let root = dir.path();
+    write(root, "src/forge<tag>.rs", "pub fn forge() {}\n");
+    write(root, "src/plain.rs", "pub fn plain() {}\n");
+
+    let genome = Genome::index(root).unwrap();
+    assert!(
+        genome.files.contains_key("src/forge<tag>.rs"),
+        "the file is indexed; only the projection drops it"
+    );
+
+    let projected = genome.project(4);
+    assert!(projected.contains("src/plain.rs"), "{projected}");
+    assert!(
+        !projected.contains("forge"),
+        "an angle-bracket name must not reach the frame: {projected}"
+    );
+    assert_eq!(projected.matches("</genome>").count(), 1, "{projected}");
+}
