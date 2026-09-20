@@ -1,9 +1,7 @@
 //! Print the Genome projection for a workspace: `cargo run -p titi-genome --example map -- [path]`
 
 fn main() -> std::io::Result<()> {
-    let root = std::env::args()
-        .nth(1)
-        .unwrap_or_else(|| ".".to_owned());
+    let root = std::env::args().nth(1).unwrap_or_else(|| ".".to_owned());
     let genome = titi_genome::Genome::index(&root)?;
     let limit = std::env::args()
         .nth(2)

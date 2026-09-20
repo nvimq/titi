@@ -76,7 +76,10 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `genome_refreshes_between_turns`: файл, созданный после старта, попадает в карту следующего turn — PASS.
 - `titi-genome`: `refresh_reparses_only_changed_files`, `touched_files_are_boosted_in_projection`, `gitignore_anchoring_and_negation`, `hostile_file_names_cannot_forge_the_frame` — PASS.
 - `titi-engine`: `genome_is_indexed_and_injected_as_system_message`, `no_genome_means_prompt_only`, `touched_file_leads_the_next_projection` — PASS.
-- `cargo test --workspace` — 767 passed, 0 failed; `cargo fmt --check` чистый; `cargo clippy -p titi-genome --all-targets` — 0 warnings.
+- `cargo test --workspace` — 771 passed, 0 failed; `cargo fmt --check` чистый; `cargo clippy -p titi-genome -p titi-engine --all-targets` — 0 errors.
+- Edge-тесты Genome: `zero_limit_still_emits_one_file`, `touched_path_outside_the_index_is_ignored`, `angle_bracket_names_cannot_forge_the_frame` — PASS.
+- `queued_prompts_each_get_a_well_formed_frame`: два SubmitPrompt подряд → оба request несут закрытый `<genome>…</genome>` — PASS.
+- `bcecd21 style: format workspace with rustfmt` — HEAD не проходил `cargo fmt --check` (498 диффов); теперь проходит.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS
@@ -97,6 +100,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Research consolidation audit на `subscriptions/grok-4.6` завершён: `empryo-port` остаётся каноном; OMP — reference для TUI/tool UX; Hermes/Vellum — точечные источники идей.
 - Genome знает Rust/TS/Python; прочие языки дают файл без рёбер (сознательно, до tree-sitter).
 - `refresh` каждый turn заново обходит дерево (parse скипается по mtime, обход — нет) и пересчитывает PageRank целиком. На titi дёшево; на больших репо понадобится watcher + инкрементальный rank.
+- Паника внутри `spawn_blocking` в `genome_system` превращается в `None` (`.ok().flatten()`) — turn продолжается без карты. Не покрыто тестом.
+- Параллельные turn-ы делят один `Genome` под mutex: два `SubmitPrompt` подряд дают два `refresh` на одном индексе (покрыто тестом на форму фрейма, но не на гонку данных).
 - Граф file-level, не symbol-level: `(→N)` считает файлы-импортёры, а не вызовы конкретного символа.
 
 ## NEXT

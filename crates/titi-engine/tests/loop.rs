@@ -283,6 +283,59 @@ async fn touched_file_leads_the_next_projection() {
 }
 
 #[tokio::test]
+async fn queued_prompts_each_get_a_well_formed_frame() {
+    let workspace = workspace_with_hub_and_leaf();
+    let transport = Arc::new(MockTransport::new(vec![
+        MockBody::Events(vec![StreamEvent::Done {
+            reason: StopReason::Stop,
+        }]),
+        MockBody::Events(vec![StreamEvent::Done {
+            reason: StopReason::Stop,
+        }]),
+    ]));
+    let mut config = EngineConfig::new("primary");
+    config.genome_root = Some(workspace.path().to_path_buf());
+    let mut engine = EngineRuntime::start(
+        config,
+        resolver(vec![("primary", Arc::clone(&transport) as _)]),
+    );
+
+    // Both prompts are in flight at once: the second queues behind the first,
+    // so two refreshes run against one index.
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "one".into() })
+        .await
+        .unwrap();
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "two".into() })
+        .await
+        .unwrap();
+
+    let mut finished = 0;
+    while finished < 2 {
+        match engine.recv().await {
+            Some(EngineEvent::TurnFinished { .. }) | Some(EngineEvent::Failed { .. }) => {
+                finished += 1
+            }
+            Some(_) => {}
+            None => break,
+        }
+    }
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2, "both turns reached the provider");
+    for request in &requests {
+        assert_eq!(request.messages[0].role, Role::System);
+        let frame = &request.messages[0].content;
+        assert!(frame.starts_with("<genome>\n"), "{frame}");
+        assert!(
+            frame.ends_with("</genome>"),
+            "frame must be closed: {frame}"
+        );
+    }
+}
+
+#[tokio::test]
 async fn falls_back_after_transient_budget() {
     let primary = Arc::new(MockTransport::new(vec![
         MockBody::Err(TransportError::Retryable {
