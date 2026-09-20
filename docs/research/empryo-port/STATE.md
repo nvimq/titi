@@ -51,6 +51,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `EngineCommand::Steer` + `App::turn_active`: submit во время активного turn шлёт `Steer`, а не новый turn.
 - Subagent делит с runtime таблицу claims и findings bus; `AgentContext::finding/claim/release_claims`; `stop` и завершение агента освобождают его файлы.
 - `titi-tools::ReadCache` — LRU-bounded кэш содержимого файлов, ключ `(size, mtime)`; `workspace_tools` даёт один кэш на все тулы, `write`/`edit` его инвалидируют. Удалённый файл из кэша не отдаётся.
+- **FIX (critical)**: `ToolcallDelta.json` — это ФРАГМЕНТ, а не накопленный буфер. OpenAI-декодер слал весь буфер на каждый chunk + финальный полный JSON на close, а engine-коллектор конкатенирует → аргументы тулов получались мусорными (`{"path":{"path":{"`), т.е. ЛЮБОЙ вызов тула с аргументами через реальный OpenAI-совместимый провайдер ломался. Anthropic слал фрагменты правильно. Теперь openai шлёт только новый фрагмент и на close — только `ToolcallEnd`.
+- Прогон реального сквозного пути (локальный OpenAI-совместимый SSE-сервер + `TITI_AGENT_DIR`): `settings → registry → HTTP → SSE → decoder → engine → tool loop → handler → replay → ответ` — работает; `read Cargo.toml` вернул 1056 байт.
 - `titi-engine::review` — fresh-context reviewer: `Verdict` (PASS/FAIL/PARTIAL, exit 0/3/1), `ReviewRequest::prompt` собирает brief + goal + evidence, `AgentReviewer` гоняет один turn через `AgentRunner` с `AgentContext::detached()`.
 - Verdict читается только с первой непустой строки: эхо brief-а, отговорка или токен на второй строке дают `PARTIAL`.
 
@@ -103,7 +105,10 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-cli`: `typing_during_a_turn_steers_instead_of_queueing_a_new_turn` — PASS.
 - `titi-tools` cache/fs: `a_second_read_of_an_unchanged_file_hits_the_cache`, `a_deleted_file_is_not_served_from_cache`, `a_changed_file_is_read_again`, `invalidate_forces_a_fresh_read`, `the_cache_is_bounded_and_evicts_the_least_recently_used`, `a_missing_file_reports_an_error`, `a_write_invalidates_the_cached_body`, `two_reads_share_one_cache` — PASS.
 - `titi-engine` review: `a_reply_is_read_by_its_first_verdict_token`, `a_reply_that_names_no_verdict_is_partial`, `echoing_the_brief_is_not_approval`, `the_first_token_wins_even_when_another_is_quoted_later`, `exit_codes_match_the_goal_loop_contract`, `the_prompt_carries_the_brief_goal_and_evidence`, `the_reviewer_sees_only_the_goal_and_the_evidence`, `the_verdict_and_exit_code_follow_the_reply`, `a_reviewer_that_fails_reports_the_error` — PASS.
-- `cargo test --workspace` — 819 passed, 0 failed.
+- `titi-providers`: `completions_tool_call_with_partial_args` (фрагменты, не буфер), `completions_tool_arguments_concatenate_to_valid_json` — PASS.
+- `titi-engine/tests/tools.rs`: `fragmented_tool_arguments_reach_the_handler_joined` — регресс на исправленный баг — PASS.
+- Сквозной прогон: `read` через фрагментированные аргументы вернул реальный `Cargo.toml`; genome как system-message дошёл до провайдера (`system=yes`).
+- `cargo test --workspace` — 821 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS
@@ -134,6 +139,7 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 
 ## NEXT
 
+0. **Рабочий TUI упирается только в конфиг провайдера**: `providers`/`models` в titi-settings не заданы → fallback на openai/anthropic без ключей (`provider openai requires a credential from Some("OPENAI_API_KEY")`). Empryo отдаёт `opencode-go` (Ready) и `subscriptions` (Ready), но их endpoint/ключ titi не видит. Нужно: `providers`/`models` в `~/.titi/agent/config.yml` + ключ в env или `.env`.
 1. E5: GPUI desktop workbench поверх того же `EngineCommand`/`EngineEvent`.
 2. Genome: tree-sitter для остальных языков и symbol-level граф.
 3. Goal loop поверх reviewer-а (coder ⟷ reviewer rounds с oscillation-детекцией).

@@ -52,6 +52,31 @@ async fn collect_until_terminal(engine: &mut titi_engine::Engine) -> Vec<EngineE
     events
 }
 
+/// Tool-call events whose arguments arrive in fragments, the way a real
+/// OpenAI-compatible stream delivers them.
+fn tool_call_events_split(name: &str, fragments: &[&str]) -> Vec<StreamEvent> {
+    let mut events = vec![StreamEvent::ToolcallStart {
+        id: BlockId::new("tool"),
+        call: ToolCallRef {
+            call_id: "call-1".into(),
+            name: name.into(),
+        },
+    }];
+    for fragment in fragments {
+        events.push(StreamEvent::ToolcallDelta {
+            id: BlockId::new("tool"),
+            json: (*fragment).into(),
+        });
+    }
+    events.push(StreamEvent::ToolcallEnd {
+        id: BlockId::new("tool"),
+    });
+    events.push(StreamEvent::Done {
+        reason: StopReason::ToolUse,
+    });
+    events
+}
+
 fn tool_call_events(name: &str, args: &str) -> Vec<StreamEvent> {
     vec![
         StreamEvent::ToolcallStart {
@@ -106,6 +131,40 @@ async fn auto_approves_read_tool_and_continues() {
         event,
         EngineEvent::StreamDelta { text, .. } if text == "done"
     )));
+}
+
+#[tokio::test]
+async fn fragmented_tool_arguments_reach_the_handler_joined() {
+    // The arguments arrive as fragments, the way a real OpenAI-compatible
+    // stream delivers them. Appending each fragment must reconstruct the JSON;
+    // a decoder that re-sends the accumulated buffer corrupts it.
+    let transport = Arc::new(MockTransport::new(vec![
+        MockBody::Events(tool_call_events_split(
+            "echo",
+            &[r#"{"text":"po"#, r#"ng"}"#],
+        )),
+        MockBody::Events(vec![StreamEvent::Done {
+            reason: StopReason::Stop,
+        }]),
+    ]));
+    let mut engine = EngineRuntime::start_with_tools(
+        EngineConfig::new("primary"),
+        resolver(transport),
+        echo_registry(),
+    );
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "hi".into() })
+        .await
+        .unwrap();
+    let events = collect_until_terminal(&mut engine).await;
+
+    assert!(
+        events.iter().any(|event| matches!(
+            event,
+            EngineEvent::ToolFinished { output, is_error: false, .. } if output == "pong"
+        )),
+        "fragments must reconstruct the arguments: {events:?}"
+    );
 }
 
 #[tokio::test]
