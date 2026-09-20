@@ -5,9 +5,28 @@ use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
+use super::checkpoint::Checkpoint;
 use super::entry::{self, Entry, Role};
 use super::index::{SearchHit, SessionIndex};
 use super::{SessionError, SessionMeta};
+
+/// Replays persisted entries as provider messages, so a restored session
+/// continues the conversation instead of starting blank. Tool messages are
+/// not persisted yet, so every restored entry is plain text.
+pub fn entries_to_messages(entries: &[Entry]) -> Vec<titi_providers::ChatMessage> {
+    entries
+        .iter()
+        .map(|entry| titi_providers::ChatMessage {
+            role: match entry.role {
+                Role::User => titi_providers::Role::User,
+                Role::Assistant => titi_providers::Role::Assistant,
+                Role::System => titi_providers::Role::System,
+            },
+            content: entry.content.clone().into(),
+            tool_calls: Vec::new(),
+        })
+        .collect()
+}
 
 /// Filesystem store: one JSONL file per session under `<agent_dir>/sessions`,
 /// a per-session leaf pointer, and the SQLite/FTS5 index at
@@ -116,6 +135,104 @@ impl SessionStore {
         self.index.resume_latest()
     }
 
+    /// Resumes the most recent session: its id plus the conversation along the
+    /// path to the current leaf. Abandoned fork branches are left out.
+    pub fn restore_latest(&self) -> Result<Option<(String, Vec<Entry>)>, SessionError> {
+        let Some(id) = self.resume_latest()? else {
+            return Ok(None);
+        };
+        let conversation = self.walk(&id, None)?;
+        Ok(Some((id, conversation)))
+    }
+
+    /// Records the current position as a rewind point and returns it.
+    /// History is untouched; the checkpoint goes to a sidecar file.
+    pub fn checkpoint(&self, session_id: &str) -> Result<Checkpoint, SessionError> {
+        let entries = self.load(session_id)?.len();
+        let checkpoint = Checkpoint {
+            entry_id: self.current_leaf(session_id)?,
+            entries,
+            ts: entry::now_ms(),
+        };
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(self.checkpoint_file(session_id))
+            .map_err(SessionError::Io)?;
+        let line = serde_json::to_string(&checkpoint).map_err(SessionError::Json)?;
+        writeln!(file, "{line}").map_err(SessionError::Io)?;
+        Ok(checkpoint)
+    }
+
+    /// Checkpoints recorded for a session, oldest first.
+    pub fn checkpoints(&self, session_id: &str) -> Result<Vec<Checkpoint>, SessionError> {
+        let file = self.checkpoint_file(session_id);
+        if !file.exists() {
+            return Ok(Vec::new());
+        }
+        let f = File::open(&file).map_err(SessionError::Io)?;
+        let mut out = Vec::new();
+        for line in BufReader::new(f).lines() {
+            let line = line.map_err(SessionError::Io)?;
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(checkpoint) = serde_json::from_str::<Checkpoint>(line) {
+                out.push(checkpoint);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Rewinds a session to `checkpoint`: the session file keeps its first
+    /// `entries` lines, the leaf moves back, and that checkpoint plus every
+    /// later one is dropped. The FTS index is rebuilt for the shortened tree.
+    pub fn rewind(&self, session_id: &str, checkpoint: &Checkpoint) -> Result<(), SessionError> {
+        let entries = self.load(session_id)?;
+        if checkpoint.entries > entries.len() {
+            return Err(SessionError::NotFound(format!(
+                "{session_id}@{} entries",
+                checkpoint.entries
+            )));
+        }
+        if let Some(id) = &checkpoint.entry_id
+            && !entries.iter().any(|entry| &entry.id == id)
+        {
+            return Err(SessionError::NotFound(format!("{session_id}/{id}")));
+        }
+
+        let kept = &entries[..checkpoint.entries];
+        let mut body = String::new();
+        for entry in kept {
+            body.push_str(&serde_json::to_string(entry).map_err(SessionError::Json)?);
+            body.push('\n');
+        }
+        fs::write(self.session_file(session_id), body).map_err(SessionError::Io)?;
+
+        match &checkpoint.entry_id {
+            Some(id) => self.set_leaf(session_id, id)?,
+            None => {
+                let _ = fs::remove_file(self.leaf_file(session_id));
+            }
+        }
+
+        let all = self.checkpoints(session_id)?;
+        let keep = all
+            .iter()
+            .position(|candidate| candidate == checkpoint)
+            .unwrap_or(all.len());
+        let mut body = String::new();
+        for candidate in all.iter().take(keep) {
+            body.push_str(&serde_json::to_string(candidate).map_err(SessionError::Json)?);
+            body.push('\n');
+        }
+        fs::write(self.checkpoint_file(session_id), body).map_err(SessionError::Io)?;
+
+        self.index.reindex_session(session_id, kept)?;
+        Ok(())
+    }
+
     /// Full-text search over indexed entries, optionally scoped to one bot.
     pub fn search(
         &self,
@@ -131,6 +248,10 @@ impl SessionStore {
 
     fn leaf_file(&self, session_id: &str) -> PathBuf {
         self.dir.join(format!("{session_id}.leaf"))
+    }
+
+    fn checkpoint_file(&self, session_id: &str) -> PathBuf {
+        self.dir.join(format!("{session_id}.checkpoints.jsonl"))
     }
 
     fn current_leaf(&self, session_id: &str) -> Result<Option<String>, SessionError> {
@@ -365,6 +486,178 @@ mod tests {
             .append(&sid, Role::Assistant, "after crash")
             .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(b.parent_id.as_deref(), Some(a.id.as_str()));
+    }
+
+    #[test]
+    fn rewind_keeps_entries_up_to_the_checkpoint() {
+        let (_dir, s) = store();
+        let sid = s.create(meta("a")).unwrap_or_else(|e| panic!("{e}"));
+        let a = s
+            .append(&sid, Role::User, "keep me")
+            .unwrap_or_else(|e| panic!("{e}"));
+        let checkpoint = s.checkpoint(&sid).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(checkpoint.entries, 1);
+        assert_eq!(checkpoint.entry_id.as_deref(), Some(a.id.as_str()));
+
+        s.append(&sid, Role::Assistant, "drop me")
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(s.open(&sid).unwrap_or_else(|e| panic!("{e}")).len(), 2);
+
+        s.rewind(&sid, &checkpoint)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            s.open(&sid).unwrap_or_else(|e| panic!("{e}")),
+            vec![a.clone()]
+        );
+        // The leaf moved back, so the next append branches off the checkpoint.
+        let c = s
+            .append(&sid, Role::User, "after rewind")
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(c.parent_id.as_deref(), Some(a.id.as_str()));
+    }
+
+    #[test]
+    fn rewind_drops_that_checkpoint_and_later_ones() {
+        let (_dir, s) = store();
+        let sid = s.create(meta("a")).unwrap_or_else(|e| panic!("{e}"));
+        s.append(&sid, Role::User, "one")
+            .unwrap_or_else(|e| panic!("{e}"));
+        let first = s.checkpoint(&sid).unwrap_or_else(|e| panic!("{e}"));
+        s.append(&sid, Role::Assistant, "two")
+            .unwrap_or_else(|e| panic!("{e}"));
+        let second = s.checkpoint(&sid).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            s.checkpoints(&sid).unwrap_or_else(|e| panic!("{e}")).len(),
+            2
+        );
+
+        s.rewind(&sid, &first).unwrap_or_else(|e| panic!("{e}"));
+        assert!(
+            s.checkpoints(&sid)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .is_empty()
+        );
+
+        // A checkpoint taken after the rewind is recorded again.
+        let third = s.checkpoint(&sid).unwrap_or_else(|e| panic!("{e}"));
+        assert_ne!(third, second);
+        assert_eq!(
+            s.checkpoints(&sid).unwrap_or_else(|e| panic!("{e}")).len(),
+            1
+        );
+    }
+
+    #[test]
+    fn rewind_removes_entries_from_search() {
+        let (_dir, s) = store();
+        let sid = s.create(meta("a")).unwrap_or_else(|e| panic!("{e}"));
+        s.append(&sid, Role::User, "durable fact")
+            .unwrap_or_else(|e| panic!("{e}"));
+        let checkpoint = s.checkpoint(&sid).unwrap_or_else(|e| panic!("{e}"));
+        s.append(&sid, Role::Assistant, "retracted fact")
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            s.search("retracted", None)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .len(),
+            1
+        );
+
+        s.rewind(&sid, &checkpoint)
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert!(
+            s.search("retracted", None)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .is_empty(),
+            "a rewound entry must not be searchable"
+        );
+        assert_eq!(
+            s.search("durable", None)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn rewind_to_an_unknown_point_is_not_found() {
+        let (_dir, s) = store();
+        let sid = s.create(meta("a")).unwrap_or_else(|e| panic!("{e}"));
+        s.append(&sid, Role::User, "only")
+            .unwrap_or_else(|e| panic!("{e}"));
+
+        let too_far = Checkpoint {
+            entry_id: None,
+            entries: 9,
+            ts: 0,
+        };
+        assert!(matches!(
+            s.rewind(&sid, &too_far),
+            Err(SessionError::NotFound(_))
+        ));
+
+        let wrong_leaf = Checkpoint {
+            entry_id: Some("ghost".into()),
+            entries: 1,
+            ts: 0,
+        };
+        assert!(matches!(
+            s.rewind(&sid, &wrong_leaf),
+            Err(SessionError::NotFound(_))
+        ));
+    }
+
+    #[test]
+    fn restore_latest_replays_the_active_conversation() {
+        let (_dir, s) = store();
+        assert_eq!(s.restore_latest().unwrap_or_else(|e| panic!("{e}")), None);
+
+        let older = s.create(meta("a")).unwrap_or_else(|e| panic!("{e}"));
+        s.append(&older, Role::User, "old question")
+            .unwrap_or_else(|e| panic!("{e}"));
+
+        let newest = s.create(meta("a")).unwrap_or_else(|e| panic!("{e}"));
+        let q = s
+            .append(&newest, Role::User, "new question")
+            .unwrap_or_else(|e| panic!("{e}"));
+        let a = s
+            .append(&newest, Role::Assistant, "new answer")
+            .unwrap_or_else(|e| panic!("{e}"));
+
+        let (id, entries) = s
+            .restore_latest()
+            .unwrap_or_else(|e| panic!("{e}"))
+            .unwrap_or_else(|| panic!("a session to restore"));
+        assert_eq!(id, newest);
+        assert_eq!(entries, vec![q, a]);
+
+        let messages = entries_to_messages(&entries);
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, titi_providers::Role::User);
+        assert_eq!(messages[0].content, "new question");
+        assert_eq!(messages[1].role, titi_providers::Role::Assistant);
+    }
+
+    #[test]
+    fn restore_latest_follows_the_fork_not_the_abandoned_branch() {
+        let (_dir, s) = store();
+        let sid = s.create(meta("a")).unwrap_or_else(|e| panic!("{e}"));
+        let a = s
+            .append(&sid, Role::User, "root")
+            .unwrap_or_else(|e| panic!("{e}"));
+        s.append(&sid, Role::Assistant, "abandoned")
+            .unwrap_or_else(|e| panic!("{e}"));
+
+        s.fork(&sid, &a.id).unwrap_or_else(|e| panic!("{e}"));
+        let kept = s
+            .append(&sid, Role::Assistant, "kept")
+            .unwrap_or_else(|e| panic!("{e}"));
+
+        let (_id, entries) = s
+            .restore_latest()
+            .unwrap_or_else(|e| panic!("{e}"))
+            .unwrap_or_else(|| panic!("a session to restore"));
+        assert_eq!(entries, vec![a, kept]);
     }
 
     #[test]
