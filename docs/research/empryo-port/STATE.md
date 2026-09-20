@@ -46,6 +46,10 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Checkpoints: `checkpoint`/`checkpoints`/`rewind` поверх sidecar `<id>.checkpoints.jsonl`; rewind обрезает session JSONL до отмеченной точки, откатывает leaf, удаляет этот checkpoint и последующие и перестраивает FTS (`SessionIndex::reindex_session`).
 - TUI: `/checkpoint`, `/checkpoints`, `/rewind [n]`; `App::set_session_id` привязывает живой session id, `start_engine` его возвращает.
 - Headless RPC версионирован: `headless::RPC_PROTOCOL`, `HeadlessFrame { v, command }`, `decode` отклоняет чужую версию, `run` пишет `{"ready":true,"protocol":1}` первым делом.
+- E4: `Claims` (per-file write claims: нормализация пути, release только владельцем, `release_all`), `Findings` (ordered bounded bus с курсором `drain_since`), `Steering` (bounded queue, drain на границе шага).
+- Tool loop берёт claim на `write`/`edit` и отпускает после вызова; чужой claim → error-результат без вызова handler-а и без касания диска.
+- `EngineCommand::Steer` + `App::turn_active`: submit во время активного turn шлёт `Steer`, а не новый turn.
+- Subagent делит с runtime таблицу claims и findings bus; `AgentContext::finding/claim/release_claims`; `stop` и завершение агента освобождают его файлы.
 
 ## VERIFIED
 
@@ -90,7 +94,11 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-engine`: `restored_history_is_replayed_before_the_prompt` — PASS.
 - `titi-cli` checkpoints: `checkpoint_builtins_are_reserved`, `checkpoint_rewind_roundtrip_through_the_helpers`, `rewind_reports_missing_and_out_of_range_checkpoints`, `an_app_without_a_session_reports_it_instead_of_panicking` — PASS.
 - `titi-cli` headless: `frame_version_is_optional_and_enforced` — PASS.
-- `cargo test --workspace` — 783 passed, 0 failed.
+- E4 unit: `Claims` (5 тестов), `Findings` (3), `Steering` (3) — PASS.
+- E4 integration (`titi-engine/tests/claims.rs`): `a_claimed_file_is_refused_without_touching_disk`, `a_released_file_can_be_written`, `queued_steering_is_injected_before_the_prompt_answer`, `steering_sent_mid_turn_reaches_the_provider` — PASS.
+- `titi-engine/tests/agents.rs`: `a_subagent_finding_reaches_the_parent_bus`, `stopping_an_agent_releases_its_write_claims` — PASS.
+- `titi-cli`: `typing_during_a_turn_steers_instead_of_queueing_a_new_turn` — PASS.
+- `cargo test --workspace` — 802 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS
@@ -114,10 +122,12 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Паника внутри `spawn_blocking` в `genome_system` превращается в `None` (`.ok().flatten()`) — turn продолжается без карты. Не покрыто тестом.
 - Параллельные turn-ы делят один `Genome` под mutex: два `SubmitPrompt` подряд дают два `refresh` на одном индексе (покрыто тестом на форму фрейма, но не на гонку данных).
 - Граф file-level, не symbol-level: `(→N)` считает файлы-импортёры, а не вызовы конкретного символа.
+- Claim берётся по `path` из аргументов тула, поэтому `bash` (произвольная команда) файлы не резервирует.
+- `StreamingAgentRunner` — one-shot turn без tool loop, поэтому subagent пока не пишет файлы сам; claims для него — инфраструктура на будущее.
 
 ## NEXT
 
-1. E4: background dispatch, shared read cache, per-file write claims, findings bus, steering.
+1. E4 остаток: shared read cache и fresh-context reviewer.
 2. Genome: tree-sitter для остальных языков и symbol-level граф.
 3. E5: GPUI desktop workbench поверх того же `EngineCommand`/`EngineEvent`.
 

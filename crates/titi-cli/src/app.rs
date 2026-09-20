@@ -111,6 +111,9 @@ pub struct App {
     streaming_response: String,
     /// Live session id, so `/checkpoint` and `/rewind` can address it.
     session_id: Option<String>,
+    /// A turn is in flight: submitting now steers it instead of queueing a
+    /// whole new turn.
+    turn_active: bool,
 }
 
 impl App {
@@ -149,7 +152,13 @@ impl App {
             assistant_messages: Vec::new(),
             streaming_response: String::new(),
             session_id: None,
+            turn_active: false,
         }
+    }
+
+    /// Whether a turn is currently in flight.
+    pub fn turn_active(&self) -> bool {
+        self.turn_active
     }
 
     /// The built-in slash commands (names reserved — see the Slash DoD).
@@ -577,6 +586,7 @@ impl App {
         match event {
             EngineEvent::TurnStarted { model, .. } => {
                 self.streaming_response.clear();
+                self.turn_active = true;
                 self.set_alert(format!("{model} · running"));
             }
             EngineEvent::StreamDelta { text, .. } => self.streaming_response.push_str(&text),
@@ -661,10 +671,17 @@ impl App {
                     self.assistant_messages
                         .push(std::mem::take(&mut self.streaming_response));
                 }
+                self.turn_active = false;
                 self.transcript.clear_alert();
             }
-            EngineEvent::Failed { message, .. } => self.set_alert(format!("error: {message}")),
-            EngineEvent::Cancelled { .. } => self.set_alert("cancelled"),
+            EngineEvent::Failed { message, .. } => {
+                self.turn_active = false;
+                self.set_alert(format!("error: {message}"));
+            }
+            EngineEvent::Cancelled { .. } => {
+                self.turn_active = false;
+                self.set_alert("cancelled");
+            }
         }
     }
 
@@ -1341,6 +1358,11 @@ impl App {
     fn deliver_prompt(&mut self, text: String) -> Option<SubmitEffect> {
         self.prompt_history.push(text.clone());
         self.last_prompt = Some(text.clone());
+        // A turn in flight is steered, not restarted: the message is injected at
+        // its next step boundary.
+        if self.turn_active {
+            return Some(SubmitEffect::Steer(text));
+        }
         match self.submit(text.clone()) {
             SubmitOutcome::Queued => Some(SubmitEffect::Queued(text)),
             SubmitOutcome::Delivered => Some(SubmitEffect::Delivered(text)),
@@ -1691,6 +1713,8 @@ pub enum SubmitEffect {
     MouseToggle,
     Queued(String),
     Delivered(String),
+    /// A turn is running: redirect it instead of starting a new one.
+    Steer(String),
     /// OSC 52 copy of the given text.
     Copy(String),
     /// ED3 + re-offer history (`app.display.reset`).

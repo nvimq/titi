@@ -129,7 +129,11 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 
 ### E4 — Agents
 
-Background dispatch, shared read cache, per-file write claims, findings bus, steering, fresh-context reviewer.
+- [x] Per-file write claims (`titi-engine::Claims`): normalized paths, owner-only release, `release_all` on stop; a write-tier tool call takes a claim for the call and a foreign claim is refused without running the handler.
+- [x] Findings bus (`Findings`): ordered, bounded, cursor-based `drain_since`; subagents share the runtime's bus and their summary lands there.
+- [x] Steering (`Steering`): bounded queue drained at the next step boundary; `EngineCommand::Steer` + TUI sends `Steer` instead of a new turn while one is running.
+- [x] Subagents share the runtime's claim table and findings bus.
+- [ ] Shared read cache and fresh-context reviewer.
 
 Готовый foundation: engine protocol, provider registry, tools, session trajectory, headless JSONL, TUI tool-approval overlay, live Genome-индекс с prompt-проекцией. Следующий слой — symbol-level Genome (tree-sitter), checkpoints/RPC и background agents.
 

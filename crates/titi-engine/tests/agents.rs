@@ -63,6 +63,114 @@ async fn spawn_agent_streams_lifecycle_events() {
     );
 }
 
+/// Reports a finding, claims a file, and then blocks until stopped.
+struct ClaimingRunner;
+
+#[async_trait]
+impl AgentRunner for ClaimingRunner {
+    async fn run(&self, _request: AgentRequest, context: AgentContext) -> Result<SmolStr, SmolStr> {
+        context.finding("found the wiring");
+        context
+            .claim("src/shared.rs")
+            .map_err(|error| SmolStr::from(error.to_string()))?;
+        while !context.is_aborted() {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+        Err("stopped".into())
+    }
+}
+
+#[tokio::test]
+async fn a_subagent_finding_reaches_the_parent_bus() {
+    let mut engine = EngineRuntime::start_with_agents(
+        EngineConfig::new("unused"),
+        no_models(),
+        Arc::new(ReportingRunner),
+    );
+    let before = engine.findings().cursor();
+    engine
+        .send(EngineCommand::SpawnAgent {
+            name: "Trace".into(),
+            task: "inspect".into(),
+            kind: AgentKind::Subagent,
+        })
+        .await
+        .unwrap();
+
+    while let Some(event) = engine.recv().await {
+        if matches!(event, EngineEvent::AgentFinished { .. }) {
+            break;
+        }
+    }
+
+    let (_, findings) = engine.findings().drain_since(before);
+    assert_eq!(findings.len(), 1, "the summary is the agent's finding");
+    assert_eq!(findings[0].text, "agent complete");
+    assert_eq!(findings[0].agent_id, "agent-1");
+}
+
+#[tokio::test]
+async fn stopping_an_agent_releases_its_write_claims() {
+    let mut engine = EngineRuntime::start_with_agents(
+        EngineConfig::new("unused"),
+        no_models(),
+        Arc::new(ClaimingRunner),
+    );
+    engine
+        .send(EngineCommand::SpawnAgent {
+            name: "Holder".into(),
+            task: "hold a file".into(),
+            kind: AgentKind::Subagent,
+        })
+        .await
+        .unwrap();
+
+    // Wait until the agent has claimed the file and reported its finding.
+    let mut agent_id = String::new();
+    while let Some(event) = engine.recv().await {
+        match event {
+            EngineEvent::AgentStarted { agent_id: id, .. } => agent_id = id.to_string(),
+            EngineEvent::AgentFinished { .. } => panic!("the runner blocks until stopped"),
+            _ => {}
+        }
+        if engine.claims().holder("src/shared.rs").is_some() {
+            break;
+        }
+    }
+    assert_eq!(
+        engine.claims().holder("src/shared.rs").as_deref(),
+        Some(agent_id.as_str()),
+        "the agent holds the file while it runs"
+    );
+
+    engine
+        .send(EngineCommand::StopAgent {
+            agent_id: agent_id.clone().into(),
+        })
+        .await
+        .unwrap();
+
+    let mut stopped = false;
+    while let Some(event) = engine.recv().await {
+        if matches!(
+            event,
+            EngineEvent::AgentStatusChanged {
+                status: AgentStatus::Aborted,
+                ..
+            }
+        ) {
+            stopped = true;
+            break;
+        }
+    }
+    assert!(stopped, "the stop was acknowledged");
+    assert!(
+        engine.claims().is_empty(),
+        "a stopped agent must not leave files locked: {:?}",
+        engine.claims().holder("src/shared.rs")
+    );
+}
+
 struct WaitingRunner;
 
 #[async_trait]
