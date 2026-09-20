@@ -104,7 +104,7 @@ pub struct EngineRuntime {
 
 impl EngineRuntime {
     pub fn start(config: EngineConfig, resolver: Arc<dyn TransportResolver>) -> Engine {
-        Self::start_inner(config, resolver, None, ToolRegistry::new())
+        Self::start_inner(config, resolver, None, ToolRegistry::new(), TrajectorySink::default())
     }
 
     pub fn start_with_agents(
@@ -112,7 +112,7 @@ impl EngineRuntime {
         resolver: Arc<dyn TransportResolver>,
         runner: Arc<dyn crate::agents::AgentRunner>,
     ) -> Engine {
-        Self::start_inner(config, resolver, Some(runner), ToolRegistry::new())
+        Self::start_inner(config, resolver, Some(runner), ToolRegistry::new(), TrajectorySink::default())
     }
 
     pub fn start_with_tools(
@@ -120,7 +120,7 @@ impl EngineRuntime {
         resolver: Arc<dyn TransportResolver>,
         tools: ToolRegistry,
     ) -> Engine {
-        Self::start_inner(config, resolver, None, tools)
+        Self::start_inner(config, resolver, None, tools, TrajectorySink::default())
       }
 
       pub fn start_with_agents_and_tools(
@@ -129,7 +129,17 @@ impl EngineRuntime {
         runner: Arc<dyn crate::agents::AgentRunner>,
         tools: ToolRegistry,
       ) -> Engine {
-        Self::start_inner(config, resolver, Some(runner), tools)
+        Self::start_inner(config, resolver, Some(runner), tools, TrajectorySink::default())
+      }
+
+      pub fn start_with_session(
+        config: EngineConfig,
+          resolver: Arc<dyn TransportResolver>,
+          runner: Option<Arc<dyn crate::agents::AgentRunner>>,
+          tools: ToolRegistry,
+          trajectory: TrajectorySink,
+      ) -> Engine {
+        Self::start_inner(config, resolver, runner, tools, trajectory)
       }
 
       fn start_inner(
@@ -137,6 +147,7 @@ impl EngineRuntime {
           resolver: Arc<dyn TransportResolver>,
           runner: Option<Arc<dyn crate::agents::AgentRunner>>,
           tools: ToolRegistry,
+          trajectory: TrajectorySink,
       ) -> Engine {
           let (command_tx, command_rx) = mpsc::channel(config.command_capacity);
           let (event_tx, event_rx) = mpsc::channel(config.event_capacity);
@@ -151,7 +162,7 @@ impl EngineRuntime {
             agents,
             tools,
             approval_waiters: ApprovalWaiters::default(),
-            trajectory: TrajectorySink::default(),
+            trajectory,
         };
         tokio::spawn(runtime.run());
         Engine {
@@ -347,9 +358,14 @@ async fn run_turn(
             })
             .await;
 
-        let mut messages = vec![ChatMessage {
+        if let Some(recorder) = trajectory.lock().await.as_mut() {
+            let _ = recorder.record(titi_core::trajectory::EventKind::UserMessage {
+                  text: prompt.to_string(),
+              });
+          }
+          let mut messages = vec![ChatMessage {
             role: Role::User,
-              content: prompt.clone(),
+                content: prompt.clone(),
               tool_calls: Vec::new(),
           }];
           let mut tool_rounds = 0;
@@ -413,6 +429,9 @@ async fn run_turn(
                 }
             }
             if completed {
+                if let Some(recorder) = trajectory.lock().await.as_mut() {
+                      let _ = recorder.record(titi_core::trajectory::EventKind::TurnEnd);
+                }
                 return;
             }
             if last_error.is_some() {

@@ -94,20 +94,33 @@ impl TrajectoryRecorder {
         let dir = agent_dir.join("trajectories");
         fs::create_dir_all(&dir).map_err(TrajectoryError::Io)?;
         let path = dir.join(format!("{session_id}.jsonl"));
-        let events = if path.exists() { Self::load(&path)? } else { Vec::new() };
+        let events = if path.exists() {
+            Self::load(&path)?
+        } else {
+            Vec::new()
+        };
         let next_seq = events.last().map_or(1, |e| e.seq + 1);
         let file = OpenOptions::new()
             .create(true)
             .append(true)
             .open(&path)
             .map_err(TrajectoryError::Io)?;
-        Ok(Self { path, file: BufWriter::new(file), events, next_seq })
+        Ok(Self {
+            path,
+            file: BufWriter::new(file),
+            events,
+            next_seq,
+        })
     }
 
     /// Appends an event with the current timestamp and the next sequence
     /// number, flushing to disk when the event closes a turn.
     pub fn record(&mut self, kind: EventKind) -> Result<TrajectoryEvent, TrajectoryError> {
-        let e = TrajectoryEvent { ts: crate::session::entry::now_ms(), seq: self.next_seq, kind };
+        let e = TrajectoryEvent {
+            ts: crate::session::entry::now_ms(),
+            seq: self.next_seq,
+            kind,
+        };
         let line = serde_json::to_string(&e).map_err(TrajectoryError::Json)?;
         writeln!(self.file, "{line}").map_err(TrajectoryError::Io)?;
         if matches!(e.kind, EventKind::TurnEnd) {
@@ -156,7 +169,10 @@ impl TrajectoryRecorder {
             })
             .collect();
         let start = calls.len().saturating_sub(k);
-        calls.drain(start..).map(|(n, a)| tool_call_digest(n, a)).collect()
+        calls
+            .drain(start..)
+            .map(|(n, a)| tool_call_digest(n, a))
+            .collect()
     }
 
     /// Digest over the last `k` tool calls as one window (`None` when
@@ -232,12 +248,15 @@ mod tests {
     use serde_json::json;
 
     fn open(dir: &Path) -> TrajectoryRecorder {
-        TrajectoryRecorder::open(dir, "s1")
-            .unwrap_or_else(|e| panic!("open: {e}"))
+        TrajectoryRecorder::open(dir, "s1").unwrap_or_else(|e| panic!("open: {e}"))
     }
 
     fn call(id: &str, name: &str, args: Value) -> EventKind {
-        EventKind::ToolCall { id: id.into(), name: name.into(), args }
+        EventKind::ToolCall {
+            id: id.into(),
+            name: name.into(),
+            args,
+        }
     }
 
     #[test]
@@ -249,8 +268,14 @@ mod tests {
         let events = vec![
             EventKind::UserMessage { text: "go".into() },
             call("t1", "bash", json!({"cmd": "ls"})),
-            EventKind::ToolResult { id: "t1".into(), duration_ms: 12, ok: true },
-            EventKind::AssistantMessage { text: "done".into() },
+            EventKind::ToolResult {
+                id: "t1".into(),
+                duration_ms: 12,
+                ok: true,
+            },
+            EventKind::AssistantMessage {
+                text: "done".into(),
+            },
             EventKind::TurnEnd,
         ];
         let recorded: Vec<TrajectoryEvent> = events
@@ -264,7 +289,12 @@ mod tests {
         // Tail returns the newest events, oldest first.
         let tail = r.tail(2);
         assert_eq!(tail.len(), 2);
-        assert_eq!(tail[0].kind, EventKind::AssistantMessage { text: "done".into() });
+        assert_eq!(
+            tail[0].kind,
+            EventKind::AssistantMessage {
+                text: "done".into()
+            }
+        );
         assert_eq!(tail[1].kind, EventKind::TurnEnd);
         assert_eq!(r.tail(usize::MAX).len(), 5);
         assert_eq!(r.len(), 5);
@@ -283,12 +313,17 @@ mod tests {
         let raw = fs::read_to_string(r.path()).unwrap_or_else(|e| panic!("read: {e}"));
         assert_eq!(raw.lines().count(), 0);
 
-        r.record(EventKind::TurnEnd).unwrap_or_else(|e| panic!("record: {e}"));
+        r.record(EventKind::TurnEnd)
+            .unwrap_or_else(|e| panic!("record: {e}"));
         let raw = fs::read_to_string(r.path()).unwrap_or_else(|e| panic!("read: {e}"));
         assert_eq!(raw.lines().count(), 3);
         let kinds: Vec<EventKind> = raw
             .lines()
-            .map(|l| serde_json::from_str::<TrajectoryEvent>(l).unwrap_or_else(|e| panic!("{e}")).kind)
+            .map(|l| {
+                serde_json::from_str::<TrajectoryEvent>(l)
+                    .unwrap_or_else(|e| panic!("{e}"))
+                    .kind
+            })
             .collect();
         assert!(matches!(kinds[2], EventKind::TurnEnd));
     }
@@ -300,10 +335,12 @@ mod tests {
             let mut r = open(dir.path());
             r.record(EventKind::UserMessage { text: "one".into() })
                 .unwrap_or_else(|e| panic!("record: {e}"));
-            r.record(EventKind::TurnEnd).unwrap_or_else(|e| panic!("record: {e}"));
+            r.record(EventKind::TurnEnd)
+                .unwrap_or_else(|e| panic!("record: {e}"));
         }
         let mut r = open(dir.path());
-        let e = r.record(EventKind::UserMessage { text: "two".into() })
+        let e = r
+            .record(EventKind::UserMessage { text: "two".into() })
             .unwrap_or_else(|e| panic!("record: {e}"));
         assert_eq!(e.seq, 3);
         assert_eq!(r.len(), 3);
@@ -316,7 +353,8 @@ mod tests {
         let mut r = open(dir.path());
         r.record(EventKind::UserMessage { text: "one".into() })
             .unwrap_or_else(|e| panic!("record: {e}"));
-        r.record(EventKind::TurnEnd).unwrap_or_else(|e| panic!("record: {e}"));
+        r.record(EventKind::TurnEnd)
+            .unwrap_or_else(|e| panic!("record: {e}"));
 
         // Simulate a crash mid-write: a partial JSON line without a newline.
         let mut f = OpenOptions::new()
@@ -331,7 +369,8 @@ mod tests {
         assert_eq!(r.len(), 2);
         // Sequence continues after the last valid event.
         let mut r = r;
-        let e = r.record(EventKind::UserMessage { text: "two".into() })
+        let e = r
+            .record(EventKind::UserMessage { text: "two".into() })
             .unwrap_or_else(|e| panic!("record: {e}"));
         assert_eq!(e.seq, 3);
     }

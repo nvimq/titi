@@ -56,12 +56,16 @@ fn main() -> io::Result<()> {
     // off — no tracking, terminal-native selection works; drag-select
     // requires `buttons` or `all`).
     let mut mouse = load_mouse_preset().unwrap_or(MousePreset::Off);
+    let mut headless = false;
     let mut args = std::env::args().skip(1);
-    while let Some(arg) = args.next()
-        && arg == "--mouse"
-        && let Some(preset) = args.next().and_then(|v| MousePreset::parse(&v))
-    {
-        mouse = preset;
+      while let Some(arg) = args.next() {
+        if arg == "--mouse"
+              && let Some(preset) = args.next().and_then(|v| MousePreset::parse(&v))
+        {
+              mouse = preset;
+        } else if arg == "--headless" || arg == "-p" {
+            headless = true;
+        }
     }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -76,6 +80,10 @@ fn main() -> io::Result<()> {
         std::thread::spawn(move || init_provider(ready));
     }
     let (mut engine, models) = start_engine().map_err(io::Error::other)?;
+    if headless {
+          let code = runtime.block_on(titi_cli::headless::run(engine))?;
+        std::process::exit(code);
+    }
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();

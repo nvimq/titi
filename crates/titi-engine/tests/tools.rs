@@ -163,3 +163,38 @@ async fn tool_round_cap_stops_the_turn() {
         Some(EngineEvent::Failed { message, .. }) if message == "tool round cap reached"
     ));
 }
+
+#[tokio::test]
+async fn session_trajectory_records_user_tools_and_turn_end() {
+    use titi_core::trajectory::{EventKind, TrajectoryRecorder};
+    use titi_engine::TrajectorySink;
+    use tokio::sync::Mutex;
+
+    let dir = tempfile::tempdir().unwrap();
+    let recorder = TrajectoryRecorder::open(dir.path(), "sess").unwrap();
+    let trajectory: TrajectorySink = Arc::new(Mutex::new(Some(recorder)));
+    let transport = Arc::new(MockTransport::new(vec![
+        MockBody::Events(tool_call_events("echo", r#"{"text":"pong"}"#)),
+        MockBody::Events(vec![StreamEvent::Done {
+            reason: StopReason::Stop,
+        }]),
+    ]));
+    let mut engine = EngineRuntime::start_with_session(
+        EngineConfig::new("primary"),
+        resolver(transport),
+        None,
+        echo_registry(),
+        trajectory,
+    );
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "hi".into() })
+        .await
+        .unwrap();
+    let _ = collect_until_terminal(&mut engine).await;
+    let replay = TrajectoryRecorder::open(dir.path(), "sess").unwrap();
+    let kinds: Vec<_> = replay.tail(16).into_iter().map(|event| event.kind).collect();
+    assert!(kinds.iter().any(|kind| matches!(kind, EventKind::UserMessage { text } if text == "hi")));
+    assert!(kinds.iter().any(|kind| matches!(kind, EventKind::ToolCall { name, .. } if name == "echo")));
+    assert!(kinds.iter().any(|kind| matches!(kind, EventKind::ToolResult { ok: true, .. })));
+    assert!(kinds.iter().any(|kind| matches!(kind, EventKind::TurnEnd)));
+}

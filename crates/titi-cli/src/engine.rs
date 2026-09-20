@@ -3,7 +3,7 @@ use std::sync::Arc;
 use titi_engine::{
     Engine, EngineConfig, EngineRuntime, HttpTransportFactory, LayeredCredentialSource,
     ModelDescriptor, ProviderDescriptor, ProviderRegistry, ProviderRegistryConfig,
-    StreamingAgentRunner,
+    StreamingAgentRunner, TrajectorySink,
 };
 use titi_tools::{ToolRegistry, workspace_tools};
 use titi_providers::ApiKind;
@@ -80,8 +80,24 @@ pub fn start_engine() -> Result<(Engine, Vec<String>), String> {
       for tool in workspace_tools(std::env::current_dir().unwrap_or_else(|_| ".".into())) {
         tools.register(Arc::from(tool));
       }
+      let agent_dir = titi_config::agent_dir();
+        let session_id = titi_core::session::store::SessionStore::new(&agent_dir)
+            .and_then(|store| store.create(titi_core::session::SessionMeta {
+                title: Some("titi".into()),
+              source: Some("cli".into()),
+              ..Default::default()
+          }))
+          .unwrap_or_else(|_| "session".into());
+      let recorder = titi_core::trajectory::TrajectoryRecorder::open(&agent_dir, &session_id).ok();
+      let trajectory: TrajectorySink = std::sync::Arc::new(tokio::sync::Mutex::new(recorder));
       Ok((
-          EngineRuntime::start_with_agents_and_tools(engine_config, registry, runner, tools),
+          EngineRuntime::start_with_session(
+              engine_config,
+              registry,
+              Some(runner),
+              tools,
+              trajectory,
+          ),
         models,
     ))
 }

@@ -55,7 +55,7 @@ impl ToolCallCollector {
 }
 
 pub(crate) type ApprovalWaiters = Arc<Mutex<HashMap<SmolStr, oneshot::Sender<bool>>>>;
-pub(crate) type TrajectorySink = Arc<Mutex<Option<titi_core::trajectory::TrajectoryRecorder>>>;
+pub type TrajectorySink = Arc<Mutex<Option<titi_core::trajectory::TrajectoryRecorder>>>;
 
 pub(crate) async fn execute_tools(
     turn_id: TurnId,

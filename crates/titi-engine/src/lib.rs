@@ -15,6 +15,7 @@ pub use registry::{
     TransportFactory,
 };
 pub use runtime::{Engine, EngineConfig, EngineError, EngineRuntime, TransportResolver};
+pub use tool_loop::TrajectorySink;
 
 /// Crate version, mirrors the workspace release.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
