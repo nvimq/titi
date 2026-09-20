@@ -55,6 +55,7 @@ impl ToolCallCollector {
 }
 
 pub(crate) type ApprovalWaiters = Arc<Mutex<HashMap<SmolStr, oneshot::Sender<bool>>>>;
+pub(crate) type TrajectorySink = Arc<Mutex<Option<titi_core::trajectory::TrajectoryRecorder>>>;
 
 pub(crate) async fn execute_tools(
     turn_id: TurnId,
@@ -64,6 +65,7 @@ pub(crate) async fn execute_tools(
     waiters: &ApprovalWaiters,
     events: &mpsc::Sender<EngineEvent>,
     aborted: &AtomicBool,
+    trajectory: &TrajectorySink,
 ) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     let mut assistant_calls = Vec::new();
@@ -90,7 +92,23 @@ pub(crate) async fn execute_tools(
                 name: call.name.clone(),
             })
             .await;
+        let args = serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+        if let Some(recorder) = trajectory.lock().await.as_mut() {
+            let _ = recorder.record(titi_core::trajectory::EventKind::ToolCall {
+                id: call.call_id.to_string(),
+                name: call.name.to_string(),
+                args: args.clone(),
+            });
+        }
+        let started = std::time::Instant::now();
         let result = invoke_one(call, tools, approval_mode, waiters, aborted).await;
+        if let Some(recorder) = trajectory.lock().await.as_mut() {
+            let _ = recorder.record(titi_core::trajectory::EventKind::ToolResult {
+                id: result.call_id.to_string(),
+                duration_ms: started.elapsed().as_millis() as u64,
+                ok: !result.is_error,
+            });
+        }
         let _ = events
             .send(EngineEvent::ToolFinished {
                 turn_id,

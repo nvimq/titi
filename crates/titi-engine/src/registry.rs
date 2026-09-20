@@ -85,6 +85,51 @@ impl CredentialSource for EnvCredentialSource {
     }
 }
 
+/// Env, layered `.env`, then `auth.db` for the provider id.
+pub struct LayeredCredentialSource {
+    env: titi_secrets::env::LayeredEnv,
+    store_path: std::path::PathBuf,
+}
+
+impl LayeredCredentialSource {
+    pub fn from_defaults() -> Self {
+        let agent_dir = titi_config::agent_dir();
+        Self {
+            env: titi_secrets::env::LayeredEnv::from_defaults(),
+            store_path: agent_dir.join("auth.db"),
+        }
+    }
+}
+
+impl CredentialSource for LayeredCredentialSource {
+    fn resolve(&self, provider: &ProviderDescriptor) -> Option<Credential> {
+        if let Some(key) = provider.credential_env.as_deref()
+            && let Some(access) = self.env.resolve(key)
+            && !access.trim().is_empty()
+        {
+            return Some(Credential {
+                access: access.into(),
+                kind: CredKind::ApiKey,
+                level: LadderLevel::Env,
+            });
+        }
+          let store = titi_secrets::store::AuthStore::open(&self.store_path).ok()?;
+        let stored = store.get(provider.id.as_str()).ok()??;
+        if stored.token.trim().is_empty() {
+            return None;
+        }
+        Some(Credential {
+            access: stored.token.into(),
+            kind: if stored.kind == "oauth" {
+                CredKind::BearerToken
+            } else {
+                CredKind::ApiKey
+            },
+            level: LadderLevel::Stored,
+        })
+    }
+}
+
 pub trait TransportFactory: Send + Sync + 'static {
     fn build(&self, provider: &ProviderDescriptor) -> Result<Arc<dyn Transport>, TransportError>;
 }

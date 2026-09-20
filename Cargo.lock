@@ -1470,6 +1470,7 @@ dependencies = [
  "titi-core",
  "titi-engine",
  "titi-providers",
+ "titi-secrets",
  "titi-tools",
  "titi-tui",
  "tokio",
@@ -1510,7 +1511,10 @@ dependencies = [
  "serde_json",
  "smol_str",
  "thiserror",
+ "titi-config",
+ "titi-core",
  "titi-providers",
+ "titi-secrets",
  "titi-tools",
  "tokio",
 ]
@@ -1534,6 +1538,15 @@ dependencies = [
  "smol_str",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "titi-secrets"
+version = "0.1.0"
+dependencies = [
+ "rusqlite",
+ "tempfile",
+ "titi-config",
 ]
 
 [[package]]
