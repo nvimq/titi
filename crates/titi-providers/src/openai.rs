@@ -5,7 +5,6 @@ use serde_json::Value;
 use smol_str::SmolStr;
 
 use crate::compat::StreamDecodePolicy;
-use crate::partial_json::PartialJson;
 use crate::sse::MarkerStripper;
 use crate::stop::map_stop_reason;
 use crate::stream::{BlockId, StreamEvent, ToolCallRef};
@@ -53,7 +52,6 @@ struct OpenToolCall {
     block_id: String,
     call_id: String,
     name: String,
-    args: PartialJson,
 }
 
 impl OpenToolCall {
@@ -182,11 +180,13 @@ pub fn decode_completions_chunk(
                 .and_then(|f| f.get("arguments"))
                 .and_then(Value::as_str)
             {
-                state.tools[index].args.push(args);
-                let buf = state.tools[index].args.buffer();
+                // A fragment, not the accumulated buffer: consumers concatenate
+                // `ToolcallDelta.json` across chunks (see the Anthropic decoder,
+                // which emits `partial_json` the same way). Emitting the whole
+                // buffer here would make every consumer double-count.
                 events.push(StreamEvent::ToolcallDelta {
                     id: BlockId(state.tools[index].block_id.clone().into()),
-                    json: buf.into(),
+                    json: args.into(),
                 });
             }
         }
@@ -228,11 +228,8 @@ fn close_all(state: &mut OpenAiStreamState, wire_reason: &str) -> Vec<StreamEven
     for (i, opened) in state.tools_opened.iter_mut().enumerate() {
         if *opened {
             *opened = false;
-            let args = std::mem::take(&mut state.tools[i].args).finalize();
-            events.push(StreamEvent::ToolcallDelta {
-                id: BlockId(state.tools[i].block_id.clone().into()),
-                json: args.to_string().into(),
-            });
+            // No closing arguments delta: the fragments already carried
+            // them, and re-sending the whole JSON would duplicate them.
             events.push(StreamEvent::ToolcallEnd {
                 id: BlockId(state.tools[i].block_id.clone().into()),
             });
@@ -341,7 +338,10 @@ pub fn decode_responses_event(
                 });
             }
             if let Some(args) = payload.get("delta").and_then(Value::as_str) {
-                state.tools[index].args.push(args);
+                events.push(StreamEvent::ToolcallDelta {
+                    id: BlockId(state.tools[index].block_id.clone().into()),
+                    json: args.into(),
+                });
             }
         }
         "response.completed" | "response.failed" | "response.incomplete" => {
@@ -431,27 +431,67 @@ mod tests {
             &mut s,
             &policy,
         );
-        assert!(matches!(ev.last(), Some(StreamEvent::ToolcallDelta { .. })));
-        let _ = decode_completions_chunk(
+        // A fragment, never the accumulated buffer: consumers concatenate.
+        assert_eq!(
+            ev,
+            vec![StreamEvent::ToolcallDelta {
+                id: BlockId("tool_0".into()),
+                json: "{\"path\":".into()
+            }]
+        );
+        let ev = decode_completions_chunk(
             &json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a\"}"}}]}}]}),
             &mut s,
             &policy,
         );
+        assert_eq!(
+            ev,
+            vec![StreamEvent::ToolcallDelta {
+                id: BlockId("tool_0".into()),
+                json: "\"a\"}".into()
+            }]
+        );
+
         let ev = decode_completions_chunk(
             &json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}]}),
             &mut s,
             &policy,
         );
-        assert!(matches!(
-            ev.last(),
-            Some(StreamEvent::Done {
-                reason: StopReason::ToolUse
-            })
-        ));
-        assert!(
-            ev.iter()
-                .any(|e| matches!(e, StreamEvent::ToolcallEnd { .. }))
+        // Closing emits the end only — re-sending the whole JSON would make a
+        // concatenating consumer duplicate the arguments.
+        assert_eq!(
+            ev,
+            vec![
+                StreamEvent::ToolcallEnd {
+                    id: BlockId("tool_0".into())
+                },
+                StreamEvent::Done {
+                    reason: StopReason::ToolUse
+                }
+            ]
         );
+    }
+
+    #[test]
+    fn completions_tool_arguments_concatenate_to_valid_json() {
+        let mut s = state();
+        let policy = StreamDecodePolicy::default();
+        let chunks = [
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"read","arguments":""}}]}}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"{\"path\":"}}]}}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"function":{"arguments":"\"a.rs\"}"}}]}}]}),
+        ];
+        let mut args = String::new();
+        for chunk in &chunks {
+            for event in decode_completions_chunk(chunk, &mut s, &policy) {
+                if let StreamEvent::ToolcallDelta { json, .. } = event {
+                    args.push_str(&json);
+                }
+            }
+        }
+        assert_eq!(args, r#"{"path":"a.rs"}"#);
+        let parsed: Value = serde_json::from_str(&args).expect("concatenated arguments parse");
+        assert_eq!(parsed["path"], "a.rs");
     }
 
     #[test]
