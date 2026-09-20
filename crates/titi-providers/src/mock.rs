@@ -100,16 +100,25 @@ pub enum MockBody {
 #[derive(Default)]
 pub struct MockTransport {
     bodies: Mutex<Vec<MockBody>>,
+    requests: Mutex<Vec<WireRequest>>,
     pub calls: std::sync::atomic::AtomicUsize,
 }
 
 impl MockTransport {
     pub fn new(bodies: Vec<MockBody>) -> Self {
-        Self { bodies: Mutex::new(bodies), calls: std::sync::atomic::AtomicUsize::new(0) }
+        Self {
+            bodies: Mutex::new(bodies),
+            requests: Mutex::new(Vec::new()),
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        }
     }
 
     pub fn call_count(&self) -> usize {
         self.calls.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    pub fn requests(&self) -> Vec<WireRequest> {
+        self.requests.lock().map(|guard| guard.clone()).unwrap_or_default()
     }
 }
 
@@ -129,10 +138,13 @@ impl Transport for MockTransport {
 
     async fn stream(
         &self,
-        _req: WireRequest,
+        req: WireRequest,
         _ctx: RequestCtx,
     ) -> Result<EventStream, TransportError> {
         self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        if let Ok(mut requests) = self.requests.lock() {
+            requests.push(req);
+        }
         let next = self
             .bodies
             .lock()

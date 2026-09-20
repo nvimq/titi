@@ -72,6 +72,12 @@ pub fn start_engine() -> Result<(Engine, Vec<String>), String> {
         .ok_or_else(|| "no models configured".to_owned())?;
     let mut engine_config = EngineConfig::new(primary.clone());
     engine_config.fallback_models = models.iter().skip(1).map(|id| id.clone().into()).collect();
+    if std::env::var_os("TITI_NO_GENOME").is_none() {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| ".".into());
+        if let Ok(genome) = titi_genome::Genome::index(&cwd) {
+            engine_config.genome = Some(genome.project(24));
+        }
+    }
     let runner = Arc::new(StreamingAgentRunner::new(
         Arc::clone(&registry) as _,
         primary.clone(),

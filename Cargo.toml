@@ -8,8 +8,9 @@ members = [
     "crates/titi-providers",
     "crates/titi-engine",
     "crates/titi-tools",
+    "crates/titi-genome",
     "crates/titi-tui",
-    "crates/titi-cli",
+      "crates/titi-cli",
 ]
 
 [workspace.package]
@@ -27,6 +28,7 @@ titi-soul = { path = "crates/titi-soul" }
 titi-memory = { path = "crates/titi-memory" }
 titi-secrets = { path = "crates/titi-secrets" }
 titi-tools = { path = "crates/titi-tools" }
+titi-genome = { path = "crates/titi-genome" }
 titi-tui = { path = "crates/titi-tui" }
 
 [workspace.lints.rust]

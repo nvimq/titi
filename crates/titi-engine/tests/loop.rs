@@ -6,7 +6,7 @@ use titi_engine::{
     TransportResolver,
 };
 use titi_providers::{
-    BlockId, MockBody, MockTransport, StopReason, StreamEvent, Transport, TransportError,
+    BlockId, MockBody, MockTransport, Role, StopReason, StreamEvent, Transport, TransportError,
 };
 
 struct MapResolver(HashMap<String, Arc<dyn Transport>>);
@@ -82,6 +82,62 @@ async fn streams_prompt_to_completion() {
             ..
         })
     ));
+}
+
+#[tokio::test]
+async fn genome_is_injected_as_system_message() {
+    let transport = Arc::new(MockTransport::new(vec![MockBody::Events(vec![
+        StreamEvent::TextDelta {
+            id: BlockId::new("text"),
+            text: "ok".into(),
+        },
+        StreamEvent::Done {
+            reason: StopReason::Stop,
+        },
+    ])]));
+    let mut config = EngineConfig::new("primary");
+    config.genome = Some("<genome>\nsrc/lib.rs:(→3)\n</genome>".to_owned());
+    let mut engine = EngineRuntime::start(
+        config,
+        resolver(vec![("primary", Arc::clone(&transport) as _)]),
+    );
+
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "hi".into() })
+        .await
+        .unwrap();
+    let _ = collect_until_terminal(&mut engine).await;
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 1);
+    let messages = &requests[0].messages;
+    assert_eq!(messages.len(), 2, "system + user");
+    assert_eq!(messages[0].role, Role::System);
+    assert!(messages[0].content.contains("src/lib.rs:(→3)"));
+    assert_eq!(messages[1].role, Role::User);
+    assert_eq!(messages[1].content, "hi");
+}
+
+#[tokio::test]
+async fn no_genome_means_prompt_only() {
+    let transport = Arc::new(MockTransport::new(vec![MockBody::Events(vec![
+        StreamEvent::Done {
+            reason: StopReason::Stop,
+        },
+    ])]));
+    let mut engine = EngineRuntime::start(
+        EngineConfig::new("primary"),
+        resolver(vec![("primary", Arc::clone(&transport) as _)]),
+    );
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "hi".into() })
+        .await
+        .unwrap();
+    let _ = collect_until_terminal(&mut engine).await;
+
+    let requests = transport.requests();
+    assert_eq!(requests[0].messages.len(), 1);
+    assert_eq!(requests[0].messages[0].role, Role::User);
 }
 
 #[tokio::test]
