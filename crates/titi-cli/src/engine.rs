@@ -5,6 +5,7 @@ use titi_engine::{
     ModelDescriptor, ProviderDescriptor, ProviderRegistry, ProviderRegistryConfig,
     StreamingAgentRunner,
 };
+use titi_tools::{EchoTool, ToolRegistry};
 use titi_providers::ApiKind;
 
 pub fn default_registry_config() -> ProviderRegistryConfig {
@@ -75,8 +76,10 @@ pub fn start_engine() -> Result<(Engine, Vec<String>), String> {
         Arc::clone(&registry) as _,
         primary.clone(),
     ));
-    Ok((
-        EngineRuntime::start_with_agents(engine_config, registry, runner),
+    let mut tools = ToolRegistry::new();
+      tools.register(Arc::new(EchoTool));
+      Ok((
+          EngineRuntime::start_with_agents_and_tools(engine_config, registry, runner, tools),
         models,
     ))
 }
