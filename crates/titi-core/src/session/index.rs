@@ -49,7 +49,8 @@ impl SessionIndex {
             std::fs::create_dir_all(parent).map_err(SessionError::Io)?;
         }
         let conn = Connection::open(path).map_err(SessionError::Db)?;
-        conn.execute_batch("PRAGMA journal_mode=WAL;").map_err(SessionError::Db)?;
+        conn.execute_batch("PRAGMA journal_mode=WAL;")
+            .map_err(SessionError::Db)?;
         conn.execute_batch(SCHEMA).map_err(SessionError::Db)?;
         Ok(Self { conn })
     }
@@ -156,34 +157,63 @@ mod tests {
     #[test]
     fn resume_latest_returns_newest_session() {
         let (_dir, index) = tmp_index();
-        assert_eq!(index.resume_latest().unwrap_or_else(|e| panic!("{e}")), None);
-        index.insert_session("s1", 100, &meta(None)).unwrap_or_else(|e| panic!("{e}"));
-        index.insert_session("s2", 200, &meta(None)).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(index.resume_latest().unwrap_or_else(|e| panic!("{e}")), Some("s2".into()));
+        assert_eq!(
+            index.resume_latest().unwrap_or_else(|e| panic!("{e}")),
+            None
+        );
+        index
+            .insert_session("s1", 100, &meta(None))
+            .unwrap_or_else(|e| panic!("{e}"));
+        index
+            .insert_session("s2", 200, &meta(None))
+            .unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(
+            index.resume_latest().unwrap_or_else(|e| panic!("{e}")),
+            Some("s2".into())
+        );
     }
 
     #[test]
     fn search_matches_phrase_and_prefix_tokens() {
         let (_dir, index) = tmp_index();
         let e = Entry::new(None, super::super::Role::User, "deploy kafka cluster");
-        index.insert_session("s1", 1, &meta(None)).unwrap_or_else(|e| panic!("{e}"));
-        index.index_entry("s1", &e).unwrap_or_else(|e| panic!("{e}"));
+        index
+            .insert_session("s1", 1, &meta(None))
+            .unwrap_or_else(|e| panic!("{e}"));
+        index
+            .index_entry("s1", &e)
+            .unwrap_or_else(|e| panic!("{e}"));
 
-        let hits = index.search("kafka", None).unwrap_or_else(|e| panic!("{e}"));
+        let hits = index
+            .search("kafka", None)
+            .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].entry_id, e.id);
 
         // Phrase matches only the exact token sequence, not arbitrary text.
-        assert!(index.search("kafka deploy", None).unwrap_or_else(|e| panic!("{e}")).is_empty());
-        assert!(index.search("deploy kafka", None).unwrap_or_else(|e| panic!("{e}")).len() == 1);
+        assert!(index
+            .search("kafka deploy", None)
+            .unwrap_or_else(|e| panic!("{e}"))
+            .is_empty());
+        assert!(
+            index
+                .search("deploy kafka", None)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .len()
+                == 1
+        );
     }
 
     #[test]
     fn fts_query_injection_is_neutralized() {
         let (_dir, index) = tmp_index();
         let e = Entry::new(None, super::super::Role::User, "safe text");
-        index.insert_session("s1", 1, &meta(None)).unwrap_or_else(|e| panic!("{e}"));
-        index.index_entry("s1", &e).unwrap_or_else(|e| panic!("{e}"));
+        index
+            .insert_session("s1", 1, &meta(None))
+            .unwrap_or_else(|e| panic!("{e}"));
+        index
+            .index_entry("s1", &e)
+            .unwrap_or_else(|e| panic!("{e}"));
         // Raw FTS5 grammar in user input must not error or escape the phrase.
         assert!(index
             .search("safe\" OR (1=1) AND \"", None)

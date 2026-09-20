@@ -329,7 +329,6 @@ impl DiscoveryEngine {
     }
 }
 
-
 /// Render one file for injection: blocked when injection patterns are found,
 /// otherwise truncated to `max_chars`.
 pub fn render_file(content: &str, display_name: &str, max_chars: usize) -> String {
@@ -457,12 +456,7 @@ pub fn resolve_imports(path: &Path, content: &str) -> std::io::Result<String> {
     expand(path, content, MAX_IMPORT_HOPS, &chain)
 }
 
-fn expand(
-    path: &Path,
-    content: &str,
-    hops: usize,
-    chain: &[PathBuf],
-) -> std::io::Result<String> {
+fn expand(path: &Path, content: &str, hops: usize, chain: &[PathBuf]) -> std::io::Result<String> {
     let dir = path
         .parent()
         .map(Path::to_path_buf)
@@ -483,12 +477,7 @@ fn expand(
     Ok(out)
 }
 
-fn expand_line(
-    line: &str,
-    dir: &Path,
-    hops: usize,
-    chain: &[PathBuf],
-) -> std::io::Result<String> {
+fn expand_line(line: &str, dir: &Path, hops: usize, chain: &[PathBuf]) -> std::io::Result<String> {
     let mut out = String::with_capacity(line.len());
     let mut chars = line.char_indices().peekable();
     while let Some((_, ch)) = chars.next() {
@@ -636,7 +625,12 @@ mod tests {
             .collect();
         assert_eq!(
             summaries,
-            vec![(2, "depth2"), (1, "depth1"), (0, "depth0"), (0, "user rules")],
+            vec![
+                (2, "depth2"),
+                (1, "depth1"),
+                (0, "depth0"),
+                (0, "user rules")
+            ],
             "farthest ancestors first, user file last"
         );
     }
@@ -719,8 +713,7 @@ mod tests {
         write(&docs.join("b.md"), "middle\n@c.md\n");
         write(&docs.join("c.md"), "leaf content\n");
 
-        let resolved =
-            resolve_imports(&docs.join("a.md"), "top\n@b.md\nend\n").unwrap_in_test();
+        let resolved = resolve_imports(&docs.join("a.md"), "top\n@b.md\nend\n").unwrap_in_test();
         assert!(resolved.contains("middle"));
         assert!(resolved.contains("leaf content"));
         assert!(!resolved.contains("@b.md"), "import token replaced");
@@ -758,13 +751,19 @@ mod tests {
         for i in 2..=6 {
             assert!(resolved.contains(&format!("body{i}")), "hop {i} expanded");
         }
-        assert!(!resolved.contains("deepest"), "sixth import is over the hop limit");
+        assert!(
+            !resolved.contains("deepest"),
+            "sixth import is over the hop limit"
+        );
     }
 
     #[test]
     fn imports_skip_fenced_code_blocks() {
         let repo = tempfile::tempdir().unwrap_in_test();
-        write(&repo.path().join("a.md"), "before\n```\n@b.md\n```\nafter\n");
+        write(
+            &repo.path().join("a.md"),
+            "before\n```\n@b.md\n```\nafter\n",
+        );
         write(&repo.path().join("b.md"), "b body\n");
 
         let content = "before\n```\n@b.md\n```\nafter\n";
@@ -890,11 +889,13 @@ mod tests {
         let mut engine = DiscoveryEngine::new();
         engine.disable_source("native");
         let block = engine.repo_rules_block(root, None, 10_000);
-        assert!(block.contains("clean claude body"), "clean file still injected");
+        assert!(
+            block.contains("clean claude body"),
+            "clean file still injected"
+        );
         assert!(!block.contains("[BLOCKED:"));
 
         let placeholder = injection_placeholder("AGENTS.md");
         assert!(placeholder.starts_with("[BLOCKED: AGENTS.md"));
     }
-
 }

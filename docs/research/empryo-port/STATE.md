@@ -28,6 +28,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Workspace tools: `read`/`write`/`edit`/`glob`/`grep`/`bash`, jailed to cwd.
 - Tool calls/results пишутся в `TrajectoryRecorder`, если sink открыт.
 - `LayeredCredentialSource`: process env → layered `.env` → `auth.db`.
+- CLI создаёт session + `TrajectoryRecorder` на старте; UserMessage/ToolCall/ToolResult/TurnEnd пишутся на диск.
+- `titi --headless` читает JSONL `{"command": EngineCommand}` со stdin и пишет `EngineEvent` в stdout.
 
 ## VERIFIED
 
@@ -51,6 +53,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `project check` после tool loop — PASS.
 - `titi-tools` fs tests: roundtrip, glob/grep, jail escape — PASS.
 - `project check` после workspace tools / trajectory / layered credentials — PASS.
+- `session_trajectory_records_user_tools_and_turn_end` PASS.
+- `engine_events_round_trip_as_jsonl` PASS.
+- `project check` после session trajectory + headless JSONL — PASS.
 
 ## DECISIONS
 
@@ -71,9 +76,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 
 ## NEXT
 
-1. Открывать `TrajectoryRecorder` на session start и flush на TurnEnd.
-2. Headless/RPC surface на том же EngineCommand/EngineEvent.
-3. Approval overlay в TUI для exec-tier tools.
+1. Approval overlay в TUI для exec-tier tools.
+2. Genome indexing (E3).
+3. Background agents / file claims (E4).
 
 ## Verification baseline
 

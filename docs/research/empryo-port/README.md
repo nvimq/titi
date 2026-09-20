@@ -110,7 +110,9 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 
 ### E2 — Session/headless
 
-JSONL/SQLite persistence, restore, checkpoints, JSON/events RPC, stable exit codes.
+- [x] Session-bound `TrajectoryRecorder` on engine start; UserMessage + TurnEnd + tool events persist.
+- [x] `titi --headless` JSONL surface: stdin `EngineCommand`, stdout `EngineEvent`.
+- [ ] Restore/checkpoints and versioned RPC framing.
 
 ### E3 — Genome
 
@@ -120,7 +122,7 @@ JSONL/SQLite persistence, restore, checkpoints, JSON/events RPC, stable exit cod
 
 Background dispatch, shared read cache, per-file write claims, findings bus, steering, fresh-context reviewer.
 
-Готовый foundation: engine protocol, provider registry, AgentSupervisor, StreamingAgentRunner, bounded tool loop, workspace tools, layered credentials. Следующий слой — session-bound trajectory, headless/RPC, TUI approval overlay.
+Готовый foundation: engine protocol, provider registry, tools, session trajectory, headless JSONL. Следующий слой — TUI approval overlay, Genome, background agents.
 
 ### E5 — GPUI desktop
 

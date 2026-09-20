@@ -164,7 +164,10 @@ impl CompactionPolicy {
         if !messages.is_empty() {
             first_kept = first_kept.min(messages.len() - 1);
         }
-        CompactionTarget { first_kept, total_tokens }
+        CompactionTarget {
+            first_kept,
+            total_tokens,
+        }
     }
 
     /// Runs the compaction chain over `history` when the threshold is
@@ -249,7 +252,10 @@ mod tests {
 
     impl MockSummarizer {
         fn failing(fail: &[Strategy]) -> Self {
-            Self { fail: fail.to_vec(), calls: Vec::new() }
+            Self {
+                fail: fail.to_vec(),
+                calls: Vec::new(),
+            }
         }
     }
 
@@ -318,7 +324,10 @@ mod tests {
             .unwrap_or_else(|e| panic!("{e}"))
             .unwrap_or_else(|| panic!("expected a compaction entry"));
         // The chain stopped at the first working strategy.
-        assert_eq!(s.calls, vec![Strategy::Remote, Strategy::SnapCompact, Strategy::Handoff]);
+        assert_eq!(
+            s.calls,
+            vec![Strategy::Remote, Strategy::SnapCompact, Strategy::Handoff]
+        );
         assert_eq!(entry.strategy, Strategy::Handoff);
         assert_eq!(entry.summary, "summary via handoff");
         // Boundary is the newest message: only it fit the tail budget.

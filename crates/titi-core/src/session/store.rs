@@ -30,8 +30,7 @@ impl SessionStore {
     /// Creates an empty session and returns its id.
     pub fn create(&self, meta: SessionMeta) -> Result<String, SessionError> {
         let id = entry::new_id();
-        File::create_new(self.session_file(&id))
-            .map_err(|e| SessionError::Io(e))?;
+        File::create_new(self.session_file(&id)).map_err(|e| SessionError::Io(e))?;
         self.index.insert_session(&id, entry::now_ms(), &meta)?;
         Ok(id)
     }
@@ -67,33 +66,29 @@ impl SessionStore {
     }
 
     /// Returns one entry by id.
-    pub fn entry(
-        &self,
-        session_id: &str,
-        entry_id: &str,
-    ) -> Result<Option<Entry>, SessionError> {
-        Ok(self.load(session_id)?.into_iter().find(|e| e.id == entry_id))
+    pub fn entry(&self, session_id: &str, entry_id: &str) -> Result<Option<Entry>, SessionError> {
+        Ok(self
+            .load(session_id)?
+            .into_iter()
+            .find(|e| e.id == entry_id))
     }
 
     /// Moves the leaf pointer to `from_entry_id` without touching history.
     /// The next [`append`](Self::append) becomes a child of that entry.
     pub fn fork(&self, session_id: &str, from_entry_id: &str) -> Result<(), SessionError> {
         if self.entry(session_id, from_entry_id)?.is_none() {
-            return Err(SessionError::NotFound(format!("{session_id}/{from_entry_id}")));
+            return Err(SessionError::NotFound(format!(
+                "{session_id}/{from_entry_id}"
+            )));
         }
         self.set_leaf(session_id, from_entry_id)
     }
 
     /// Path from the root to `leaf` (or the current leaf when `None`),
     /// oldest first. Cycle-safe: each id is visited at most once.
-    pub fn walk(
-        &self,
-        session_id: &str,
-        leaf: Option<&str>,
-    ) -> Result<Vec<Entry>, SessionError> {
+    pub fn walk(&self, session_id: &str, leaf: Option<&str>) -> Result<Vec<Entry>, SessionError> {
         let entries = self.load(session_id)?;
-        let by_id: HashMap<&str, &Entry> =
-            entries.iter().map(|e| (e.id.as_str(), e)).collect();
+        let by_id: HashMap<&str, &Entry> = entries.iter().map(|e| (e.id.as_str(), e)).collect();
         let mut cur = match leaf {
             Some(id) => Some(id.to_string()),
             None => self.current_leaf(session_id)?,
@@ -197,9 +192,12 @@ mod tests {
     fn jsonl_roundtrip_preserves_entries() {
         let (_dir, s) = store();
         let sid = s.create(meta("a")).unwrap_or_else(|e| panic!("{e}"));
-        let a = s.append(&sid, Role::User, "hello").unwrap_or_else(|e| panic!("{e}"));
-        let b =
-            s.append(&sid, Role::Assistant, "world").unwrap_or_else(|e| panic!("{e}"));
+        let a = s
+            .append(&sid, Role::User, "hello")
+            .unwrap_or_else(|e| panic!("{e}"));
+        let b = s
+            .append(&sid, Role::Assistant, "world")
+            .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(b.parent_id.as_deref(), Some(a.id.as_str()));
 
         // Raw file: one JSON object per line, in append order.
@@ -212,19 +210,27 @@ mod tests {
 
         // Reopening the store (fresh index connection) replays the same tree.
         let reopened = SessionStore::new(_dir.path()).unwrap_or_else(|e| panic!("{e}"));
-        assert_eq!(reopened.open(&sid).unwrap_or_else(|e| panic!("{e}")), vec![a, b]);
+        assert_eq!(
+            reopened.open(&sid).unwrap_or_else(|e| panic!("{e}")),
+            vec![a, b]
+        );
     }
 
     #[test]
     fn fork_moves_leaf_without_rewriting_history() {
         let (_dir, s) = store();
         let sid = s.create(meta("a")).unwrap_or_else(|e| panic!("{e}"));
-        let a = s.append(&sid, Role::User, "a").unwrap_or_else(|e| panic!("{e}"));
-        let b =
-            s.append(&sid, Role::Assistant, "b").unwrap_or_else(|e| panic!("{e}"));
+        let a = s
+            .append(&sid, Role::User, "a")
+            .unwrap_or_else(|e| panic!("{e}"));
+        let b = s
+            .append(&sid, Role::Assistant, "b")
+            .unwrap_or_else(|e| panic!("{e}"));
 
         s.fork(&sid, &a.id).unwrap_or_else(|e| panic!("{e}"));
-        let c = s.append(&sid, Role::User, "c").unwrap_or_else(|e| panic!("{e}"));
+        let c = s
+            .append(&sid, Role::User, "c")
+            .unwrap_or_else(|e| panic!("{e}"));
 
         // New append is a child of the fork target, not of the old leaf.
         assert_eq!(c.parent_id.as_deref(), Some(a.id.as_str()));
@@ -238,9 +244,12 @@ mod tests {
     fn walk_after_fork_follows_new_leaf() {
         let (_dir, s) = store();
         let sid = s.create(meta("a")).unwrap_or_else(|e| panic!("{e}"));
-        let a = s.append(&sid, Role::User, "a").unwrap_or_else(|e| panic!("{e}"));
-        let b =
-            s.append(&sid, Role::Assistant, "b").unwrap_or_else(|e| panic!("{e}"));
+        let a = s
+            .append(&sid, Role::User, "a")
+            .unwrap_or_else(|e| panic!("{e}"));
+        let b = s
+            .append(&sid, Role::Assistant, "b")
+            .unwrap_or_else(|e| panic!("{e}"));
 
         // Before fork: full path to current leaf.
         assert_eq!(
@@ -249,7 +258,9 @@ mod tests {
         );
 
         s.fork(&sid, &a.id).unwrap_or_else(|e| panic!("{e}"));
-        let c = s.append(&sid, Role::User, "c").unwrap_or_else(|e| panic!("{e}"));
+        let c = s
+            .append(&sid, Role::User, "c")
+            .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(
             s.walk(&sid, None).unwrap_or_else(|e| panic!("{e}")),
             vec![a.clone(), c.clone()]
@@ -259,7 +270,10 @@ mod tests {
             s.walk(&sid, Some(&b.id)).unwrap_or_else(|e| panic!("{e}")),
             vec![a.clone(), b]
         );
-        assert_eq!(s.walk(&sid, Some(&c.id)).unwrap_or_else(|e| panic!("{e}")), vec![a, c]);
+        assert_eq!(
+            s.walk(&sid, Some(&c.id)).unwrap_or_else(|e| panic!("{e}")),
+            vec![a, c]
+        );
     }
 
     #[test]
@@ -295,16 +309,25 @@ mod tests {
             .append(&sb, Role::User, "beta secret plan")
             .unwrap_or_else(|e| panic!("{e}"));
 
-        let for_a = s.search("secret", Some("bot-a")).unwrap_or_else(|e| panic!("{e}"));
+        let for_a = s
+            .search("secret", Some("bot-a"))
+            .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(for_a.len(), 1);
         assert_eq!(for_a[0].entry_id, ea.id);
         assert_ne!(for_a[0].session_id, sb);
 
-        let for_b = s.search("secret", Some("bot-b")).unwrap_or_else(|e| panic!("{e}"));
+        let for_b = s
+            .search("secret", Some("bot-b"))
+            .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(for_b.len(), 1);
         assert_eq!(for_b[0].entry_id, eb.id);
 
-        assert_eq!(s.search("secret", None).unwrap_or_else(|e| panic!("{e}")).len(), 2);
+        assert_eq!(
+            s.search("secret", None)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .len(),
+            2
+        );
     }
 
     #[test]
@@ -324,7 +347,9 @@ mod tests {
     fn torn_final_line_is_skipped_leniently() {
         let (_dir, s) = store();
         let sid = s.create(meta("a")).unwrap_or_else(|e| panic!("{e}"));
-        let a = s.append(&sid, Role::User, "intact").unwrap_or_else(|e| panic!("{e}"));
+        let a = s
+            .append(&sid, Role::User, "intact")
+            .unwrap_or_else(|e| panic!("{e}"));
         // Simulate kill -9 mid-write: append a torn line without newline.
         {
             let mut f = OpenOptions::new()
@@ -345,7 +370,10 @@ mod tests {
     #[test]
     fn unknown_session_errors_on_append_and_open() {
         let (_dir, s) = store();
-        assert!(matches!(s.append("ghost", Role::User, "x"), Err(SessionError::NotFound(_))));
+        assert!(matches!(
+            s.append("ghost", Role::User, "x"),
+            Err(SessionError::NotFound(_))
+        ));
         assert!(matches!(s.open("ghost"), Err(SessionError::NotFound(_))));
     }
 }

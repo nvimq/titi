@@ -33,23 +33,38 @@ static COUNTER: AtomicU16 = AtomicU16::new(0);
 impl Entry {
     /// Creates a new entry with a fresh ULID-like id and the current timestamp.
     pub fn new(parent_id: Option<String>, role: Role, content: impl Into<String>) -> Self {
-        Self { id: new_id(), parent_id, role, content: content.into(), ts: now_ms() }
+        Self {
+            id: new_id(),
+            parent_id,
+            role,
+            content: content.into(),
+            ts: now_ms(),
+        }
     }
 }
 
 /// Current time in milliseconds since the Unix epoch.
 pub(crate) fn now_ms() -> u64 {
-    SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_millis() as u64)
+        .unwrap_or(0)
 }
 
 /// Generates a ULID-like, lexicographically sortable 32-hex-char id:
 /// 48-bit millisecond timestamp, then subsecond nanos, a process-local
 /// counter, and the pid for cross-process entropy.
 pub(crate) fn new_id() -> String {
-    let now = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default();
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
     let ms = now.as_millis() as u64 & 0xFFFF_FFFF_FFFF;
     let counter = COUNTER.fetch_add(1, Ordering::Relaxed);
-    format!("{ms:012x}{:08x}{counter:04x}{:08x}", now.subsec_nanos(), std::process::id())
+    format!(
+        "{ms:012x}{:08x}{counter:04x}{:08x}",
+        now.subsec_nanos(),
+        std::process::id()
+    )
 }
 
 #[cfg(test)]
