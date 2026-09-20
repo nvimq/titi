@@ -1,12 +1,14 @@
 //! Session domain: append-only entry trees, JSONL persistence, SQLite/FTS5 index.
 
+pub mod checkpoint;
 pub mod entry;
 pub mod index;
 pub mod store;
 
+pub use checkpoint::Checkpoint;
 pub use entry::{Entry, Role};
 pub use index::{SearchHit, SessionIndex};
-pub use store::SessionStore;
+pub use store::{SessionStore, entries_to_messages};
 
 use std::fmt;
 

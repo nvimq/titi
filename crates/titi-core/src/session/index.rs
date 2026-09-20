@@ -122,6 +122,28 @@ impl SessionIndex {
         Ok(hits)
     }
 
+    /// Drops a session's indexed entries and re-indexes `entries`. Used after
+    /// a rewind shortens the persisted tree, so search cannot surface entries
+    /// that are no longer on disk.
+    pub fn reindex_session(&self, session_id: &str, entries: &[Entry]) -> Result<(), SessionError> {
+        self.conn
+            .execute(
+                "DELETE FROM entries WHERE session_id = ?1",
+                params![session_id],
+            )
+            .map_err(SessionError::Db)?;
+        self.conn
+            .execute(
+                "DELETE FROM entries_fts WHERE session_id = ?1",
+                params![session_id],
+            )
+            .map_err(SessionError::Db)?;
+        for entry in entries {
+            self.index_entry(session_id, entry)?;
+        }
+        Ok(())
+    }
+
     /// Id of the most recently created session, if any.
     pub fn resume_latest(&self) -> Result<Option<String>, SessionError> {
         self.conn

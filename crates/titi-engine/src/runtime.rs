@@ -45,6 +45,9 @@ pub struct EngineConfig {
     pub genome_root: Option<PathBuf>,
     /// Ranked files injected per prompt.
     pub genome_limit: usize,
+    /// Conversation replayed from a persisted session, prepended to every
+    /// prompt so a resumed session keeps its history.
+    pub restored_messages: Vec<ChatMessage>,
 }
 
 impl EngineConfig {
@@ -59,6 +62,7 @@ impl EngineConfig {
             approval_mode: ApprovalMode::Write,
             genome_root: None,
             genome_limit: 24,
+            restored_messages: Vec::new(),
         }
     }
 }
@@ -430,6 +434,8 @@ async fn run_turn(
                 tool_calls: Vec::new(),
             });
         }
+        // A resumed session replays its history before the new prompt.
+        messages.extend(config.restored_messages.iter().cloned());
         messages.push(ChatMessage {
             role: Role::User,
             content: prompt.clone(),

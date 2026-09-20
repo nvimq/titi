@@ -40,6 +40,10 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Personalized rank: `TouchedSink` собирает пути из `read`/`write`/`edit` tool calls, `project_with` даёт им ×3 буст.
 - CLI передаёт cwd как `genome_root`; `TITI_NO_GENOME=1` отключает.
 - `cargo run -p titi-genome --example map -- [path] [limit]` печатает карту вручную.
+- `SessionStore::restore_latest` → id + разговор по пути к текущему leaf (брошенные fork-ветки не попадают).
+- `entries_to_messages` конвертирует `Entry` → `titi_providers::ChatMessage`; `EngineConfig.restored_messages` подставляется перед user-prompt.
+- CLI при старте восстанавливает последнюю сессию, иначе создаёт новую.
+- Checkpoints: `checkpoint`/`checkpoints`/`rewind` поверх sidecar `<id>.checkpoints.jsonl`; rewind обрезает session JSONL до отмеченной точки, откатывает leaf, удаляет этот checkpoint и последующие и перестраивает FTS (`SessionIndex::reindex_session`).
 
 ## VERIFIED
 
@@ -80,6 +84,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Edge-тесты Genome: `zero_limit_still_emits_one_file`, `touched_path_outside_the_index_is_ignored`, `angle_bracket_names_cannot_forge_the_frame` — PASS.
 - `queued_prompts_each_get_a_well_formed_frame`: два SubmitPrompt подряд → оба request несут закрытый `<genome>…</genome>` — PASS.
 - `bcecd21 style: format workspace with rustfmt` — HEAD не проходил `cargo fmt --check` (498 диффов); теперь проходит.
+- `titi-core` session: `rewind_keeps_entries_up_to_the_checkpoint`, `rewind_drops_that_checkpoint_and_later_ones`, `rewind_removes_entries_from_search`, `rewind_to_an_unknown_point_is_not_found`, `restore_latest_replays_the_active_conversation`, `restore_latest_follows_the_fork_not_the_abandoned_branch` — PASS.
+- `titi-engine`: `restored_history_is_replayed_before_the_prompt` — PASS.
+- `cargo test --workspace` — 778 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS
@@ -106,8 +113,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 
 ## NEXT
 
-1. Genome: tree-sitter для остальных языков и symbol-level граф.
-2. Restore/checkpoints и versioned RPC framing (остаток E2).
+1. Versioned RPC framing в headless (остаток E2) + `/checkpoint` и `/rewind` в TUI.
+2. Genome: tree-sitter для остальных языков и symbol-level граф.
 3. Background agents / file claims (E4).
 
 ## Verification baseline

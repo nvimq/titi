@@ -113,7 +113,9 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 
 - [x] Session-bound `TrajectoryRecorder` on engine start; UserMessage + TurnEnd + tool events persist.
 - [x] `titi --headless` JSONL surface: stdin `EngineCommand`, stdout `EngineEvent`.
-- [ ] Restore/checkpoints and versioned RPC framing.
+- [x] Restore: `SessionStore::restore_latest` replays the newest session along the path to its leaf; `EngineConfig.restored_messages` prepends that history to every prompt, and the CLI resumes instead of starting blank.
+- [x] Checkpoints: `checkpoint`/`checkpoints`/`rewind` over a sidecar `<id>.checkpoints.jsonl`; a rewind truncates the session JSONL to the marked point, moves the leaf back, drops that checkpoint and later ones, and rebuilds the FTS index.
+- [ ] Versioned RPC framing.
 
 ### E3 — Genome
 

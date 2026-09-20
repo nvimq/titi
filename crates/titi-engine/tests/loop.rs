@@ -6,8 +6,8 @@ use titi_engine::{
     TransportResolver,
 };
 use titi_providers::{
-    BlockId, MockBody, MockTransport, Role, StopReason, StreamEvent, ToolCallRef, Transport,
-    TransportError,
+    BlockId, ChatMessage, MockBody, MockTransport, Role, StopReason, StreamEvent, ToolCallRef,
+    Transport, TransportError,
 };
 
 struct MapResolver(HashMap<String, Arc<dyn Transport>>);
@@ -280,6 +280,49 @@ async fn touched_file_leads_the_next_projection() {
         leaf_at < hub_at,
         "touched file must lead the map:\n{system}"
     );
+}
+
+#[tokio::test]
+async fn restored_history_is_replayed_before_the_prompt() {
+    let transport = Arc::new(MockTransport::new(vec![MockBody::Events(vec![
+        StreamEvent::Done {
+            reason: StopReason::Stop,
+        },
+    ])]));
+    let mut config = EngineConfig::new("primary");
+    config.restored_messages = vec![
+        ChatMessage {
+            role: Role::User,
+            content: "earlier question".into(),
+            tool_calls: Vec::new(),
+        },
+        ChatMessage {
+            role: Role::Assistant,
+            content: "earlier answer".into(),
+            tool_calls: Vec::new(),
+        },
+    ];
+    let mut engine = EngineRuntime::start(
+        config,
+        resolver(vec![("primary", Arc::clone(&transport) as _)]),
+    );
+    engine
+        .send(EngineCommand::SubmitPrompt {
+            text: "follow up".into(),
+        })
+        .await
+        .unwrap();
+    let _ = collect_until_terminal(&mut engine).await;
+
+    let requests = transport.requests();
+    let messages = &requests[0].messages;
+    assert_eq!(messages.len(), 3, "restored history plus the new prompt");
+    assert_eq!(messages[0].role, Role::User);
+    assert_eq!(messages[0].content, "earlier question");
+    assert_eq!(messages[1].role, Role::Assistant);
+    assert_eq!(messages[1].content, "earlier answer");
+    assert_eq!(messages[2].role, Role::User);
+    assert_eq!(messages[2].content, "follow up");
 }
 
 #[tokio::test]

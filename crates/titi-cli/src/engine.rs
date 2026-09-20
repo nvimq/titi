@@ -85,15 +85,26 @@ pub fn start_engine() -> Result<(Engine, Vec<String>), String> {
         tools.register(Arc::from(tool));
     }
     let agent_dir = titi_config::agent_dir();
-    let session_id = titi_core::session::store::SessionStore::new(&agent_dir)
-        .and_then(|store| {
-            store.create(titi_core::session::SessionMeta {
-                title: Some("titi".into()),
-                source: Some("cli".into()),
-                ..Default::default()
-            })
-        })
-        .unwrap_or_else(|_| "session".into());
+    // Resume the newest session and replay its history into the engine;
+    // otherwise start a fresh one.
+    let mut restored = Vec::new();
+    let session_id = match titi_core::session::store::SessionStore::new(&agent_dir) {
+        Ok(store) => match store.restore_latest() {
+            Ok(Some((id, entries))) => {
+                restored = titi_core::session::entries_to_messages(&entries);
+                id
+            }
+            _ => store
+                .create(titi_core::session::SessionMeta {
+                    title: Some("titi".into()),
+                    source: Some("cli".into()),
+                    ..Default::default()
+                })
+                .unwrap_or_else(|_| "session".into()),
+        },
+        Err(_) => "session".into(),
+    };
+    engine_config.restored_messages = restored;
     let recorder = titi_core::trajectory::TrajectoryRecorder::open(&agent_dir, &session_id).ok();
     let trajectory: TrajectorySink = std::sync::Arc::new(tokio::sync::Mutex::new(recorder));
     Ok((
