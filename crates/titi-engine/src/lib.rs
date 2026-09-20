@@ -5,6 +5,7 @@ pub mod claims;
 pub mod findings;
 pub mod protocol;
 pub mod registry;
+pub mod review;
 pub mod runtime;
 pub mod steering;
 pub mod tool_loop;
@@ -18,6 +19,7 @@ pub use registry::{
     ModelDescriptor, ProviderDescriptor, ProviderRegistry, ProviderRegistryConfig, RegistryError,
     ResolvedModel, TransportFactory,
 };
+pub use review::{AgentReviewer, REVIEWER_BRIEF, Review, ReviewRequest, Reviewer, Verdict};
 pub use runtime::{Engine, EngineConfig, EngineError, EngineRuntime, TransportResolver};
 pub use steering::{STEERING_CAPACITY, Steering};
 pub use tool_loop::{TOUCHING_TOOLS, TouchedSink, TrajectorySink};
