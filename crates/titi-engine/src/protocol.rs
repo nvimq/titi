@@ -33,6 +33,10 @@ pub enum EngineCommand {
     FollowUp {
         text: SmolStr,
     },
+    /// Redirect the running turn at its next step boundary, without aborting.
+    Steer {
+        text: SmolStr,
+    },
     Cancel,
     SwitchModel {
         model: SmolStr,

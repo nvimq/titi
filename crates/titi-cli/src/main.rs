@@ -357,6 +357,11 @@ fn apply_submit_effect(
                 text: prompt.into(),
             });
         }
+        SubmitEffect::Steer(prompt) => {
+            let _ = engine.try_send(EngineCommand::Steer {
+                text: prompt.into(),
+            });
+        }
         SubmitEffect::Copy(text) => {
             write!(stdout, "{}", osc52_copy(&text))?;
             stdout.flush()?;

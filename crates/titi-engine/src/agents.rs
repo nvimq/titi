@@ -9,6 +9,8 @@ use tokio::sync::{Mutex, mpsc};
 use futures::StreamExt;
 use titi_providers::{ChatMessage, RequestCtx, Role, StreamEvent, WireRequest};
 
+use crate::claims::Claims;
+use crate::findings::Findings;
 use crate::protocol::{AgentKind, AgentStatus, EngineEvent};
 use crate::runtime::TransportResolver;
 
@@ -26,11 +28,18 @@ pub struct AgentContext {
     agent_id: SmolStr,
     events: mpsc::Sender<EngineEvent>,
     aborted: Arc<AtomicBool>,
+    findings: Findings,
+    /// Files this agent may write; released when it stops.
+    claims: Claims,
 }
 
 impl AgentContext {
     pub fn is_aborted(&self) -> bool {
         self.aborted.load(Ordering::SeqCst)
+    }
+
+    pub fn agent_id(&self) -> &str {
+        &self.agent_id
     }
 
     pub async fn progress(&self, text: impl Into<SmolStr>) {
@@ -41,6 +50,21 @@ impl AgentContext {
                 text: text.into(),
             })
             .await;
+    }
+
+    /// Records something worth handing back to the parent.
+    pub fn finding(&self, text: impl Into<SmolStr>) -> u64 {
+        self.findings.push(self.agent_id.clone(), None, text)
+    }
+
+    /// Claims a file for this agent's writes.
+    pub fn claim(&self, path: &str) -> Result<SmolStr, crate::claims::ClaimError> {
+        self.claims.try_claim(path, &self.agent_id)
+    }
+
+    /// Releases every file this agent holds.
+    pub fn release_claims(&self) -> usize {
+        self.claims.release_all(&self.agent_id)
     }
 }
 
@@ -62,16 +86,41 @@ pub struct AgentSupervisor {
     events: mpsc::Sender<EngineEvent>,
     records: Arc<Mutex<HashMap<SmolStr, AgentRecord>>>,
     next_id: Arc<AtomicU64>,
+    claims: Claims,
+    findings: Findings,
 }
 
 impl AgentSupervisor {
     pub fn new(runner: Arc<dyn AgentRunner>, events: mpsc::Sender<EngineEvent>) -> Self {
+        Self::with_state(runner, events, Claims::new(), Findings::default())
+    }
+
+    /// Shares the runtime's claim table and findings bus, so a subagent's
+    /// writes and discoveries land where the parent looks for them.
+    pub fn with_state(
+        runner: Arc<dyn AgentRunner>,
+        events: mpsc::Sender<EngineEvent>,
+        claims: Claims,
+        findings: Findings,
+    ) -> Self {
         Self {
             runner,
             events,
             records: Arc::new(Mutex::new(HashMap::new())),
             next_id: Arc::new(AtomicU64::new(1)),
+            claims,
+            findings,
         }
+    }
+
+    /// The shared findings bus.
+    pub fn findings(&self) -> &Findings {
+        &self.findings
+    }
+
+    /// The shared write-claim table.
+    pub fn claims(&self) -> &Claims {
+        &self.claims
     }
 
     pub async fn spawn(&self, name: SmolStr, task: SmolStr, kind: AgentKind) -> SmolStr {
@@ -99,6 +148,8 @@ impl AgentSupervisor {
         record.aborted.store(true, Ordering::SeqCst);
         record.status = AgentStatus::Aborted;
         drop(records);
+        // A stopped agent must not leave its files locked.
+        self.claims.release_all(agent_id);
         let _ = self
             .events
             .send(EngineEvent::AgentStatusChanged {
@@ -153,6 +204,8 @@ impl AgentSupervisor {
                 agent_id: request.id.clone(),
                 events: supervisor.events.clone(),
                 aborted: Arc::clone(&aborted),
+                findings: supervisor.findings.clone(),
+                claims: supervisor.claims.clone(),
             };
             let result = supervisor.runner.run(request.clone(), context).await;
             if aborted.load(Ordering::SeqCst) {
@@ -165,6 +218,11 @@ impl AgentSupervisor {
             if let Some(record) = supervisor.records.lock().await.get_mut(&request.id) {
                 record.status = status;
             }
+            // The summary is the last finding the parent needs from this agent.
+            supervisor
+                .findings
+                .push(request.id.clone(), None, summary.clone());
+            supervisor.claims.release_all(&request.id);
             let _ = supervisor
                 .events
                 .send(EngineEvent::AgentStatusChanged {

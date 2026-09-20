@@ -107,6 +107,47 @@ fn hub_r_and_x_emit_engine_commands() {
 }
 
 #[test]
+fn typing_during_a_turn_steers_instead_of_queueing_a_new_turn() {
+    use titi_cli::app::SubmitEffect;
+
+    let mut app = app();
+    assert!(!app.turn_active());
+
+    // Idle: a submit is an ordinary prompt.
+    let mut input = "hello".to_owned();
+    let idle = app.handle_canonical("enter", &mut input);
+    assert!(
+        matches!(
+            idle,
+            titi_cli::app::Dispatch::Handled(Some(
+                SubmitEffect::Queued(_) | SubmitEffect::Delivered(_)
+            ))
+        ),
+        "{idle:?}"
+    );
+
+    // Running: the same submit becomes a steering message.
+    app.ingest_engine_event(EngineEvent::TurnStarted {
+        turn_id: TurnId(1),
+        model: "test/model".into(),
+    });
+    assert!(app.turn_active());
+    let mut input = "also check the tests".to_owned();
+    let running = app.handle_canonical("enter", &mut input);
+    assert_eq!(
+        running,
+        titi_cli::app::Dispatch::Handled(Some(SubmitEffect::Steer("also check the tests".into())))
+    );
+
+    // The turn ending returns to ordinary submission.
+    app.ingest_engine_event(EngineEvent::TurnFinished {
+        turn_id: TurnId(1),
+        reason: StopReason::Stop,
+    });
+    assert!(!app.turn_active());
+}
+
+#[test]
 fn tool_approval_needed_opens_overlay_and_emits_command() {
     let mut app = app();
     app.ingest_engine_event(EngineEvent::ToolApprovalNeeded {

@@ -12,11 +12,17 @@ use titi_providers::{
 use titi_tools::{ApprovalMode, ToolRegistry};
 use tokio::sync::mpsc;
 
+use crate::claims::Claims;
+use crate::findings::Findings;
 use crate::protocol::{EngineCommand, EngineEvent, TurnId};
 use crate::registry::{RegistryError, ResolvedModel};
+use crate::steering::Steering;
 use crate::tool_loop::{
     ApprovalWaiters, ToolCallCollector, TouchedSink, TrajectorySink, execute_tools,
 };
+
+/// Identity the main turn claims files under.
+const MAIN_AGENT: SmolStr = SmolStr::new_inline("Main");
 
 /// Resolves a model id to its provider transport.
 pub trait TransportResolver: Send + Sync + 'static {
@@ -77,6 +83,8 @@ pub enum EngineError {
 pub struct Engine {
     commands: mpsc::Sender<EngineCommand>,
     events: mpsc::Receiver<EngineEvent>,
+    claims: Claims,
+    findings: Findings,
 }
 
 impl Engine {
@@ -100,6 +108,17 @@ impl Engine {
             .try_send(command)
             .map_err(|_| EngineError::CommandChannelClosed)
     }
+
+    /// The runtime's write-claim table, so a surface can show who holds what
+    /// (or hold a file itself before dispatching work).
+    pub fn claims(&self) -> &Claims {
+        &self.claims
+    }
+
+    /// Findings subagents have reported, in order.
+    pub fn findings(&self) -> &Findings {
+        &self.findings
+    }
 }
 
 /// UI-independent command loop and turn scheduler.
@@ -117,6 +136,10 @@ pub struct EngineRuntime {
     genome: Arc<tokio::sync::Mutex<Option<Genome>>>,
     /// Files this session read or edited; boosts their rank in the projection.
     touched: TouchedSink,
+    /// Per-file write claims shared by every agent in this runtime.
+    claims: Claims,
+    /// Messages typed mid-flight, injected at the next step boundary.
+    steering: Steering,
 }
 
 impl EngineRuntime {
@@ -186,8 +209,19 @@ impl EngineRuntime {
     ) -> Engine {
         let (command_tx, command_rx) = mpsc::channel(config.command_capacity);
         let (event_tx, event_rx) = mpsc::channel(config.event_capacity);
-        let agents =
-            runner.map(|runner| crate::agents::AgentSupervisor::new(runner, event_tx.clone()));
+        let claims = Claims::new();
+        let findings = Findings::default();
+        // Subagents share the runtime's claim table and findings bus, so a
+        // child cannot write a file its parent holds and the parent can read
+        // what the child learned.
+        let agents = runner.map(|runner| {
+            crate::agents::AgentSupervisor::with_state(
+                runner,
+                event_tx.clone(),
+                claims.clone(),
+                findings.clone(),
+            )
+        });
         let runtime = Self {
             config,
             resolver,
@@ -200,11 +234,15 @@ impl EngineRuntime {
             trajectory,
             genome: Arc::new(tokio::sync::Mutex::new(None)),
             touched: TouchedSink::default(),
+            claims: claims.clone(),
+            steering: Steering::default(),
         };
         tokio::spawn(runtime.run());
         Engine {
             commands: command_tx,
             events: event_rx,
+            claims,
+            findings,
         }
     }
 
@@ -226,6 +264,11 @@ impl EngineRuntime {
                                 let system = self.genome_system().await;
                                   active = Some(self.spawn_turn(text, primary_model.clone(), system, done_tx.clone()));
                               }
+                        }
+                        EngineCommand::Steer { text } => {
+                            // Queued, not applied here: the running turn drains it at
+                            // its next step boundary, so steering never aborts work.
+                            self.steering.push(text);
                         }
                         EngineCommand::Cancel => {
                             if let Some((turn_id, aborted)) = active.take() {
@@ -344,6 +387,8 @@ impl EngineRuntime {
         let waiters = Arc::clone(&self.approval_waiters);
         let trajectory = Arc::clone(&self.trajectory);
         let touched = Arc::clone(&self.touched);
+        let claims = self.claims.clone();
+        let steering = self.steering.clone();
         tokio::spawn(async move {
             run_turn(
                 turn_id,
@@ -358,6 +403,8 @@ impl EngineRuntime {
                 waiters,
                 trajectory,
                 touched,
+                claims,
+                steering,
             )
             .await;
             let _ = done.send(turn_id).await;
@@ -379,6 +426,8 @@ async fn run_turn(
     waiters: ApprovalWaiters,
     trajectory: TrajectorySink,
     touched: TouchedSink,
+    claims: Claims,
+    steering: Steering,
 ) {
     let mut models = Vec::with_capacity(1 + config.fallback_models.len());
     models.push(primary_model);
@@ -443,6 +492,14 @@ async fn run_turn(
         });
         let mut tool_rounds = 0;
         loop {
+            // Anything typed mid-flight lands before the next attempt.
+            for text in steering.drain() {
+                messages.push(ChatMessage {
+                    role: Role::User,
+                    content: text,
+                    tool_calls: Vec::new(),
+                });
+            }
             let mut last_error = None;
             let mut completed = false;
             for _attempt in 0..=config.max_transient_retries {
@@ -484,6 +541,8 @@ async fn run_turn(
                             &aborted,
                             &trajectory,
                             &touched,
+                            &claims,
+                            &MAIN_AGENT,
                         )
                         .await;
                         messages.extend(extra);
