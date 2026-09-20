@@ -105,7 +105,8 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 - [x] Tool registry, schemas, approval tiers (`read`/`write`/`exec`).
 - [x] Bounded tool rounds + tool-result replay into the next provider request.
 - [x] `ApproveTool` gates exec-tier tools under `write`/`always-ask`.
-- [ ] Real filesystem/shell handlers and trajectory persistence.
+- [x] Real filesystem/shell handlers (`read`/`write`/`edit`/`glob`/`grep`/`bash`) jailed to cwd.
+- [x] Trajectory records ToolCall/ToolResult when a recorder is attached.
 
 ### E2 — Session/headless
 
@@ -119,7 +120,7 @@ JSONL/SQLite persistence, restore, checkpoints, JSON/events RPC, stable exit cod
 
 Background dispatch, shared read cache, per-file write claims, findings bus, steering, fresh-context reviewer.
 
-Готовый foundation: engine protocol, provider registry, AgentSupervisor, StreamingAgentRunner и bounded tool loop. Следующий слой — реальные tool handlers, trajectory, secrets store и headless/RPC.
+Готовый foundation: engine protocol, provider registry, AgentSupervisor, StreamingAgentRunner, bounded tool loop, workspace tools, layered credentials. Следующий слой — session-bound trajectory, headless/RPC, TUI approval overlay.
 
 ### E5 — GPUI desktop
 

@@ -2,6 +2,8 @@
 //!
 //! Spec: `docs/research/tools-core/README.md` and `docs/research/empryo-port/README.md` (E1).
 
+pub mod fs;
+
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -12,6 +14,10 @@ use titi_providers::ToolSpec;
 
 /// Crate version, mirrors the workspace release.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
+
+pub use fs::{
+    BashTool, EditFileTool, GlobTool, GrepTool, ReadFileTool, WriteFileTool, workspace_tools,
+};
 
 /// How dangerous a tool is. Unknown tools are treated as [`ApprovalTier::Exec`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

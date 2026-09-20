@@ -13,6 +13,7 @@ titi-core = { workspace = true }
 titi-engine = { workspace = true }
 titi-providers = { workspace = true }
 titi-config = { workspace = true }
+titi-secrets = { workspace = true }
 titi-tools = { workspace = true }
 titi-tui = { workspace = true }
 crossterm = "0.29"

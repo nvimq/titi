@@ -25,6 +25,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Hub `r`/`x` шлют `ReviveAgent`/`StopAgent` без закрытия overlay.
 - `titi-tools` содержит registry, approval tiers (`read`/`write`/`exec`) и режимы `always-ask`/`write`/`yolo`.
 - Engine исполняет bounded tool loop: collect toolcall triplet → approve → invoke → replay tool messages, cap `max_tool_rounds`.
+- Workspace tools: `read`/`write`/`edit`/`glob`/`grep`/`bash`, jailed to cwd.
+- Tool calls/results пишутся в `TrajectoryRecorder`, если sink открыт.
+- `LayeredCredentialSource`: process env → layered `.env` → `auth.db`.
 
 ## VERIFIED
 
@@ -46,6 +49,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-tools` unit tests PASS.
 - `titi-engine` tools tests: auto-approve read, exec waits for ApproveTool, round cap — PASS.
 - `project check` после tool loop — PASS.
+- `titi-tools` fs tests: roundtrip, glob/grep, jail escape — PASS.
+- `project check` после workspace tools / trajectory / layered credentials — PASS.
 
 ## DECISIONS
 
@@ -66,10 +71,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 
 ## NEXT
 
-1. Реальные read/edit/write/bash/glob/grep handlers вместо EchoTool.
-2. Trajectory log на каждый tool call.
-3. Читать credentials из secrets store, не только env.
-4. Headless/RPC surface на том же EngineCommand/EngineEvent.
+1. Открывать `TrajectoryRecorder` на session start и flush на TurnEnd.
+2. Headless/RPC surface на том же EngineCommand/EngineEvent.
+3. Approval overlay в TUI для exec-tier tools.
 
 ## Verification baseline
 

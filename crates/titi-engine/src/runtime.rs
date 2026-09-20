@@ -13,7 +13,7 @@ use tokio::sync::mpsc;
 
 use crate::protocol::{EngineCommand, EngineEvent, TurnId};
 use crate::registry::{RegistryError, ResolvedModel};
-use crate::tool_loop::{execute_tools, ApprovalWaiters, ToolCallCollector};
+use crate::tool_loop::{execute_tools, ApprovalWaiters, ToolCallCollector, TrajectorySink};
 
 /// Resolves a model id to its provider transport.
 pub trait TransportResolver: Send + Sync + 'static {
@@ -99,6 +99,7 @@ pub struct EngineRuntime {
     agents: Option<crate::agents::AgentSupervisor>,
       tools: ToolRegistry,
     approval_waiters: ApprovalWaiters,
+      trajectory: TrajectorySink,
 }
 
 impl EngineRuntime {
@@ -150,6 +151,7 @@ impl EngineRuntime {
             agents,
             tools,
             approval_waiters: ApprovalWaiters::default(),
+            trajectory: TrajectorySink::default(),
         };
         tokio::spawn(runtime.run());
         Engine {
@@ -271,17 +273,19 @@ impl EngineRuntime {
         let events = self.events.clone();
         let tools = self.tools.clone();
           let waiters = Arc::clone(&self.approval_waiters);
-          tokio::spawn(async move {
-              run_turn(
+          let trajectory = Arc::clone(&self.trajectory);
+            tokio::spawn(async move {
+                run_turn(
                 turn_id,
                 prompt,
                 primary_model,
                 config,
-                resolver,
+                  resolver,
                   events,
-                  task_abort,
+                    task_abort,
                 tools,
-                waiters,
+                  waiters,
+                  trajectory,
             )
             .await;
             let _ = done.send(turn_id).await;
@@ -300,6 +304,7 @@ async fn run_turn(
     aborted: Arc<AtomicBool>,
       tools: ToolRegistry,
     waiters: ApprovalWaiters,
+      trajectory: TrajectorySink,
 ) {
     let mut models = Vec::with_capacity(1 + config.fallback_models.len());
     models.push(primary_model);
@@ -388,6 +393,7 @@ async fn run_turn(
                             &waiters,
                             &events,
                             &aborted,
+                              &trajectory,
                         )
                         .await;
                         messages.extend(extra);

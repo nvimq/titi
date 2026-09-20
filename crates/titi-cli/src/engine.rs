@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
 use titi_engine::{
-    Engine, EngineConfig, EngineRuntime, EnvCredentialSource, HttpTransportFactory,
+    Engine, EngineConfig, EngineRuntime, HttpTransportFactory, LayeredCredentialSource,
     ModelDescriptor, ProviderDescriptor, ProviderRegistry, ProviderRegistryConfig,
     StreamingAgentRunner,
 };
-use titi_tools::{EchoTool, ToolRegistry};
+use titi_tools::{ToolRegistry, workspace_tools};
 use titi_providers::ApiKind;
 
 pub fn default_registry_config() -> ProviderRegistryConfig {
@@ -61,7 +61,7 @@ pub fn start_engine() -> Result<(Engine, Vec<String>), String> {
     let registry = Arc::new(
         ProviderRegistry::new(
             config,
-            Arc::new(EnvCredentialSource),
+            Arc::new(LayeredCredentialSource::from_defaults()),
             Arc::new(HttpTransportFactory),
         )
         .map_err(|error| error.to_string())?,
@@ -77,7 +77,9 @@ pub fn start_engine() -> Result<(Engine, Vec<String>), String> {
         primary.clone(),
     ));
     let mut tools = ToolRegistry::new();
-      tools.register(Arc::new(EchoTool));
+      for tool in workspace_tools(std::env::current_dir().unwrap_or_else(|_| ".".into())) {
+        tools.register(Arc::from(tool));
+      }
       Ok((
           EngineRuntime::start_with_agents_and_tools(engine_config, registry, runner, tools),
         models,

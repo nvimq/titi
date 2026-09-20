@@ -9,7 +9,10 @@ workspace = true
 
 [dependencies]
 async-trait = "0.1"
+titi-config = { workspace = true }
+titi-core = { workspace = true }
 titi-providers = { workspace = true }
+titi-secrets = { workspace = true }
 titi-tools = { workspace = true }
 futures = "0.3"
 serde = { version = "1", features = ["derive"] }
