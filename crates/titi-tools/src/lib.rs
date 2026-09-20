@@ -2,6 +2,7 @@
 //!
 //! Spec: `docs/research/tools-core/README.md` and `docs/research/reference-product-port/README.md` (E1).
 
+pub mod cache;
 pub mod fs;
 
 use std::collections::HashMap;
@@ -15,8 +16,10 @@ use titi_providers::ToolSpec;
 /// Crate version, mirrors the workspace release.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub use cache::{READ_CACHE_CAPACITY, ReadCache};
 pub use fs::{
     BashTool, EditFileTool, GlobTool, GrepTool, ReadFileTool, WriteFileTool, workspace_tools,
+    workspace_tools_with_cache,
 };
 
 /// How dangerous a tool is. Unknown tools are treated as [`ApprovalTier::Exec`].

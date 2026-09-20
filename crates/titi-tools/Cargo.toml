@@ -12,4 +12,5 @@ smol_str = { version = "0.3", features = ["serde"] }
 titi-providers = { workspace = true }
 
 [dev-dependencies]
+tempfile = "3"
 tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
