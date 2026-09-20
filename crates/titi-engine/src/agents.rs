@@ -34,6 +34,19 @@ pub struct AgentContext {
 }
 
 impl AgentContext {
+    /// A context for a one-shot run the supervisor does not own: progress goes
+    /// nowhere, nothing can abort it, and it holds no shared state.
+    pub fn detached() -> Self {
+        let (events, _receiver) = mpsc::channel(1);
+        Self {
+            agent_id: SmolStr::new_inline("detached"),
+            events,
+            aborted: Arc::new(AtomicBool::new(false)),
+            findings: Findings::default(),
+            claims: Claims::new(),
+        }
+    }
+
     pub fn is_aborted(&self) -> bool {
         self.aborted.load(Ordering::SeqCst)
     }
