@@ -7,7 +7,7 @@
 //! current cursor position.
 
 use crate::theme::{Theme, ThemeBg};
-use crate::width::{char_width, spans, Span};
+use crate::width::{Span, char_width, spans};
 
 /// A rectangular selection with an anchor and a moving cursor.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -143,8 +143,8 @@ fn is_full_reset(seq: &str) -> bool {
 mod tests {
     use super::*;
     use crate::theme::{ColorMode, SymbolPreset, Theme};
-    use std::collections::HashMap;
     use serde_json::json;
+    use std::collections::HashMap;
 
     fn test_theme() -> Theme {
         let mut fg = HashMap::new();
@@ -217,7 +217,11 @@ mod tests {
         // First row within selection vertical span (y=0) gets bg from col 1.
         let ansi = theme.get_bg_ansi(ThemeBg::SelectedBg);
         assert!(result[0].contains(&ansi), "first row bg: {:?}", &result[0]);
-        assert!(result[0].contains("\x1b[49m"), "bg closed: {:?}", &result[0]);
+        assert!(
+            result[0].contains("\x1b[49m"),
+            "bg closed: {:?}",
+            &result[0]
+        );
         // Second row outside selection (y=1 > bottom=0) unchanged.
         assert_eq!(result[1], "longer");
     }
@@ -264,9 +268,16 @@ mod tests {
         // closed at end.  The fg-reset inside (\x1b[39m) doesn't clear bg,
         // so no re-application needed.
         let fg_ansi = theme.get_fg_ansi(crate::theme::ThemeColor::Error);
-        assert!(result[0].starts_with(&format!("{fg_ansi}{ansi}")),
-            "fg then bg at start: {:?}", result[0]);
-        assert!(result[0].ends_with("\x1b[49m"), "bg closed: {:?}", result[0]);
+        assert!(
+            result[0].starts_with(&format!("{fg_ansi}{ansi}")),
+            "fg then bg at start: {:?}",
+            result[0]
+        );
+        assert!(
+            result[0].ends_with("\x1b[49m"),
+            "bg closed: {:?}",
+            result[0]
+        );
         // The fg-red "xy" text is still present.
         assert!(result[0].contains("xy"));
     }

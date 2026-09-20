@@ -183,7 +183,10 @@ fn stack_of(prefix: &str) -> Vec<char> {
 
 /// Byte offset of char index `n` in the original string.
 fn byte_offset(chars: &[char], n: usize) -> usize {
-    chars[..n.min(chars.len())].iter().map(|c| c.len_utf8()).sum()
+    chars[..n.min(chars.len())]
+        .iter()
+        .map(|c| c.len_utf8())
+        .sum()
 }
 
 /// Accumulating partial-JSON parser with throttled re-parsing.
@@ -253,22 +256,27 @@ mod tests {
 
     #[test]
     fn truncated_object_repairs() {
-        assert_eq!(relaxed_parse(r#"{"path":"/a/b","cont"#), json!({"path": "/a/b"}));
+        assert_eq!(
+            relaxed_parse(r#"{"path":"/a/b","cont"#),
+            json!({"path": "/a/b"})
+        );
         assert_eq!(relaxed_parse(r#"{"a":1,"b":"tw"#), json!({"a":1,"b":"tw"}));
     }
 
     #[test]
     fn truncated_nested_repairs() {
         assert_eq!(relaxed_parse(r#"{"a":{"b":[1,2"#), json!({"a":{"b":[1,2]}}));
-        assert_eq!(relaxed_parse(r#"{"tool":"ls","args":{"path":"x"#),
-            json!({"tool":"ls"}));
+        assert_eq!(
+            relaxed_parse(r#"{"tool":"ls","args":{"path":"x"#),
+            json!({"tool":"ls"})
+        );
     }
 
     #[test]
     fn dangling_separator_dropped() {
         assert_eq!(relaxed_parse(r#"{"a":1,"#), json!({"a":1}));
         assert_eq!(relaxed_parse(r#"{"a":"x","b":"#), json!({"a":"x"}));
-        assert_eq!(relaxed_parse(r#"[1,2,"#), json!([1,2]));
+        assert_eq!(relaxed_parse(r#"[1,2,"#), json!([1, 2]));
     }
 
     #[test]
@@ -282,12 +290,18 @@ mod tests {
 
     #[test]
     fn truncated_string_value_survives() {
-        assert_eq!(relaxed_parse(r#"{"msg":"hello wor"#), json!({"msg":"hello wor"}));
+        assert_eq!(
+            relaxed_parse(r#"{"msg":"hello wor"#),
+            json!({"msg":"hello wor"})
+        );
     }
 
     #[test]
     fn escaped_quote_in_truncated_string() {
-        assert_eq!(relaxed_parse(r#"{"msg":"say \"hi"#), json!({"msg":"say \"hi"}));
+        assert_eq!(
+            relaxed_parse(r#"{"msg":"say \"hi"#),
+            json!({"msg":"say \"hi"})
+        );
     }
 
     #[test]
@@ -312,10 +326,17 @@ mod tests {
     fn restore_from_truncated_full_object() {
         // Simulate streamed tool args arriving in pieces.
         let mut p = PartialJson::new();
-        for delta in [r#"{"path":"/a/b","#, r#""content":"hello world","#, r#""n":42}"#] {
+        for delta in [
+            r#"{"path":"/a/b","#,
+            r#""content":"hello world","#,
+            r#""n":42}"#,
+        ] {
             p.push(delta);
         }
-        assert_eq!(p.finalize(), json!({"path":"/a/b","content":"hello world","n":42}));
+        assert_eq!(
+            p.finalize(),
+            json!({"path":"/a/b","content":"hello world","n":42})
+        );
     }
 
     #[test]

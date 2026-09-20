@@ -28,10 +28,15 @@ pub struct SseDecoder {
 /// Decode one SSE text block (already line-split by the caller) into a frame.
 pub fn parse_frame(event_name: Option<&str>, data_lines: &[String]) -> SseFrame {
     if data_lines.is_empty() {
-        return SseFrame::Malformed { reason: "empty data payload".into() };
+        return SseFrame::Malformed {
+            reason: "empty data payload".into(),
+        };
     }
     let data = data_lines.join("\n");
-    SseFrame::Data { event: event_name.unwrap_or_default().into(), data: data.into() }
+    SseFrame::Data {
+        event: event_name.unwrap_or_default().into(),
+        data: data.into(),
+    }
 }
 
 /// Strip chat-template markers that leak into visible text (DeepSeek-class);
@@ -44,7 +49,10 @@ pub struct MarkerStripper {
 
 impl MarkerStripper {
     pub fn new(marker: &str) -> Self {
-        Self { marker: marker.to_owned(), pending: String::new() }
+        Self {
+            marker: marker.to_owned(),
+            pending: String::new(),
+        }
     }
 
     /// Feed text, return visible text (possibly empty).
@@ -99,7 +107,11 @@ impl SseDecoder {
     pub fn feed(&mut self, chunk: &[u8]) -> Vec<SseFrame> {
         let text = match std::str::from_utf8(chunk) {
             Ok(t) => t,
-            Err(e) => return vec![SseFrame::Malformed { reason: format!("invalid utf-8: {e}").into() }],
+            Err(e) => {
+                return vec![SseFrame::Malformed {
+                    reason: format!("invalid utf-8: {e}").into(),
+                }];
+            }
         };
         let mut out = Vec::new();
         // Normalize \r\n and \r to \n, keeping any trailing partial line in
@@ -109,7 +121,9 @@ impl SseDecoder {
         pending.push_str(rest);
         rest = &pending;
         loop {
-            let Some(idx) = find_line_end(rest) else { break };
+            let Some(idx) = find_line_end(rest) else {
+                break;
+            };
             let (line, next) = split_line(rest, idx);
             rest = next;
             if let Some(frame) = self.line(line) {
@@ -169,7 +183,6 @@ impl SseDecoder {
     }
 }
 
-
 fn find_line_end(s: &str) -> Option<usize> {
     s.find(['\n', '\r'])
 }
@@ -199,7 +212,13 @@ mod tests {
     #[test]
     fn basic_data_frame() {
         let f = frames("data: hello\n\n");
-        assert_eq!(f, vec![SseFrame::Data { event: "".into(), data: "hello".into() }]);
+        assert_eq!(
+            f,
+            vec![SseFrame::Data {
+                event: "".into(),
+                data: "hello".into()
+            }]
+        );
     }
 
     #[test]
@@ -207,7 +226,10 @@ mod tests {
         let f = frames("event: delta\ndata: line1\ndata: line2\n\n");
         assert_eq!(
             f,
-            vec![SseFrame::Data { event: "delta".into(), data: "line1\nline2".into() }]
+            vec![SseFrame::Data {
+                event: "delta".into(),
+                data: "line1\nline2".into()
+            }]
         );
     }
 
@@ -215,9 +237,27 @@ mod tests {
     fn crlf_and_bare_cr_line_endings() {
         let f = frames("data: a\r\rdata: b\r\n\rdata: c\n\n");
         assert_eq!(f.len(), 3);
-        assert_eq!(f[0], SseFrame::Data { event: "".into(), data: "a".into() });
-        assert_eq!(f[1], SseFrame::Data { event: "".into(), data: "b".into() });
-        assert_eq!(f[2], SseFrame::Data { event: "".into(), data: "c".into() });
+        assert_eq!(
+            f[0],
+            SseFrame::Data {
+                event: "".into(),
+                data: "a".into()
+            }
+        );
+        assert_eq!(
+            f[1],
+            SseFrame::Data {
+                event: "".into(),
+                data: "b".into()
+            }
+        );
+        assert_eq!(
+            f[2],
+            SseFrame::Data {
+                event: "".into(),
+                data: "c".into()
+            }
+        );
     }
 
     #[test]
@@ -226,13 +266,25 @@ mod tests {
         assert!(dec.feed(b"data: he").is_empty());
         assert!(dec.feed(b"llo\n").is_empty());
         let out = dec.feed(b"\n");
-        assert_eq!(out, vec![SseFrame::Data { event: "".into(), data: "hello".into() }]);
+        assert_eq!(
+            out,
+            vec![SseFrame::Data {
+                event: "".into(),
+                data: "hello".into()
+            }]
+        );
     }
 
     #[test]
     fn comments_and_unknown_fields_ignored() {
         let f = frames(": keep-alive\nid: 42\nretry: 100\ndata: x\n\n");
-        assert_eq!(f, vec![SseFrame::Data { event: "".into(), data: "x".into() }]);
+        assert_eq!(
+            f,
+            vec![SseFrame::Data {
+                event: "".into(),
+                data: "x".into()
+            }]
+        );
     }
 
     #[test]
@@ -250,15 +302,33 @@ mod tests {
         assert!(matches!(out[0], SseFrame::Malformed { .. }));
         // decoder still usable afterwards
         let out = dec.feed(b"data: ok\n\n");
-        assert_eq!(out[0], SseFrame::Data { event: "".into(), data: "ok".into() });
+        assert_eq!(
+            out[0],
+            SseFrame::Data {
+                event: "".into(),
+                data: "ok".into()
+            }
+        );
     }
 
     #[test]
     fn malformed_does_not_eat_subsequent_frames() {
         let f = frames("data: [BROKEN\n\ndata: good\n\n");
         assert_eq!(f.len(), 2);
-        assert_eq!(f[0], SseFrame::Data { event: "".into(), data: "[BROKEN".into() });
-        assert_eq!(f[1], SseFrame::Data { event: "".into(), data: "good".into() });
+        assert_eq!(
+            f[0],
+            SseFrame::Data {
+                event: "".into(),
+                data: "[BROKEN".into()
+            }
+        );
+        assert_eq!(
+            f[1],
+            SseFrame::Data {
+                event: "".into(),
+                data: "good".into()
+            }
+        );
     }
 
     #[test]
@@ -266,7 +336,13 @@ mod tests {
         let mut dec = SseDecoder::new();
         assert!(dec.feed(b"data: tail").is_empty());
         let out = dec.finish();
-        assert_eq!(out, Some(SseFrame::Data { event: "".into(), data: "tail".into() }));
+        assert_eq!(
+            out,
+            Some(SseFrame::Data {
+                event: "".into(),
+                data: "tail".into()
+            })
+        );
     }
 
     #[test]

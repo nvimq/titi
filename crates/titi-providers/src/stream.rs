@@ -63,17 +63,44 @@ pub enum ErrorReason {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum StreamEvent {
     Start,
-    TextStart { id: BlockId },
-    TextDelta { id: BlockId, text: SmolStr },
-    TextEnd { id: BlockId },
-    ThinkingStart { id: BlockId },
-    ThinkingDelta { id: BlockId, text: SmolStr },
-    ThinkingEnd { id: BlockId },
-    ToolcallStart { id: BlockId, call: ToolCallRef },
-    ToolcallDelta { id: BlockId, json: SmolStr },
-    ToolcallEnd { id: BlockId },
-    Done { reason: StopReason },
-    Error { reason: ErrorReason, message: SmolStr },
+    TextStart {
+        id: BlockId,
+    },
+    TextDelta {
+        id: BlockId,
+        text: SmolStr,
+    },
+    TextEnd {
+        id: BlockId,
+    },
+    ThinkingStart {
+        id: BlockId,
+    },
+    ThinkingDelta {
+        id: BlockId,
+        text: SmolStr,
+    },
+    ThinkingEnd {
+        id: BlockId,
+    },
+    ToolcallStart {
+        id: BlockId,
+        call: ToolCallRef,
+    },
+    ToolcallDelta {
+        id: BlockId,
+        json: SmolStr,
+    },
+    ToolcallEnd {
+        id: BlockId,
+    },
+    Done {
+        reason: StopReason,
+    },
+    Error {
+        reason: ErrorReason,
+        message: SmolStr,
+    },
 }
 
 impl StreamEvent {
@@ -98,9 +125,18 @@ mod tests {
 
     #[test]
     fn content_flag_covers_only_deltas() {
-        let text = StreamEvent::TextDelta { id: BlockId::new("b1"), text: "hi".into() };
-        let tool = StreamEvent::ToolcallDelta { id: BlockId::new("b2"), json: "{}".into() };
-        let thinking = StreamEvent::ThinkingDelta { id: BlockId::new("b3"), text: "hmm".into() };
+        let text = StreamEvent::TextDelta {
+            id: BlockId::new("b1"),
+            text: "hi".into(),
+        };
+        let tool = StreamEvent::ToolcallDelta {
+            id: BlockId::new("b2"),
+            json: "{}".into(),
+        };
+        let thinking = StreamEvent::ThinkingDelta {
+            id: BlockId::new("b3"),
+            text: "hmm".into(),
+        };
         let start = StreamEvent::Start;
         assert!(text.is_content());
         assert!(tool.is_content());
@@ -110,11 +146,26 @@ mod tests {
 
     #[test]
     fn terminal_flag() {
-        assert!(StreamEvent::Done { reason: StopReason::Stop }.is_terminal());
-        assert!(StreamEvent::Error { reason: ErrorReason::Malformed, message: "x".into() }
-            .is_terminal());
+        assert!(
+            StreamEvent::Done {
+                reason: StopReason::Stop
+            }
+            .is_terminal()
+        );
+        assert!(
+            StreamEvent::Error {
+                reason: ErrorReason::Malformed,
+                message: "x".into()
+            }
+            .is_terminal()
+        );
         assert!(!StreamEvent::Start.is_terminal());
-        assert!(!StreamEvent::TextEnd { id: BlockId::new("b") }.is_terminal());
+        assert!(
+            !StreamEvent::TextEnd {
+                id: BlockId::new("b")
+            }
+            .is_terminal()
+        );
     }
 
     #[test]

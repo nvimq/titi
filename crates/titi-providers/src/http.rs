@@ -1,8 +1,8 @@
 //! Abstract HTTP layer so every transport and test runs over an injectable
 //! byte-stream source; `reqwest` lives only behind [`HttpFetch`].
 
-use futures::future::BoxFuture;
 use futures::StreamExt;
+use futures::future::BoxFuture;
 use smol_str::SmolStr;
 
 use crate::transport::TransportError;
@@ -39,7 +39,8 @@ impl HttpResponse {
 /// Transport-agnostic HTTP sender. The only seam where real networking
 /// happens; tests substitute [`crate::mock::MockFetch`].
 pub trait HttpFetch: Send + Sync {
-    fn fetch<'a>(&'a self, req: HttpRequest) -> BoxFuture<'a, Result<HttpResponse, TransportError>>;
+    fn fetch<'a>(&'a self, req: HttpRequest)
+    -> BoxFuture<'a, Result<HttpResponse, TransportError>>;
 }
 
 /// Production [`HttpFetch`] backed by `reqwest` with rustls.
@@ -60,13 +61,17 @@ impl ReqwestFetch {
 }
 
 impl HttpFetch for ReqwestFetch {
-    fn fetch<'a>(&'a self, req: HttpRequest) -> BoxFuture<'a, Result<HttpResponse, TransportError>> {
+    fn fetch<'a>(
+        &'a self,
+        req: HttpRequest,
+    ) -> BoxFuture<'a, Result<HttpResponse, TransportError>> {
         Box::pin(async move {
-            let method = reqwest::Method::from_bytes(req.method.as_bytes())
-                .map_err(|e| TransportError::Fatal {
+            let method = reqwest::Method::from_bytes(req.method.as_bytes()).map_err(|e| {
+                TransportError::Fatal {
                     status: None,
                     message: format!("bad method: {e}").into(),
-                })?;
+                }
+            })?;
             let mut builder = self.client.request(method, req.url.as_str());
             for (k, v) in &req.headers {
                 builder = builder.header(k.as_str(), v.as_str());
@@ -74,10 +79,13 @@ impl HttpFetch for ReqwestFetch {
             if let Some(body) = req.body {
                 builder = builder.body(body);
             }
-            let resp = builder.send().await.map_err(|e| TransportError::Retryable {
-                status: None,
-                message: format!("request failed: {e}").into(),
-            })?;
+            let resp = builder
+                .send()
+                .await
+                .map_err(|e| TransportError::Retryable {
+                    status: None,
+                    message: format!("request failed: {e}").into(),
+                })?;
             let status = resp.status().as_u16();
             let headers = resp
                 .headers()
@@ -88,9 +96,15 @@ impl HttpFetch for ReqwestFetch {
                 })
                 .collect();
             let body = resp.bytes_stream().map(|chunk| {
-                chunk.map(|b| b.to_vec()).map_err(|e| format!("body read failed: {e}"))
+                chunk
+                    .map(|b| b.to_vec())
+                    .map_err(|e| format!("body read failed: {e}"))
             });
-            Ok(HttpResponse { status, headers, body: Box::pin(body) })
+            Ok(HttpResponse {
+                status,
+                headers,
+                body: Box::pin(body),
+            })
         })
     }
 }

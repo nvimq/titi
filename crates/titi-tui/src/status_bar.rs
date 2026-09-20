@@ -155,11 +155,17 @@ fn left_parts(theme: &Theme, snap: &StatusSnapshot) -> Vec<String> {
         };
         if snap.git_unstaged > 0 {
             git.push(' ');
-            git.push_str(&theme.fg(ThemeColor::StatusLineDirty, &format!("*{}", snap.git_unstaged)));
+            git.push_str(&theme.fg(
+                ThemeColor::StatusLineDirty,
+                &format!("*{}", snap.git_unstaged),
+            ));
         }
         if snap.git_staged > 0 {
             git.push(' ');
-            git.push_str(&theme.fg(ThemeColor::StatusLineStaged, &format!("+{}", snap.git_staged)));
+            git.push_str(&theme.fg(
+                ThemeColor::StatusLineStaged,
+                &format!("+{}", snap.git_staged),
+            ));
         }
         if snap.git_untracked > 0 {
             git.push(' ');
@@ -251,8 +257,12 @@ fn git_info(start: &Path) -> GitInfo {
     let Some((root, head_path, index_path)) = find_git(start) else {
         return empty;
     };
-    let head_mtime = std::fs::metadata(&head_path).ok().and_then(|m| m.modified().ok());
-    let index_mtime = std::fs::metadata(&index_path).ok().and_then(|m| m.modified().ok());
+    let head_mtime = std::fs::metadata(&head_path)
+        .ok()
+        .and_then(|m| m.modified().ok());
+    let index_mtime = std::fs::metadata(&index_path)
+        .ok()
+        .and_then(|m| m.modified().ok());
     if let Ok(guard) = git_cache().lock()
         && let Some(cached) = guard.as_ref()
         && cached.root == root
@@ -378,7 +388,7 @@ fn parse_porcelain(text: &str) -> (u32, u32, u32) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::theme::{global, Theme};
+    use crate::theme::{Theme, global};
 
     fn theme() -> std::sync::Arc<Theme> {
         global().init("titanium");
@@ -411,8 +421,14 @@ mod tests {
         let i_model = line.find(model).expect("model icon");
         let i_path = line.find("~/proj/titi").expect("path");
         let i_git = line.find(branch).expect("branch icon");
-        assert!(i_pi < i_model && i_model < i_path && i_path < i_git, "order: {line}");
-        assert!(!line.contains("agent"), "mode hidden unless Plan/Loop: {line}");
+        assert!(
+            i_pi < i_model && i_model < i_path && i_path < i_git,
+            "order: {line}"
+        );
+        assert!(
+            !line.contains("agent"),
+            "mode hidden unless Plan/Loop: {line}"
+        );
     }
 
     #[test]

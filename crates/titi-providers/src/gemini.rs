@@ -50,8 +50,9 @@ pub fn decode_chunk(
         }
     }
 
-    let Some(candidate) =
-        payload.pointer("/candidates/0") else { return events };
+    let Some(candidate) = payload.pointer("/candidates/0") else {
+        return events;
+    };
     let content = candidate.get("content");
     let parts = content
         .and_then(|c| c.get("parts"))
@@ -64,7 +65,10 @@ pub fn decode_chunk(
 
     if let Some(parts) = parts {
         for part in parts {
-            let thought = part.get("thought").and_then(Value::as_bool).unwrap_or(false);
+            let thought = part
+                .get("thought")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
             // Gemini tool calls arrive as complete functionCall parts.
             if let Some(call) = part.get("functionCall") {
                 let name = call.get("name").and_then(Value::as_str).unwrap_or_default();
@@ -77,7 +81,10 @@ pub fn decode_chunk(
                         name: name.into(),
                     },
                 });
-                let args = call.get("args").cloned().unwrap_or(Value::Object(Default::default()));
+                let args = call
+                    .get("args")
+                    .cloned()
+                    .unwrap_or(Value::Object(Default::default()));
                 events.push(StreamEvent::ToolcallDelta {
                     id: tool_id(index),
                     json: args.to_string().into(),
@@ -100,7 +107,10 @@ pub fn decode_chunk(
                         state.text_open = true;
                         events.push(StreamEvent::TextStart { id: text_id() });
                     }
-                    events.push(StreamEvent::TextDelta { id: text_id(), text: text.into() });
+                    events.push(StreamEvent::TextDelta {
+                        id: text_id(),
+                        text: text.into(),
+                    });
                 }
                 continue;
             }
@@ -161,7 +171,10 @@ mod tests {
             vec![
                 StreamEvent::Start,
                 StreamEvent::TextStart { id: text_id() },
-                StreamEvent::TextDelta { id: text_id(), text: "Hel".into() }
+                StreamEvent::TextDelta {
+                    id: text_id(),
+                    text: "Hel".into()
+                }
             ]
         );
         let ev = decode_chunk(
@@ -172,9 +185,14 @@ mod tests {
         assert_eq!(
             ev,
             vec![
-                StreamEvent::TextDelta { id: text_id(), text: "lo".into() },
+                StreamEvent::TextDelta {
+                    id: text_id(),
+                    text: "lo".into()
+                },
                 StreamEvent::TextEnd { id: text_id() },
-                StreamEvent::Done { reason: StopReason::Stop }
+                StreamEvent::Done {
+                    reason: StopReason::Stop
+                }
             ]
         );
     }
@@ -188,8 +206,14 @@ mod tests {
             &mut s,
             &policy,
         );
-        assert!(ev.iter().any(|e| matches!(e, StreamEvent::ThinkingDelta { .. })));
-        assert!(!ev.iter().any(|e| matches!(e, StreamEvent::TextDelta { .. })));
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, StreamEvent::ThinkingDelta { .. }))
+        );
+        assert!(
+            !ev.iter()
+                .any(|e| matches!(e, StreamEvent::TextDelta { .. }))
+        );
     }
 
     #[test]
@@ -202,7 +226,9 @@ mod tests {
             &policy,
         );
         assert!(matches!(&ev[1], StreamEvent::ToolcallStart { call, .. } if call.name == "search"));
-        assert!(matches!(&ev[2], StreamEvent::ToolcallDelta { json, .. } if json.contains("\"q\"")));
+        assert!(
+            matches!(&ev[2], StreamEvent::ToolcallDelta { json, .. } if json.contains("\"q\""))
+        );
         assert!(matches!(ev[3], StreamEvent::ToolcallEnd { .. }));
     }
 
@@ -219,10 +245,23 @@ mod tests {
             .pop()
             .expect("terminal")
         };
-        assert_eq!(check("STOP", &mut s), StreamEvent::Done { reason: StopReason::Stop });
-        assert_eq!(check("MAX_TOKENS", &mut s), StreamEvent::Done { reason: StopReason::Length });
+        assert_eq!(
+            check("STOP", &mut s),
+            StreamEvent::Done {
+                reason: StopReason::Stop
+            }
+        );
+        assert_eq!(
+            check("MAX_TOKENS", &mut s),
+            StreamEvent::Done {
+                reason: StopReason::Length
+            }
+        );
         assert!(matches!(check("SAFETY", &mut s), StreamEvent::Error { .. }));
-        assert!(matches!(check("MALFORMED_FUNCTION_CALL", &mut s), StreamEvent::Error { .. }));
+        assert!(matches!(
+            check("MALFORMED_FUNCTION_CALL", &mut s),
+            StreamEvent::Error { .. }
+        ));
         let _ = policy;
     }
 
@@ -234,6 +273,12 @@ mod tests {
             &mut s,
             &StreamDecodePolicy::default(),
         );
-        assert!(matches!(ev[0], StreamEvent::Error { reason: ErrorReason::Rejected, .. }));
+        assert!(matches!(
+            ev[0],
+            StreamEvent::Error {
+                reason: ErrorReason::Rejected,
+                ..
+            }
+        ));
     }
 }

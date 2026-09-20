@@ -84,9 +84,9 @@ impl ToolHandler for ReadFileTool {
         let Some(path) = arg_str(&args, "path") else {
             return err("missing path");
         };
-        match jail_path(&self.root, &path).and_then(|path| {
-            fs::read_to_string(path).map_err(|error| error.to_string())
-        }) {
+        match jail_path(&self.root, &path)
+            .and_then(|path| fs::read_to_string(path).map_err(|error| error.to_string()))
+        {
             Ok(content) => ok(content),
             Err(error) => err(error),
         }
@@ -380,9 +380,7 @@ mod tests {
         let read = ReadFileTool { root: root.clone() };
         let write = WriteFileTool { root: root.clone() };
         let edit = EditFileTool { root: root.clone() };
-        let content = read
-            .invoke(serde_json::json!({"path": "hello.txt"}))
-            .await;
+        let content = read.invoke(serde_json::json!({"path": "hello.txt"})).await;
         assert!(content.output.contains("hello"));
         let written = write
             .invoke(serde_json::json!({"path": "note.txt", "content": "alpha"}))
@@ -414,9 +412,7 @@ mod tests {
     async fn jail_rejects_escape() {
         let root = temp_root();
         let read = ReadFileTool { root };
-        let result = read
-            .invoke(serde_json::json!({"path": "../secret"}))
-            .await;
+        let result = read.invoke(serde_json::json!({"path": "../secret"})).await;
         assert!(result.is_error);
     }
 

@@ -14,12 +14,12 @@ pub struct ModelRef {
 }
 
 impl ModelRef {
-    pub fn new(
-        provider: impl Into<SmolStr>,
-        model: impl Into<SmolStr>,
-        api: ApiKind,
-    ) -> Self {
-        Self { provider: provider.into(), model: model.into(), api }
+    pub fn new(provider: impl Into<SmolStr>, model: impl Into<SmolStr>, api: ApiKind) -> Self {
+        Self {
+            provider: provider.into(),
+            model: model.into(),
+            api,
+        }
     }
 }
 
@@ -42,7 +42,12 @@ pub struct FallbackChain {
 
 impl FallbackChain {
     pub fn new(primary: ModelRef, backups: Vec<ModelRef>) -> Self {
-        Self { primary, backups, active: None, activated: false }
+        Self {
+            primary,
+            backups,
+            active: None,
+            activated: false,
+        }
     }
 
     /// Currently selected entry (primary until activation).
@@ -91,11 +96,17 @@ mod tests {
     }
 
     fn rate_limited() -> TransportError {
-        TransportError::Retryable { status: Some(429), message: "rate limited".into() }
+        TransportError::Retryable {
+            status: Some(429),
+            message: "rate limited".into(),
+        }
     }
 
     fn fatal() -> TransportError {
-        TransportError::Fatal { status: Some(401), message: "bad key".into() }
+        TransportError::Fatal {
+            status: Some(401),
+            message: "bad key".into(),
+        }
     }
 
     #[test]
@@ -148,7 +159,9 @@ mod tests {
     #[test]
     fn stall_error_is_retryable() {
         let mut c = chain();
-        let stalled = TransportError::Stalled { phase: crate::transport::StallPhase::Idle };
+        let stalled = TransportError::Stalled {
+            phase: crate::transport::StallPhase::Idle,
+        };
         assert!(c.next(&stalled).is_some());
     }
 
@@ -159,7 +172,10 @@ mod tests {
         // documenting + exercising the fatal-after-content path: providers
         // translate mid-stream breakage into a non-retryable turn error.
         let mut c = chain();
-        let mid_stream = TransportError::Fatal { status: None, message: "stream broke after deltas".into() };
+        let mid_stream = TransportError::Fatal {
+            status: None,
+            message: "stream broke after deltas".into(),
+        };
         assert!(c.next(&mid_stream).is_none());
         assert_eq!(c.current().provider, SmolStr::new("primary"));
     }

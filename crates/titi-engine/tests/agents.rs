@@ -123,7 +123,10 @@ async fn streaming_runner_reports_provider_progress() {
         },
     ])]));
     let resolver: Arc<dyn TransportResolver> = Arc::new(move |model: &str| {
-        Ok(ResolvedModel::without_credential(model, Arc::clone(&transport)))
+        Ok(ResolvedModel::without_credential(
+            model,
+            Arc::clone(&transport),
+        ))
     });
     let mut engine = EngineRuntime::start_with_agents(
         EngineConfig::new("unused"),
@@ -146,7 +149,9 @@ async fn streaming_runner_reports_provider_progress() {
             break;
         }
     }
-    assert!(events.iter().any(|event| matches!(event, EngineEvent::AgentProgress { text, .. } if text == "found it")));
+    assert!(events.iter().any(
+        |event| matches!(event, EngineEvent::AgentProgress { text, .. } if text == "found it")
+    ));
     assert!(matches!(
         events.last(),
         Some(EngineEvent::AgentFinished { success: true, summary, .. }) if summary == "found it"

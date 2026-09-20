@@ -5,10 +5,10 @@
 //! `/details <section> <mode>` switches visibility; floating-alert backstop
 //! when all sections are hidden.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use titi_cli::app::{default_theme, App};
+use titi_cli::app::{App, default_theme};
 use titi_tui::markdown::Section;
 use titi_tui::theme::Theme;
 

@@ -113,7 +113,7 @@ impl CredentialSource for LayeredCredentialSource {
                 level: LadderLevel::Env,
             });
         }
-          let store = titi_secrets::store::AuthStore::open(&self.store_path).ok()?;
+        let store = titi_secrets::store::AuthStore::open(&self.store_path).ok()?;
         let stored = store.get(provider.id.as_str()).ok()??;
         if stored.token.trim().is_empty() {
             return None;

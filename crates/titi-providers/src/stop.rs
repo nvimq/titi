@@ -40,9 +40,7 @@ pub fn map_stop_reason(family: ApiKind, wire: &str) -> StopMapping {
             "end_turn" | "stop_sequence" => StopMapping::Stop(StopReason::Stop),
             "max_tokens" => StopMapping::Stop(StopReason::Length),
             "tool_use" => StopMapping::Stop(StopReason::ToolUse),
-            "pause_turn" | "refusal" => {
-                StopMapping::Error(ErrorReason::Connection)
-            }
+            "pause_turn" | "refusal" => StopMapping::Error(ErrorReason::Connection),
             _ => StopMapping::Error(ErrorReason::Malformed),
         },
         ApiKind::OpenAiResponses => match wire {
@@ -86,10 +84,22 @@ mod tests {
     #[test]
     fn anthropic_table() {
         use ApiKind::AnthropicMessages as A;
-        assert_eq!(map_stop_reason(A, "end_turn"), StopMapping::Stop(StopReason::Stop));
-        assert_eq!(map_stop_reason(A, "stop_sequence"), StopMapping::Stop(StopReason::Stop));
-        assert_eq!(map_stop_reason(A, "max_tokens"), StopMapping::Stop(StopReason::Length));
-        assert_eq!(map_stop_reason(A, "tool_use"), StopMapping::Stop(StopReason::ToolUse));
+        assert_eq!(
+            map_stop_reason(A, "end_turn"),
+            StopMapping::Stop(StopReason::Stop)
+        );
+        assert_eq!(
+            map_stop_reason(A, "stop_sequence"),
+            StopMapping::Stop(StopReason::Stop)
+        );
+        assert_eq!(
+            map_stop_reason(A, "max_tokens"),
+            StopMapping::Stop(StopReason::Length)
+        );
+        assert_eq!(
+            map_stop_reason(A, "tool_use"),
+            StopMapping::Stop(StopReason::ToolUse)
+        );
         assert_eq!(
             map_stop_reason(A, "refusal"),
             StopMapping::Error(ErrorReason::Connection)
@@ -103,8 +113,14 @@ mod tests {
     #[test]
     fn openai_responses_table() {
         use ApiKind::OpenAiResponses as R;
-        assert_eq!(map_stop_reason(R, "completed"), StopMapping::Stop(StopReason::Stop));
-        assert_eq!(map_stop_reason(R, "incomplete"), StopMapping::Stop(StopReason::Length));
+        assert_eq!(
+            map_stop_reason(R, "completed"),
+            StopMapping::Stop(StopReason::Stop)
+        );
+        assert_eq!(
+            map_stop_reason(R, "incomplete"),
+            StopMapping::Stop(StopReason::Length)
+        );
         assert_eq!(
             map_stop_reason(R, "failed"),
             StopMapping::Error(ErrorReason::Rejected)
@@ -122,9 +138,18 @@ mod tests {
     #[test]
     fn openai_completions_table() {
         use ApiKind::OpenAiCompletions as C;
-        assert_eq!(map_stop_reason(C, "stop"), StopMapping::Stop(StopReason::Stop));
-        assert_eq!(map_stop_reason(C, "length"), StopMapping::Stop(StopReason::Length));
-        assert_eq!(map_stop_reason(C, "tool_calls"), StopMapping::Stop(StopReason::ToolUse));
+        assert_eq!(
+            map_stop_reason(C, "stop"),
+            StopMapping::Stop(StopReason::Stop)
+        );
+        assert_eq!(
+            map_stop_reason(C, "length"),
+            StopMapping::Stop(StopReason::Length)
+        );
+        assert_eq!(
+            map_stop_reason(C, "tool_calls"),
+            StopMapping::Stop(StopReason::ToolUse)
+        );
         assert_eq!(
             map_stop_reason(C, "function_call"),
             StopMapping::Stop(StopReason::ToolUse)
@@ -138,9 +163,18 @@ mod tests {
     #[test]
     fn gemini_table() {
         use ApiKind::GeminiGenerateContent as G;
-        assert_eq!(map_stop_reason(G, "STOP"), StopMapping::Stop(StopReason::Stop));
-        assert_eq!(map_stop_reason(G, "MAX_TOKENS"), StopMapping::Stop(StopReason::Length));
-        assert_eq!(map_stop_reason(G, "SAFETY"), StopMapping::Error(ErrorReason::Rejected));
+        assert_eq!(
+            map_stop_reason(G, "STOP"),
+            StopMapping::Stop(StopReason::Stop)
+        );
+        assert_eq!(
+            map_stop_reason(G, "MAX_TOKENS"),
+            StopMapping::Stop(StopReason::Length)
+        );
+        assert_eq!(
+            map_stop_reason(G, "SAFETY"),
+            StopMapping::Error(ErrorReason::Rejected)
+        );
         assert_eq!(
             map_stop_reason(G, "RECITATION"),
             StopMapping::Error(ErrorReason::Rejected)
@@ -149,12 +183,18 @@ mod tests {
             map_stop_reason(G, "MALFORMED_FUNCTION_CALL"),
             StopMapping::Error(ErrorReason::Malformed)
         );
-        assert_eq!(map_stop_reason(G, "OTHER"), StopMapping::Error(ErrorReason::Malformed));
+        assert_eq!(
+            map_stop_reason(G, "OTHER"),
+            StopMapping::Error(ErrorReason::Malformed)
+        );
     }
 
     #[test]
     fn as_stop_only_for_stop_branch() {
-        assert_eq!(StopMapping::Stop(StopReason::ToolUse).as_stop(), Some(StopReason::ToolUse));
+        assert_eq!(
+            StopMapping::Stop(StopReason::ToolUse).as_stop(),
+            Some(StopReason::ToolUse)
+        );
         assert_eq!(StopMapping::Error(ErrorReason::Rejected).as_stop(), None);
     }
 }

@@ -21,7 +21,10 @@ fn sample_registry() -> SlashRegistry {
     ] {
         reg.register_builtin(name, desc);
     }
-    reg.register_file("translate", "Translate the following to English:\n$ARGUMENTS");
+    reg.register_file(
+        "translate",
+        "Translate the following to English:\n$ARGUMENTS",
+    );
     reg.register_file("say", "Respond with: $1");
     reg
 }

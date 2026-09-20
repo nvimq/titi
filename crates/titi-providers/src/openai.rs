@@ -8,8 +8,8 @@ use crate::compat::StreamDecodePolicy;
 use crate::partial_json::PartialJson;
 use crate::sse::MarkerStripper;
 use crate::stop::map_stop_reason;
-use crate::transport::ApiKind;
 use crate::stream::{BlockId, StreamEvent, ToolCallRef};
+use crate::transport::ApiKind;
 
 /// Mutable decode state for one OpenAI-family stream.
 pub struct OpenAiStreamState {
@@ -108,7 +108,10 @@ pub fn decode_completions_chunk(
             state.thinking_opened = true;
             events.push(StreamEvent::ThinkingStart { id: thinking_id() });
         }
-        events.push(StreamEvent::ThinkingDelta { id: thinking_id(), text: text.into() });
+        events.push(StreamEvent::ThinkingDelta {
+            id: thinking_id(),
+            text: text.into(),
+        });
     }
 
     // Visible content.
@@ -135,7 +138,10 @@ pub fn decode_completions_chunk(
                 state.text_opened = true;
                 events.push(StreamEvent::TextStart { id: text_id() });
             }
-            events.push(StreamEvent::TextDelta { id: text_id(), text: stripped.into() });
+            events.push(StreamEvent::TextDelta {
+                id: text_id(),
+                text: stripped.into(),
+            });
         }
     }
 
@@ -151,13 +157,14 @@ pub fn decode_completions_chunk(
             if let Some(id) = tc.get("id").and_then(Value::as_str) {
                 state.tools[index].call_id = id.to_owned();
             }
-            if let Some(name) =
-                tc.get("function").and_then(|f| f.get("name")).and_then(Value::as_str)
+            if let Some(name) = tc
+                .get("function")
+                .and_then(|f| f.get("name"))
+                .and_then(Value::as_str)
             {
                 state.tools[index].name = name.to_owned();
             }
-            let started_now = !state.tools_opened[index]
-                && !state.tools[index].name.is_empty();
+            let started_now = !state.tools_opened[index] && !state.tools[index].name.is_empty();
             if started_now {
                 state.tools_opened[index] = true;
                 state.seen_tools = true;
@@ -170,8 +177,10 @@ pub fn decode_completions_chunk(
                     },
                 });
             }
-            if let Some(args) =
-                tc.get("function").and_then(|f| f.get("arguments")).and_then(Value::as_str)
+            if let Some(args) = tc
+                .get("function")
+                .and_then(|f| f.get("arguments"))
+                .and_then(Value::as_str)
             {
                 state.tools[index].args.push(args);
                 let buf = state.tools[index].args.buffer();
@@ -206,7 +215,10 @@ fn close_all(state: &mut OpenAiStreamState, wire_reason: &str) -> Vec<StreamEven
                 state.text_opened = true;
                 events.push(StreamEvent::TextStart { id: text_id() });
             }
-            events.push(StreamEvent::TextDelta { id: text_id(), text: tail.into() });
+            events.push(StreamEvent::TextDelta {
+                id: text_id(),
+                text: tail.into(),
+            });
         }
     }
     if state.text_opened {
@@ -249,10 +261,7 @@ pub fn decode_responses_event(
     state: &mut OpenAiStreamState,
     _policy: &StreamDecodePolicy,
 ) -> Vec<StreamEvent> {
-    let typ = payload
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or(event);
+    let typ = payload.get("type").and_then(Value::as_str).unwrap_or(event);
     let mut events = Vec::new();
     match typ {
         "response.created" => {
@@ -271,7 +280,10 @@ pub fn decode_responses_event(
                     state.text_opened = true;
                     events.push(StreamEvent::TextStart { id: text_id() });
                 }
-                events.push(StreamEvent::TextDelta { id: text_id(), text: text.into() });
+                events.push(StreamEvent::TextDelta {
+                    id: text_id(),
+                    text: text.into(),
+                });
             }
         }
         "response.reasoning_text.delta" | "response.reasoning_summary_text.delta" => {
@@ -284,7 +296,10 @@ pub fn decode_responses_event(
                     state.thinking_opened = true;
                     events.push(StreamEvent::ThinkingStart { id: thinking_id() });
                 }
-                events.push(StreamEvent::ThinkingDelta { id: thinking_id(), text: text.into() });
+                events.push(StreamEvent::ThinkingDelta {
+                    id: thinking_id(),
+                    text: text.into(),
+                });
             }
         }
         "response.function_call_arguments.delta" => {
@@ -292,8 +307,10 @@ pub fn decode_responses_event(
                 state.started = true;
                 events.push(StreamEvent::Start);
             }
-            let index =
-                payload.get("output_index").and_then(Value::as_u64).unwrap_or(0) as usize;
+            let index = payload
+                .get("output_index")
+                .and_then(Value::as_u64)
+                .unwrap_or(0) as usize;
             while state.tools.len() <= index {
                 let i = state.tools.len();
                 state.tools.push(OpenToolCall::new(i));
@@ -372,7 +389,10 @@ mod tests {
             ev,
             vec![
                 StreamEvent::TextStart { id: text_id() },
-                StreamEvent::TextDelta { id: text_id(), text: "Hel".into() }
+                StreamEvent::TextDelta {
+                    id: text_id(),
+                    text: "Hel".into()
+                }
             ]
         );
         let ev = decode_completions_chunk(
@@ -390,7 +410,9 @@ mod tests {
             ev,
             vec![
                 StreamEvent::TextEnd { id: text_id() },
-                StreamEvent::Done { reason: StopReason::Stop }
+                StreamEvent::Done {
+                    reason: StopReason::Stop
+                }
             ]
         );
     }
@@ -420,8 +442,16 @@ mod tests {
             &mut s,
             &policy,
         );
-        assert!(matches!(ev.last(), Some(StreamEvent::Done { reason: StopReason::ToolUse })));
-        assert!(ev.iter().any(|e| matches!(e, StreamEvent::ToolcallEnd { .. })));
+        assert!(matches!(
+            ev.last(),
+            Some(StreamEvent::Done {
+                reason: StopReason::ToolUse
+            })
+        ));
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, StreamEvent::ToolcallEnd { .. }))
+        );
     }
 
     #[test]
@@ -438,7 +468,12 @@ mod tests {
             &mut s,
             &policy,
         );
-        assert!(matches!(ev.last(), Some(StreamEvent::Done { reason: StopReason::ToolUse })));
+        assert!(matches!(
+            ev.last(),
+            Some(StreamEvent::Done {
+                reason: StopReason::ToolUse
+            })
+        ));
     }
 
     #[test]
@@ -483,13 +518,19 @@ mod tests {
             &mut s,
             &policy,
         );
-        assert!(ev.iter().any(|e| matches!(e, StreamEvent::ThinkingDelta { .. })));
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, StreamEvent::ThinkingDelta { .. }))
+        );
         let ev = decode_completions_chunk(
             &json!({"choices":[{"delta":{"content":"answer"}}]}),
             &mut s,
             &policy,
         );
-        assert!(ev.iter().any(|e| matches!(e, StreamEvent::TextDelta { .. })));
+        assert!(
+            ev.iter()
+                .any(|e| matches!(e, StreamEvent::TextDelta { .. }))
+        );
     }
 
     #[test]
@@ -513,7 +554,10 @@ mod tests {
             ev,
             vec![
                 StreamEvent::TextStart { id: text_id() },
-                StreamEvent::TextDelta { id: text_id(), text: "hi".into() }
+                StreamEvent::TextDelta {
+                    id: text_id(),
+                    text: "hi".into()
+                }
             ]
         );
         let ev = decode_responses_event(
@@ -526,7 +570,9 @@ mod tests {
             ev,
             vec![
                 StreamEvent::TextEnd { id: text_id() },
-                StreamEvent::Done { reason: StopReason::Stop }
+                StreamEvent::Done {
+                    reason: StopReason::Stop
+                }
             ]
         );
     }

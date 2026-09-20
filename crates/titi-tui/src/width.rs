@@ -295,7 +295,15 @@ pub fn wrap_text_with_ansi(line: &str, width: usize) -> Vec<String> {
             Span::Escape(seq) => {
                 // An escape forces a word flush so it is emitted in place and
                 // the SGR state at any later break is never ahead of the text.
-                flush_word(&mut word, &mut word_w, &mut cur, &mut col, &mut lines, &sgr, width);
+                flush_word(
+                    &mut word,
+                    &mut word_w,
+                    &mut cur,
+                    &mut col,
+                    &mut lines,
+                    &sgr,
+                    width,
+                );
                 if is_sgr(seq) {
                     if is_sgr_reset(seq) {
                         sgr = None;
@@ -308,7 +316,15 @@ pub fn wrap_text_with_ansi(line: &str, width: usize) -> Vec<String> {
             Span::Text(t) => {
                 for c in t.chars() {
                     if c.is_whitespace() {
-                        flush_word(&mut word, &mut word_w, &mut cur, &mut col, &mut lines, &sgr, width);
+                        flush_word(
+                            &mut word,
+                            &mut word_w,
+                            &mut cur,
+                            &mut col,
+                            &mut lines,
+                            &sgr,
+                            width,
+                        );
                         // Whitespace is dropped at a line end, not carried over.
                         let ww = char_width(c);
                         if col + ww <= width {
@@ -323,7 +339,15 @@ pub fn wrap_text_with_ansi(line: &str, width: usize) -> Vec<String> {
             }
         }
     }
-    flush_word(&mut word, &mut word_w, &mut cur, &mut col, &mut lines, &sgr, width);
+    flush_word(
+        &mut word,
+        &mut word_w,
+        &mut cur,
+        &mut col,
+        &mut lines,
+        &sgr,
+        width,
+    );
     lines.push(cur);
     lines
 }
@@ -434,7 +458,10 @@ mod tests {
             "\x1b[31mhello\x1b[0m"
         );
         // Line already self-contained: untouched, no extra reset.
-        assert_eq!(truncate_to_width("\x1b[31mhi\x1b[0m", 10), "\x1b[31mhi\x1b[0m");
+        assert_eq!(
+            truncate_to_width("\x1b[31mhi\x1b[0m", 10),
+            "\x1b[31mhi\x1b[0m"
+        );
         assert_eq!(truncate_to_width("hello", 10), "hello");
     }
 
@@ -449,7 +476,12 @@ mod tests {
 
     #[test]
     fn truncate_never_exceeds_width() {
-        let samples = ["plain", "\x1b[31m中文 emoji 👍 tail\x1b[0m", "a\tb", "\x1b[7trunc\x1b"];
+        let samples = [
+            "plain",
+            "\x1b[31m中文 emoji 👍 tail\x1b[0m",
+            "a\tb",
+            "\x1b[7trunc\x1b",
+        ];
         for s in samples {
             for w in 0..=12usize {
                 assert!(
@@ -508,7 +540,10 @@ mod tests {
     fn replace_tabs_advances_to_tab_stops() {
         assert_eq!(replace_tabs("a\tb"), "a       b");
         assert_eq!(replace_tabs("\t"), "        ");
-        assert_eq!(replace_tabs("\x1b[31m\tx\x1b[0m"), "\x1b[31m        x\x1b[0m");
+        assert_eq!(
+            replace_tabs("\x1b[31m\tx\x1b[0m"),
+            "\x1b[31m        x\x1b[0m"
+        );
     }
 
     #[test]
@@ -535,11 +570,14 @@ mod tests {
                 // Normalizing a wrapped line never needs to append a reset
                 // (trailing reset was intentionally left open; normalization
                 // closes it and keeps width unchanged since reset is 0-width).
-                assert!(visible_width(&wrapped) == visible_width(&{
-                    let mut l = wrapped.clone();
-                    normalize_ansi_boundary(&mut l);
-                    l
-                }));
+                assert!(
+                    visible_width(&wrapped)
+                        == visible_width(&{
+                            let mut l = wrapped.clone();
+                            normalize_ansi_boundary(&mut l);
+                            l
+                        })
+                );
             }
         }
     }

@@ -57,7 +57,11 @@ pub struct LadderCtx {
 /// Resolve a credential: first matching rung in ladder order wins.
 pub fn resolve_credential(ctx: &LadderCtx) -> Option<Credential> {
     let rungs = [
-        (LadderLevel::Runtime, &ctx.runtime_override, CredKind::ApiKey),
+        (
+            LadderLevel::Runtime,
+            &ctx.runtime_override,
+            CredKind::ApiKey,
+        ),
         (LadderLevel::Config, &ctx.config_key, CredKind::ApiKey),
         (LadderLevel::OAuth, &ctx.oauth_token, CredKind::BearerToken),
         (LadderLevel::LoginKey, &ctx.login_key, CredKind::ApiKey),
@@ -67,7 +71,11 @@ pub fn resolve_credential(ctx: &LadderCtx) -> Option<Credential> {
     ];
     for (level, v, kind) in rungs {
         if let Some(access) = v.clone() {
-            return Some(Credential { access, kind, level });
+            return Some(Credential {
+                access,
+                kind,
+                level,
+            });
         }
     }
     None
@@ -82,7 +90,9 @@ pub fn parse_env_file(content: &str, out: &mut std::collections::HashMap<SmolStr
         if line.is_empty() || line.starts_with('#') {
             continue;
         }
-        let Some((key, value)) = line.split_once('=') else { continue };
+        let Some((key, value)) = line.split_once('=') else {
+            continue;
+        };
         let key: SmolStr = key.trim().to_owned().into();
         if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || key.is_empty() {
             continue;
@@ -92,9 +102,7 @@ pub fn parse_env_file(content: &str, out: &mut std::collections::HashMap<SmolStr
         let value = value
             .strip_prefix('"')
             .and_then(|v| v.strip_suffix('"'))
-            .or_else(|| {
-                value.strip_prefix('\'').and_then(|v| v.strip_suffix('\''))
-            })
+            .or_else(|| value.strip_prefix('\'').and_then(|v| v.strip_suffix('\'')))
             .unwrap_or(value);
         out.entry(key).or_insert_with(|| value.to_owned().into());
     }
@@ -181,7 +189,11 @@ mod tests {
             level: LadderLevel::Env,
         };
         // Destructure exhaustively: any added field would break this.
-        let Credential { access, kind: _, level: _ } = cred;
+        let Credential {
+            access,
+            kind: _,
+            level: _,
+        } = cred;
         assert_eq!(access, "a");
     }
 

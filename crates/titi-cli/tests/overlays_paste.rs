@@ -9,12 +9,10 @@
 //!   line-by-line), long pastes collapse inline, a `.png` path becomes an
 //!   `[Image #N]` attachment.
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use titi_cli::app::{
-    default_theme, delete_session_from, list_sessions_from, model_choices, App,
-};
+use titi_cli::app::{App, default_theme, delete_session_from, list_sessions_from, model_choices};
 use titi_tui::composer::PASTE_INLINE_MAX_LINES;
 
 fn app() -> App {
@@ -42,7 +40,11 @@ fn paste_multiline_is_one_block() {
 fn paste_at_threshold_is_text_beyond_collapses() {
     let mut app = app();
     let six = "a\nb\nc\nd\ne\nf";
-    assert_eq!(app.paste(six), six, "≤ PASTE_INLINE_MAX_LINES stays verbatim");
+    assert_eq!(
+        app.paste(six),
+        six,
+        "≤ PASTE_INLINE_MAX_LINES stays verbatim"
+    );
 
     let seven = "a\nb\nc\nd\ne\nf\ng";
     assert_eq!(app.paste(seven), "a\n… (+1 lines)");
@@ -89,7 +91,6 @@ fn model_picker_esc_cancels_without_effect() {
     assert!(!app.overlay_open());
 }
 
-
 #[test]
 fn model_picker_type_to_filter_selects_glm() {
     let mut app = app();
@@ -118,7 +119,10 @@ fn overlay_frame_composites_picker_rows() {
         "composer boxRound bottom stays at the frame bottom: {last:?}"
     );
     let joined = rows.join("\n");
-    assert!(joined.contains("Model"), "compact picker title visible: {joined}");
+    assert!(
+        joined.contains("Model"),
+        "compact picker title visible: {joined}"
+    );
 }
 
 #[test]

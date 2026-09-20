@@ -30,19 +30,31 @@ pub struct KeybindingConflict {
 pub const TUI_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     (
         "tui.editor.cursorUp",
-        KeybindingDefinition { default_keys: &["up"], description: "Move cursor up" },
+        KeybindingDefinition {
+            default_keys: &["up"],
+            description: "Move cursor up",
+        },
     ),
     (
         "tui.editor.cursorDown",
-        KeybindingDefinition { default_keys: &["down"], description: "Move cursor down" },
+        KeybindingDefinition {
+            default_keys: &["down"],
+            description: "Move cursor down",
+        },
     ),
     (
         "tui.editor.cursorLeft",
-        KeybindingDefinition { default_keys: &["left", "ctrl+b"], description: "Move cursor left" },
+        KeybindingDefinition {
+            default_keys: &["left", "ctrl+b"],
+            description: "Move cursor left",
+        },
     ),
     (
         "tui.editor.cursorRight",
-        KeybindingDefinition { default_keys: &["right", "ctrl+f"], description: "Move cursor right" },
+        KeybindingDefinition {
+            default_keys: &["right", "ctrl+f"],
+            description: "Move cursor right",
+        },
     ),
     (
         "tui.editor.cursorWordLeft",
@@ -60,15 +72,24 @@ pub const TUI_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     ),
     (
         "tui.editor.cursorLineStart",
-        KeybindingDefinition { default_keys: &["home", "ctrl+a"], description: "Move to line start" },
+        KeybindingDefinition {
+            default_keys: &["home", "ctrl+a"],
+            description: "Move to line start",
+        },
     ),
     (
         "tui.editor.cursorLineEnd",
-        KeybindingDefinition { default_keys: &["end", "ctrl+e"], description: "Move to line end" },
+        KeybindingDefinition {
+            default_keys: &["end", "ctrl+e"],
+            description: "Move to line end",
+        },
     ),
     (
         "tui.editor.jumpForward",
-        KeybindingDefinition { default_keys: &["ctrl+]"], description: "Jump forward to character" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+]"],
+            description: "Jump forward to character",
+        },
     ),
     (
         "tui.editor.jumpBackward",
@@ -79,24 +100,41 @@ pub const TUI_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     ),
     (
         "tui.editor.pageUp",
-        KeybindingDefinition { default_keys: &["pageup"], description: "Page up" },
+        KeybindingDefinition {
+            default_keys: &["pageup"],
+            description: "Page up",
+        },
     ),
     (
         "tui.editor.pageDown",
-        KeybindingDefinition { default_keys: &["pagedown"], description: "Page down" },
+        KeybindingDefinition {
+            default_keys: &["pagedown"],
+            description: "Page down",
+        },
     ),
     (
         "tui.editor.deleteCharBackward",
-        KeybindingDefinition { default_keys: &["backspace"], description: "Delete character backward" },
+        KeybindingDefinition {
+            default_keys: &["backspace"],
+            description: "Delete character backward",
+        },
     ),
     (
         "tui.editor.deleteCharForward",
-        KeybindingDefinition { default_keys: &["delete", "ctrl+d"], description: "Delete character forward" },
+        KeybindingDefinition {
+            default_keys: &["delete", "ctrl+d"],
+            description: "Delete character forward",
+        },
     ),
     (
         "tui.editor.deleteWordBackward",
         KeybindingDefinition {
-            default_keys: &["ctrl+w", "alt+backspace", "ctrl+backspace", "super+alt+backspace"],
+            default_keys: &[
+                "ctrl+w",
+                "alt+backspace",
+                "ctrl+backspace",
+                "super+alt+backspace",
+            ],
             description: "Delete word backward",
         },
     ),
@@ -109,67 +147,115 @@ pub const TUI_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     ),
     (
         "tui.editor.deleteToLineStart",
-        KeybindingDefinition { default_keys: &["ctrl+u"], description: "Delete to line start" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+u"],
+            description: "Delete to line start",
+        },
     ),
     (
         "tui.editor.deleteToLineEnd",
-        KeybindingDefinition { default_keys: &["ctrl+k"], description: "Delete to line end" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+k"],
+            description: "Delete to line end",
+        },
     ),
     (
         "tui.editor.yank",
-        KeybindingDefinition { default_keys: &["ctrl+y"], description: "Yank" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+y"],
+            description: "Yank",
+        },
     ),
     (
         "tui.editor.yankPop",
-        KeybindingDefinition { default_keys: &["alt+y"], description: "Yank pop" },
+        KeybindingDefinition {
+            default_keys: &["alt+y"],
+            description: "Yank pop",
+        },
     ),
     (
         "tui.editor.undo",
-        KeybindingDefinition { default_keys: &["ctrl+-", "ctrl+_"], description: "Undo" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+-", "ctrl+_"],
+            description: "Undo",
+        },
     ),
     (
         "tui.editor.spellingSuggestions",
-        KeybindingDefinition { default_keys: &["ctrl+."], description: "Show spelling replacements" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+."],
+            description: "Show spelling replacements",
+        },
     ),
     (
         "tui.input.newLine",
-        KeybindingDefinition { default_keys: &["shift+enter", "ctrl+j"], description: "Insert newline" },
+        KeybindingDefinition {
+            default_keys: &["shift+enter", "ctrl+j"],
+            description: "Insert newline",
+        },
     ),
     (
         "tui.input.submit",
-        KeybindingDefinition { default_keys: &["enter"], description: "Submit input" },
+        KeybindingDefinition {
+            default_keys: &["enter"],
+            description: "Submit input",
+        },
     ),
     (
         "tui.input.tab",
-        KeybindingDefinition { default_keys: &["tab"], description: "Tab / autocomplete" },
+        KeybindingDefinition {
+            default_keys: &["tab"],
+            description: "Tab / autocomplete",
+        },
     ),
     (
         "tui.input.copy",
-        KeybindingDefinition { default_keys: &["ctrl+c"], description: "Copy selection" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+c"],
+            description: "Copy selection",
+        },
     ),
     (
         "tui.select.up",
-        KeybindingDefinition { default_keys: &["up"], description: "Move selection up" },
+        KeybindingDefinition {
+            default_keys: &["up"],
+            description: "Move selection up",
+        },
     ),
     (
         "tui.select.down",
-        KeybindingDefinition { default_keys: &["down"], description: "Move selection down" },
+        KeybindingDefinition {
+            default_keys: &["down"],
+            description: "Move selection down",
+        },
     ),
     (
         "tui.select.pageUp",
-        KeybindingDefinition { default_keys: &["pageup"], description: "Selection page up" },
+        KeybindingDefinition {
+            default_keys: &["pageup"],
+            description: "Selection page up",
+        },
     ),
     (
         "tui.select.pageDown",
-        KeybindingDefinition { default_keys: &["pagedown"], description: "Selection page down" },
+        KeybindingDefinition {
+            default_keys: &["pagedown"],
+            description: "Selection page down",
+        },
     ),
     (
         "tui.select.confirm",
-        KeybindingDefinition { default_keys: &["enter"], description: "Confirm selection" },
+        KeybindingDefinition {
+            default_keys: &["enter"],
+            description: "Confirm selection",
+        },
     ),
     (
         "tui.select.cancel",
-        KeybindingDefinition { default_keys: &["escape", "ctrl+c"], description: "Cancel selection" },
+        KeybindingDefinition {
+            default_keys: &["escape", "ctrl+c"],
+            description: "Cancel selection",
+        },
     ),
 ];
 
@@ -178,103 +264,178 @@ pub const TUI_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
 pub const APP_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
     (
         "app.interrupt",
-        KeybindingDefinition { default_keys: &["ctrl+c"], description: "Interrupt / exit" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+c"],
+            description: "Interrupt / exit",
+        },
     ),
     (
         "app.model.cycleForward",
-        KeybindingDefinition { default_keys: &["ctrl+p"], description: "Cycle role models forward" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+p"],
+            description: "Cycle role models forward",
+        },
     ),
     (
         "app.model.cycleBackward",
-        KeybindingDefinition { default_keys: &["ctrl+shift+p"], description: "Cycle role models backward" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+shift+p"],
+            description: "Cycle role models backward",
+        },
     ),
     (
         "app.model.selectTemporary",
-        KeybindingDefinition { default_keys: &["alt+p"], description: "Pick a model temporarily" },
+        KeybindingDefinition {
+            default_keys: &["alt+p"],
+            description: "Pick a model temporarily",
+        },
     ),
     (
         "app.model.select",
-        KeybindingDefinition { default_keys: &["alt+m"], description: "Open the model selector" },
+        KeybindingDefinition {
+            default_keys: &["alt+m"],
+            description: "Open the model selector",
+        },
     ),
     (
         "app.plan.toggle",
-        KeybindingDefinition { default_keys: &["alt+shift+p"], description: "Toggle plan mode" },
+        KeybindingDefinition {
+            default_keys: &["alt+shift+p"],
+            description: "Toggle plan mode",
+        },
     ),
     (
         "app.history.search",
-        KeybindingDefinition { default_keys: &["ctrl+r"], description: "Search prompt history" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+r"],
+            description: "Search prompt history",
+        },
     ),
     (
         "app.tools.expand",
-        KeybindingDefinition { default_keys: &["ctrl+o"], description: "Toggle tool-output expansion" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+o"],
+            description: "Toggle tool-output expansion",
+        },
     ),
     (
         "app.tools.toggleVisibility",
-        KeybindingDefinition { default_keys: &["ctrl+shift+o"], description: "Show or hide tool activity" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+shift+o"],
+            description: "Show or hide tool activity",
+        },
     ),
     (
         "app.thinking.toggle",
-        KeybindingDefinition { default_keys: &["ctrl+t"], description: "Toggle thinking-block visibility" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+t"],
+            description: "Toggle thinking-block visibility",
+        },
     ),
     (
         "app.thinking.cycle",
-        KeybindingDefinition { default_keys: &["shift+tab"], description: "Cycle thinking level" },
+        KeybindingDefinition {
+            default_keys: &["shift+tab"],
+            description: "Cycle thinking level",
+        },
     ),
     (
         "app.editor.external",
-        KeybindingDefinition { default_keys: &["ctrl+g"], description: "Edit the draft in $VISUAL / $EDITOR" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+g"],
+            description: "Edit the draft in $VISUAL / $EDITOR",
+        },
     ),
     (
         "app.message.followUp",
-        KeybindingDefinition { default_keys: &["ctrl+q", "ctrl+enter"], description: "Queue a follow-up message" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+q", "ctrl+enter"],
+            description: "Queue a follow-up message",
+        },
     ),
     (
         "app.message.dequeue",
-        KeybindingDefinition { default_keys: &["alt+up", "shift+up"], description: "Dequeue a queued message back into the editor" },
+        KeybindingDefinition {
+            default_keys: &["alt+up", "shift+up"],
+            description: "Dequeue a queued message back into the editor",
+        },
     ),
     (
         "app.retry",
-        KeybindingDefinition { default_keys: &["alt+r"], description: "Retry the last failed assistant turn" },
+        KeybindingDefinition {
+            default_keys: &["alt+r"],
+            description: "Retry the last failed assistant turn",
+        },
     ),
     (
         "app.display.reset",
-        KeybindingDefinition { default_keys: &["alt+l"], description: "Reset terminal display" },
+        KeybindingDefinition {
+            default_keys: &["alt+l"],
+            description: "Reset terminal display",
+        },
     ),
     (
         "app.clipboard.copyLine",
-        KeybindingDefinition { default_keys: &["alt+shift+l"], description: "Copy the current line" },
+        KeybindingDefinition {
+            default_keys: &["alt+shift+l"],
+            description: "Copy the current line",
+        },
     ),
     (
         "app.clipboard.copyPrompt",
-        KeybindingDefinition { default_keys: &["alt+shift+c"], description: "Copy the whole prompt" },
+        KeybindingDefinition {
+            default_keys: &["alt+shift+c"],
+            description: "Copy the whole prompt",
+        },
     ),
     (
         "app.clipboard.pasteTextRaw",
-        KeybindingDefinition { default_keys: &["ctrl+shift+v", "alt+shift+v"], description: "Paste clipboard text without collapsing" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+shift+v", "alt+shift+v"],
+            description: "Paste clipboard text without collapsing",
+        },
     ),
     (
         "app.clipboard.pasteImage",
-        KeybindingDefinition { default_keys: &["ctrl+v"], description: "Paste from the clipboard (image preferred)" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+v"],
+            description: "Paste from the clipboard (image preferred)",
+        },
     ),
     (
         "app.stt.toggle",
-        KeybindingDefinition { default_keys: &[], description: "Toggle speech-to-text (default gesture: hold Space)" },
+        KeybindingDefinition {
+            default_keys: &[],
+            description: "Toggle speech-to-text (default gesture: hold Space)",
+        },
     ),
     (
         "app.live.toggle",
-        KeybindingDefinition { default_keys: &["ctrl+l"], description: "Start or stop live voice mode" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+l"],
+            description: "Start or stop live voice mode",
+        },
     ),
     (
         "app.agents.hub",
-        KeybindingDefinition { default_keys: &["alt+a"], description: "Open the Agent Hub" },
+        KeybindingDefinition {
+            default_keys: &["alt+a"],
+            description: "Open the Agent Hub",
+        },
     ),
     (
         "app.session.observe",
-        KeybindingDefinition { default_keys: &["ctrl+s"], description: "Open the Agent Hub" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+s"],
+            description: "Open the Agent Hub",
+        },
     ),
     (
         "app.session.switch",
-        KeybindingDefinition { default_keys: &["ctrl+x"], description: "Open the session switcher" },
+        KeybindingDefinition {
+            default_keys: &["ctrl+x"],
+            description: "Open the session switcher",
+        },
     ),
 ];
 
@@ -327,7 +488,10 @@ impl Default for KeybindingsManager {
 
 impl KeybindingsManager {
     /// Build a manager from a definitions table and user bindings.
-    pub fn new(definitions: &[(&str, KeybindingDefinition)], user_bindings: KeybindingsConfig) -> Self {
+    pub fn new(
+        definitions: &[(&str, KeybindingDefinition)],
+        user_bindings: KeybindingsConfig,
+    ) -> Self {
         let mut defs = HashMap::new();
         for (id, definition) in definitions {
             defs.insert((*id).to_owned(), definition.clone());
@@ -355,7 +519,10 @@ impl KeybindingsManager {
                 continue;
             }
             for key in keys {
-                user_claims.entry(key.clone()).or_default().push(keybinding.clone());
+                user_claims
+                    .entry(key.clone())
+                    .or_default()
+                    .push(keybinding.clone());
             }
         }
         for (key, mut keybindings) in user_claims {
@@ -548,7 +715,9 @@ pub fn parse_keybindings_config(raw: &str) -> KeybindingsConfig {
     let mut config = KeybindingsConfig::new();
     if let serde_yaml::Value::Mapping(map) = value {
         for (key, val) in map {
-            let serde_yaml::Value::String(action) = key else { continue };
+            let serde_yaml::Value::String(action) = key else {
+                continue;
+            };
             if let Some(keys) = yaml_value_to_keys(&val) {
                 config.insert(action, keys);
             }
@@ -596,7 +765,11 @@ pub fn serialize_keybindings_config(config: &KeybindingsConfig) -> String {
         if keys.len() == 1 {
             out.push_str(&format!("{id}: {}\n", keys[0]));
         } else {
-            let list = keys.iter().map(|k| format!("{k:?}")).collect::<Vec<_>>().join(", ");
+            let list = keys
+                .iter()
+                .map(|k| format!("{k:?}"))
+                .collect::<Vec<_>>()
+                .join(", ");
             out.push_str(&format!("{id}: [{list}]\n"));
         }
     }
@@ -614,7 +787,10 @@ mod tests {
     #[test]
     fn does_not_evict_selector_confirm_when_input_submit_rebound() {
         let mut user = KeybindingsConfig::new();
-        user.insert("tui.input.submit".to_owned(), vec!["enter".to_owned(), "ctrl+enter".to_owned()]);
+        user.insert(
+            "tui.input.submit".to_owned(),
+            vec!["enter".to_owned(), "ctrl+enter".to_owned()],
+        );
         let kb = manager(user);
         assert_eq!(kb.get_keys("tui.input.submit"), vec!["enter", "ctrl+enter"]);
         assert_eq!(kb.get_keys("tui.select.confirm"), vec!["enter"]);
@@ -623,7 +799,10 @@ mod tests {
     #[test]
     fn does_not_evict_cursor_bindings_when_another_action_reuses_key() {
         let mut user = KeybindingsConfig::new();
-        user.insert("tui.select.up".to_owned(), vec!["up".to_owned(), "ctrl+p".to_owned()]);
+        user.insert(
+            "tui.select.up".to_owned(),
+            vec!["up".to_owned(), "ctrl+p".to_owned()],
+        );
         let kb = manager(user);
         assert_eq!(kb.get_keys("tui.select.up"), vec!["up", "ctrl+p"]);
         assert_eq!(kb.get_keys("tui.editor.cursorUp"), vec!["up"]);
@@ -648,7 +827,10 @@ mod tests {
             kb.get_conflicts(),
             vec![KeybindingConflict {
                 key: "ctrl+x".to_owned(),
-                keybindings: vec!["tui.input.submit".to_owned(), "tui.select.confirm".to_owned()],
+                keybindings: vec![
+                    "tui.input.submit".to_owned(),
+                    "tui.select.confirm".to_owned()
+                ],
             }]
         );
         assert_eq!(kb.get_keys("tui.editor.cursorLeft"), vec!["left", "ctrl+b"]);
@@ -677,7 +859,12 @@ mod tests {
         let mut user = KeybindingsConfig::new();
         user.insert(
             "tui.input.copy".to_owned(),
-            vec!["esc".to_owned(), "return".to_owned(), "?".to_owned(), "shift+a".to_owned()],
+            vec![
+                "esc".to_owned(),
+                "return".to_owned(),
+                "?".to_owned(),
+                "shift+a".to_owned(),
+            ],
         );
         let kb = manager(user);
         for input in ["\x1b", "\r", "?", "A"] {
@@ -716,7 +903,10 @@ mod tests {
     fn yaml_round_trip_with_migration() {
         let yaml = "interrupt: ctrl+x\nsubmit: [enter, ctrl+enter]\ntui.input.copy: ctrl+shift+c\n";
         let mut config = parse_keybindings_config(yaml);
-        assert_eq!(config.get("interrupt").map(|v| v.clone()), Some(vec!["ctrl+x".to_owned()]));
+        assert_eq!(
+            config.get("interrupt").map(|v| v.clone()),
+            Some(vec!["ctrl+x".to_owned()])
+        );
         assert_eq!(
             config.get("submit").map(|v| v.clone()),
             Some(vec!["enter".to_owned(), "ctrl+enter".to_owned()])
@@ -746,8 +936,14 @@ mod tests {
     fn legacy_json_migration() {
         let json = r#"{"interrupt": "ctrl+shift+c", "cursorUp": "up"}"#;
         let mut config = parse_keybindings_json(json);
-        assert_eq!(config.get("interrupt").map(|v| v.clone()), Some(vec!["ctrl+shift+c".to_owned()]));
-        assert_eq!(config.get("cursorUp").map(|v| v.clone()), Some(vec!["up".to_owned()]));
+        assert_eq!(
+            config.get("interrupt").map(|v| v.clone()),
+            Some(vec!["ctrl+shift+c".to_owned()])
+        );
+        assert_eq!(
+            config.get("cursorUp").map(|v| v.clone()),
+            Some(vec!["up".to_owned()])
+        );
         assert!(migrate_keybinding_names(&mut config));
         assert!(config.contains_key("app.interrupt"));
         assert!(config.contains_key("tui.editor.cursorUp"));

@@ -2,8 +2,8 @@
 //!
 //! Contract: `docs/research/agent-ux/README.md`.
 
-use crate::width::visible_width;
 use crate::width::truncate_to_width;
+use crate::width::visible_width;
 use std::time::{Duration, Instant};
 
 // ---------------------------------------------------------------------------
@@ -116,9 +116,7 @@ impl BusyIndicator {
             }
             BusyPreset::Kaomoji => {
                 // Each frame padded to the max display width of the set.
-                let raw: &[&str] = &[
-                    "(◕‿◕)", "(◕‿◕)", "(◡‿◡)", "(◠‿◠)", "(◕‿◕)", "(◕‿◕)",
-                ];
+                let raw: &[&str] = &["(◕‿◕)", "(◕‿◕)", "(◡‿◡)", "(◠‿◠)", "(◕‿◕)", "(◕‿◕)"];
                 let max_w = raw.iter().map(|f| visible_width(f)).max().unwrap_or(1);
                 // We store the raw frames and pad at render time.
                 return BusyIndicator {
@@ -205,7 +203,6 @@ impl Default for StatusLine {
 }
 
 impl StatusLine {
-
     /// Apply a state transition event.
     ///
     /// Returns the new state, or `None` if the event was invalid for the
@@ -309,10 +306,7 @@ impl StatusLine {
         } else if badges_str.is_empty() {
             format!("{}  {}{}", state_label, timer_str, busy_str)
         } else {
-            format!(
-                "{}  {}  {}{}",
-                state_label, timer_str, badges_str, busy_str
-            )
+            format!("{}  {}  {}{}", state_label, timer_str, badges_str, busy_str)
         };
 
         let line = truncate_to_width(&line, w);
@@ -329,19 +323,28 @@ mod tests {
     #[test]
     fn state_transitions_starting_to_ready() {
         let s = AgentState::Starting;
-        assert_eq!(s.transition(StatusEvent::ProviderReady), Some(AgentState::Ready));
+        assert_eq!(
+            s.transition(StatusEvent::ProviderReady),
+            Some(AgentState::Ready)
+        );
     }
 
     #[test]
     fn state_transitions_ready_to_thinking() {
         let s = AgentState::Ready;
-        assert_eq!(s.transition(StatusEvent::PromptSent), Some(AgentState::Thinking));
+        assert_eq!(
+            s.transition(StatusEvent::PromptSent),
+            Some(AgentState::Thinking)
+        );
     }
 
     #[test]
     fn state_transitions_thinking_to_running() {
         let s = AgentState::Thinking;
-        assert_eq!(s.transition(StatusEvent::FirstToken), Some(AgentState::Running));
+        assert_eq!(
+            s.transition(StatusEvent::FirstToken),
+            Some(AgentState::Running)
+        );
     }
 
     #[test]
@@ -353,7 +356,10 @@ mod tests {
     #[test]
     fn state_transitions_running_to_interrupted() {
         let s = AgentState::Running;
-        assert_eq!(s.transition(StatusEvent::Interrupt), Some(AgentState::Interrupted));
+        assert_eq!(
+            s.transition(StatusEvent::Interrupt),
+            Some(AgentState::Interrupted)
+        );
     }
 
     #[test]

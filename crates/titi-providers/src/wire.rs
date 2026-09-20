@@ -13,8 +13,7 @@ use crate::http::{BodyChunk, HttpFetch, HttpRequest, ReqwestFetch};
 use crate::sse::{SseDecoder, SseFrame};
 use crate::stream::{ErrorReason, StopReason, StreamEvent};
 use crate::transport::{
-    ApiKind, EventStream, RequestCtx, Role, Transport, TransportError, WatchdogConfig,
-    WireRequest,
+    ApiKind, EventStream, RequestCtx, Role, Transport, TransportError, WatchdogConfig, WireRequest,
 };
 
 // ---------------------------------------------------------------------------
@@ -55,9 +54,9 @@ fn anthropic_messages_wire(req: &WireRequest) -> Vec<Value> {
     req.messages
         .iter()
         .filter_map(|m| {
-            m.role.anthropic_role().map(|role| {
-                serde_json::json!({"role": role, "content": m.content.as_str()})
-            })
+            m.role
+                .anthropic_role()
+                .map(|role| serde_json::json!({"role": role, "content": m.content.as_str()}))
         })
         .collect()
 }
@@ -220,12 +219,10 @@ pub fn build_http_request(
                 "tools": gemini_tools_wire(req),
             });
             if let Some(sys) = &req.system {
-                body["systemInstruction"] =
-                    serde_json::json!({"parts": [{"text": sys.as_str()}]});
+                body["systemInstruction"] = serde_json::json!({"parts": [{"text": sys.as_str()}]});
             }
             if let Some(max) = req.max_tokens {
-                body["generationConfig"] =
-                    serde_json::json!({"maxOutputTokens": max});
+                body["generationConfig"] = serde_json::json!({"maxOutputTokens": max});
             }
             HttpRequest {
                 method: "POST".into(),
@@ -270,8 +267,7 @@ impl PumpState {
             Err(_) => {
                 self.queued.push_back(StreamEvent::Error {
                     reason: ErrorReason::Malformed,
-                    message: format!("{api}: undecodable SSE data payload", api = self.api)
-                        .into(),
+                    message: format!("{api}: undecodable SSE data payload", api = self.api).into(),
                 });
                 return;
             }
@@ -283,9 +279,7 @@ impl PumpState {
                 }
                 _ => crate::openai::decode_completions_chunk(&payload, s, &self.policy),
             },
-            FamilyDecoder::Anthropic(s) => {
-                crate::anthropic::decode_event(&event, &payload, s)
-            }
+            FamilyDecoder::Anthropic(s) => crate::anthropic::decode_event(&event, &payload, s),
             FamilyDecoder::Gemini(s) => crate::gemini::decode_chunk(&payload, s, &self.policy),
         };
         self.queued.extend(events);
@@ -337,7 +331,10 @@ async fn pump_step(mut state: PumpState) -> Option<(StreamEvent, PumpState)> {
             Some(Err(e)) => {
                 state.done = true;
                 return Some((
-                    StreamEvent::Error { reason: ErrorReason::Connection, message: e.into() },
+                    StreamEvent::Error {
+                        reason: ErrorReason::Connection,
+                        message: e.into(),
+                    },
                     state,
                 ));
             }
@@ -351,12 +348,16 @@ async fn pump_step(mut state: PumpState) -> Option<(StreamEvent, PumpState)> {
                 if let Some(ev) = state.queued.pop_front() {
                     return Some((ev, state));
                 }
-                return Some((StreamEvent::Done { reason: StopReason::Stop }, state));
+                return Some((
+                    StreamEvent::Done {
+                        reason: StopReason::Stop,
+                    },
+                    state,
+                ));
             }
         }
     }
 }
-
 
 // ---------------------------------------------------------------------------
 // Transports
@@ -370,12 +371,12 @@ pub struct FamilyTransport {
 }
 
 impl FamilyTransport {
-    pub fn new(
-        api: ApiKind,
-        base_url: impl Into<SmolStr>,
-        fetch: Arc<dyn HttpFetch>,
-    ) -> Self {
-        Self { api, base_url: base_url.into(), fetch }
+    pub fn new(api: ApiKind, base_url: impl Into<SmolStr>, fetch: Arc<dyn HttpFetch>) -> Self {
+        Self {
+            api,
+            base_url: base_url.into(),
+            fetch,
+        }
     }
 
     pub fn with_default_fetch(
@@ -405,8 +406,7 @@ impl Transport for FamilyTransport {
         req: WireRequest,
         ctx: RequestCtx,
     ) -> Result<EventStream, TransportError> {
-        let http_req =
-            build_http_request(self.api, &self.base_url, &req, ctx.api_key.as_deref());
+        let http_req = build_http_request(self.api, &self.base_url, &req, ctx.api_key.as_deref());
         let resp = self.fetch.fetch(http_req).await?;
         if resp.status == 429 || resp.status >= 500 {
             return Err(TransportError::Retryable {
@@ -420,7 +420,11 @@ impl Transport for FamilyTransport {
                 message: format!("upstream status {}", resp.status).into(),
             });
         }
-        Ok(Box::pin(sse_event_stream(resp.body, self.api, StreamDecodePolicy::default())))
+        Ok(Box::pin(sse_event_stream(
+            resp.body,
+            self.api,
+            StreamDecodePolicy::default(),
+        )))
     }
 }
 
@@ -438,8 +442,16 @@ mod tests {
         let mut r = WireRequest::new("gpt-test");
         r.system = Some("be brief".into());
         r.messages = vec![
-            ChatMessage { role: Role::User, content: "hi".into(), tool_calls: Vec::new() },
-            ChatMessage { role: Role::Assistant, content: "hello".into(), tool_calls: Vec::new() },
+            ChatMessage {
+                role: Role::User,
+                content: "hi".into(),
+                tool_calls: Vec::new(),
+            },
+            ChatMessage {
+                role: Role::Assistant,
+                content: "hello".into(),
+                tool_calls: Vec::new(),
+            },
         ];
         r.max_tokens = Some(128);
         r
@@ -456,7 +468,11 @@ mod tests {
         assert_eq!(body["max_tokens"], 128);
         assert_eq!(body["messages"][0]["role"], "system");
         assert_eq!(body["messages"][1]["role"], "user");
-        let auth = hr.headers.iter().find(|(k, _)| k == "authorization").expect("auth");
+        let auth = hr
+            .headers
+            .iter()
+            .find(|(k, _)| k == "authorization")
+            .expect("auth");
         assert_eq!(auth.1, "Bearer sk");
     }
 
@@ -479,18 +495,31 @@ mod tests {
         let body: Value = serde_json::from_slice(hr.body.as_ref().expect("body")).expect("json");
         assert_eq!(body["system"], "be brief");
         assert_eq!(body["max_tokens"], 128);
-        assert!(body["messages"].as_array().expect("msgs").iter().all(|m| m["role"] != "system"));
-        let key = hr.headers.iter().find(|(k, _)| k == "x-api-key").expect("key");
+        assert!(
+            body["messages"]
+                .as_array()
+                .expect("msgs")
+                .iter()
+                .all(|m| m["role"] != "system")
+        );
+        let key = hr
+            .headers
+            .iter()
+            .find(|(k, _)| k == "x-api-key")
+            .expect("key");
         assert_eq!(key.1, "k");
-        let ver = hr.headers.iter().find(|(k, _)| k == "anthropic-version").expect("ver");
+        let ver = hr
+            .headers
+            .iter()
+            .find(|(k, _)| k == "anthropic-version")
+            .expect("ver");
         assert_eq!(ver.1, "2023-06-01");
     }
 
     #[test]
     fn gemini_wire_shape() {
         let r = req();
-        let hr =
-            build_http_request(ApiKind::GeminiGenerateContent, "http://x", &r, Some("gk"));
+        let hr = build_http_request(ApiKind::GeminiGenerateContent, "http://x", &r, Some("gk"));
         assert!(hr.url.contains(":streamGenerateContent?alt=sse"));
         assert!(hr.url.contains("key=gk"));
         let body: Value = serde_json::from_slice(hr.body.as_ref().expect("body")).expect("json");

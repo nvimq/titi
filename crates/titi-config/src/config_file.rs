@@ -34,13 +34,19 @@ pub fn try_load<T: DeserializeOwned>(path: &Path) -> LoadOutcome<T> {
             if migrate_json_to_yaml::<T>(path) {
                 match fs::read_to_string(path) {
                     Ok(text) => parse_yaml(path, &text),
-                    Err(e) => LoadOutcome::Error(ConfigError::Io { path: path.into(), source: e }),
+                    Err(e) => LoadOutcome::Error(ConfigError::Io {
+                        path: path.into(),
+                        source: e,
+                    }),
                 }
             } else {
                 LoadOutcome::NotFound
             }
         }
-        Err(e) => LoadOutcome::Error(ConfigError::Io { path: path.into(), source: e }),
+        Err(e) => LoadOutcome::Error(ConfigError::Io {
+            path: path.into(),
+            source: e,
+        }),
         Ok(text) => parse_yaml(path, &text),
     }
 }
@@ -48,15 +54,25 @@ pub fn try_load<T: DeserializeOwned>(path: &Path) -> LoadOutcome<T> {
 fn parse_yaml<T: DeserializeOwned>(path: &Path, text: &str) -> LoadOutcome<T> {
     let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
     if ext == "json" || ext == "jsonc" {
-        let stripped = if ext == "jsonc" { strip_jsonc_comments(text) } else { text.to_owned() };
+        let stripped = if ext == "jsonc" {
+            strip_jsonc_comments(text)
+        } else {
+            text.to_owned()
+        };
         match serde_json::from_str::<T>(&stripped) {
             Ok(v) => LoadOutcome::Ok(v),
-            Err(e) => LoadOutcome::Error(ConfigError::Invalid { path: path.into(), reason: e.to_string() }),
+            Err(e) => LoadOutcome::Error(ConfigError::Invalid {
+                path: path.into(),
+                reason: e.to_string(),
+            }),
         }
     } else {
         match serde_yaml::from_str::<T>(text) {
             Ok(v) => LoadOutcome::Ok(v),
-            Err(e) => LoadOutcome::Error(ConfigError::Invalid { path: path.into(), reason: e.to_string() }),
+            Err(e) => LoadOutcome::Error(ConfigError::Invalid {
+                path: path.into(),
+                reason: e.to_string(),
+            }),
         }
     }
 }
@@ -68,11 +84,15 @@ fn migrate_json_to_yaml<T: DeserializeOwned>(yaml_path: &Path) -> bool {
         return false;
     }
     let json_path = yaml_path.with_extension("json");
-    let Ok(text) = fs::read_to_string(&json_path) else { return false };
+    let Ok(text) = fs::read_to_string(&json_path) else {
+        return false;
+    };
     let Ok(value) = serde_json::from_str::<serde_json::Value>(&strip_jsonc_comments(&text)) else {
         return false;
     };
-    let Ok(yaml) = serde_yaml::to_string(&value) else { return false };
+    let Ok(yaml) = serde_yaml::to_string(&value) else {
+        return false;
+    };
     if fs::write(yaml_path, yaml).is_err() {
         return false;
     }
@@ -134,14 +154,22 @@ pub(crate) fn strip_jsonc_comments(text: &str) -> String {
 /// Acquire an exclusive advisory lock on `<path>.lock` while holding the guard.
 pub fn with_file_lock<T>(path: &Path, f: impl FnOnce() -> T) -> T {
     let lock_path = path.with_extension({
-        let mut s = path.extension().and_then(|e| e.to_str()).unwrap_or("").to_owned();
+        let mut s = path
+            .extension()
+            .and_then(|e| e.to_str())
+            .unwrap_or("")
+            .to_owned();
         s.push_str(".lock");
         s
     });
     if let Some(parent) = lock_path.parent() {
         let _ = fs::create_dir_all(parent);
     }
-    let opened = fs::OpenOptions::new().create(true).truncate(false).write(true).open(&lock_path);
+    let opened = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(&lock_path);
     let result = match opened {
         Ok(file) => {
             let mut guard = fd_lock::RwLock::new(file);

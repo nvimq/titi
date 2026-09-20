@@ -6,8 +6,8 @@
 //! * input submitted during startup is queued and delivered after ready;
 //! * integration test drives a mock provider with a 2 s init delay.
 
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -76,7 +76,10 @@ fn prompt_queued_during_init_is_delivered_after_ready() {
         thread::sleep(Duration::from_millis(10));
     }
     let init_elapsed = t0.elapsed();
-    assert!(init_elapsed >= Duration::from_millis(1500), "init too fast: {init_elapsed:?}");
+    assert!(
+        init_elapsed >= Duration::from_millis(1500),
+        "init too fast: {init_elapsed:?}"
+    );
 
     // Flushing delivers the queued prompts in order and flips to Ready.
     let flushed = app.provider_ready();

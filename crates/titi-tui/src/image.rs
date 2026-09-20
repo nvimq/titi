@@ -105,13 +105,8 @@ impl ImageBudget {
                     Some(data) => data.clone(),
                     None => continue,
                 };
-                let transmit = build_transmit(
-                    p.id,
-                    &pixels,
-                    p.pixel_w,
-                    p.pixel_h,
-                    &mut self.comp_key,
-                );
+                let transmit =
+                    build_transmit(p.id, &pixels, p.pixel_w, p.pixel_h, &mut self.comp_key);
                 cmds.push(KittyCmd::Transmit(transmit));
 
                 // Track in budget.
@@ -127,10 +122,7 @@ impl ImageBudget {
             }
 
             // Place every frame.
-            cmds.push(KittyCmd::Place(Placement {
-                pixels: None,
-                ..*p
-            }));
+            cmds.push(KittyCmd::Place(Placement { pixels: None, ..*p }));
 
             // Move to MRU position.
             if let Some(pos) = self.entries.iter().position(|e| e.id == p.id) {
@@ -155,10 +147,7 @@ impl ImageBudget {
             let fallback: Vec<String> = (0..entry.cell_h)
                 .map(|_| String::new()) // empty line preserves height
                 .collect();
-            cmds.push(KittyCmd::Delete {
-                id,
-                fallback,
-            });
+            cmds.push(KittyCmd::Delete { id, fallback });
         }
 
         cmds
@@ -240,7 +229,6 @@ pub fn build_delete(id: u32) -> String {
     format!("\x1b_Ga=d,id={id};\x1b\\")
 }
 
-
 // ---------------------------------------------------------------------------
 // Unicode placeholders (`U=1` + U+10EEEE)
 // ---------------------------------------------------------------------------
@@ -306,7 +294,10 @@ impl PlaceholderDetect {
             tmux: std::env::var("TMUX").is_ok(),
             no_placeholders: first_env(&["PI_NO_KITTY_PLACEHOLDERS", "TITI_NO_KITTY_PLACEHOLDERS"]),
             placeholders: first_env(&["PI_KITTY_PLACEHOLDERS", "TITI_KITTY_PLACEHOLDERS"]),
-            force_image_protocol: first_env(&["PI_FORCE_IMAGE_PROTOCOL", "TITI_FORCE_IMAGE_PROTOCOL"]),
+            force_image_protocol: first_env(&[
+                "PI_FORCE_IMAGE_PROTOCOL",
+                "TITI_FORCE_IMAGE_PROTOCOL",
+            ]),
         }
     }
 
@@ -516,17 +507,23 @@ mod tests {
 
         let cmds = budget.frame(&[p.clone()]);
         assert_eq!(cmds.len(), 2, "frame 1: transmit + place");
-        assert!(matches!(cmds[0], KittyCmd::Transmit(_)), "frame 1 cmd 0: transmit");
-        assert!(matches!(cmds[1], KittyCmd::Place(_)), "frame 1 cmd 1: place");
+        assert!(
+            matches!(cmds[0], KittyCmd::Transmit(_)),
+            "frame 1 cmd 0: transmit"
+        );
+        assert!(
+            matches!(cmds[1], KittyCmd::Place(_)),
+            "frame 1 cmd 1: place"
+        );
 
         // Frame 2: same placement, no pixel data → place only, no transmit.
-        let p2 = Placement {
-            pixels: None,
-            ..p
-        };
+        let p2 = Placement { pixels: None, ..p };
         let cmds = budget.frame(&[p2]);
         assert_eq!(cmds.len(), 1, "frame 2: place only");
-        assert!(matches!(cmds[0], KittyCmd::Place(_)), "frame 2 cmd 0: place");
+        assert!(
+            matches!(cmds[0], KittyCmd::Place(_)),
+            "frame 2 cmd 0: place"
+        );
     }
 
     #[test]
@@ -552,7 +549,11 @@ mod tests {
         };
 
         let cmds = budget.frame(&[p1, p2]);
-        assert_eq!(cmds.len(), 4, "transmit(1) + place(1) + transmit(2) + place(2)");
+        assert_eq!(
+            cmds.len(),
+            4,
+            "transmit(1) + place(1) + transmit(2) + place(2)"
+        );
     }
 
     // ---- Demote -----------------------------------------------------------
@@ -838,7 +839,13 @@ mod tests {
             ..PlaceholderDetect::default()
         };
         assert!(!tmux_auto.supported());
-        assert_eq!(kitty_terminal_id(Some("iTerm.app"), Some("xterm-kitty")), "kitty");
-        assert_eq!(kitty_terminal_id(Some("ghostty"), Some("xterm-256color")), "ghostty");
+        assert_eq!(
+            kitty_terminal_id(Some("iTerm.app"), Some("xterm-kitty")),
+            "kitty"
+        );
+        assert_eq!(
+            kitty_terminal_id(Some("ghostty"), Some("xterm-256color")),
+            "ghostty"
+        );
     }
 }

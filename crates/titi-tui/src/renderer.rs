@@ -7,7 +7,7 @@
 use std::io::{self, Write};
 
 use crate::caps;
-use crate::history::{accept_batch, Ack, HistoryBatch, HistoryState};
+use crate::history::{Ack, HistoryBatch, HistoryState, accept_batch};
 use crate::overlay::OverlayStack;
 use crate::viewport::diff_viewport;
 use crate::width::{truncate_to_width, visible_width};
@@ -212,10 +212,7 @@ impl<W: Write> Renderer<W> {
     /// Destructive display reset: ED3 + re-offer the full acked history
     /// under a new monotonic id (only for user gestures: session replacement,
     /// Ctrl+L, etc.).
-    pub fn reset_display(
-        &mut self,
-        provider: &mut dyn FrameProvider,
-    ) -> io::Result<Option<Ack>> {
+    pub fn reset_display(&mut self, provider: &mut dyn FrameProvider) -> io::Result<Option<Ack>> {
         self.clear_scrollback_on_next_draw = true;
         self.history_state = HistoryState::new();
         self.history_written = 0;
@@ -475,12 +472,7 @@ mod tests {
         }
     }
 
-    fn renderer(
-        w: u16,
-        h: u16,
-        sync: bool,
-        mode: ResizeScrollbackMode,
-    ) -> Renderer<TestWriter> {
+    fn renderer(w: u16, h: u16, sync: bool, mode: ResizeScrollbackMode) -> Renderer<TestWriter> {
         Renderer::new(TestWriter::default(), w, h, sync, mode)
     }
 
@@ -545,14 +537,22 @@ mod tests {
 
         // First frame: full viewport.
         let rows: Vec<String> = (0..10).map(|i| i.to_string()).collect();
-        r.draw(FramePlan { history: None, viewport: rows }).unwrap();
+        r.draw(FramePlan {
+            history: None,
+            viewport: rows,
+        })
+        .unwrap();
 
         // Second frame: rows 3 and 9 changed.
         let mut next: Vec<String> = (0..10).map(|i| i.to_string()).collect();
         next[3] = "changed3".into();
         next[9] = "changed9".into();
         r.out_mut().data.clear();
-        r.draw(FramePlan { history: None, viewport: next }).unwrap();
+        r.draw(FramePlan {
+            history: None,
+            viewport: next,
+        })
+        .unwrap();
 
         let diff = r.out().output();
         assert!(diff.contains("\x1b[4Hchanged3"), "diff writes row 3");
@@ -564,12 +564,22 @@ mod tests {
     fn diff_truncated_screen_clears_stale_rows() {
         let mut r = renderer(80, 24, false, ResizeScrollbackMode::Preserve);
         let full: Vec<String> = vec!["a", "b", "c", "d", "e"]
-            .into_iter().map(String::from).collect();
-        r.draw(FramePlan { history: None, viewport: full }).unwrap();
+            .into_iter()
+            .map(String::from)
+            .collect();
+        r.draw(FramePlan {
+            history: None,
+            viewport: full,
+        })
+        .unwrap();
 
         r.out_mut().data.clear();
         let short: Vec<String> = vec!["a", "b"].into_iter().map(String::from).collect();
-        r.draw(FramePlan { history: None, viewport: short }).unwrap();
+        r.draw(FramePlan {
+            history: None,
+            viewport: short,
+        })
+        .unwrap();
 
         let diff = r.out().output();
         assert!(diff.contains("\x1b[3H\x1b[2K"), "clear stale row 3");
@@ -592,7 +602,10 @@ mod tests {
         // Golden ANSI: sync begin … writes … sync end, cursor park inside.
         assert!(output.starts_with("\x1b[?2026h"), "sync begin at start");
         assert!(output.ends_with("\x1b[?2026l"), "sync end at end");
-        assert!(output.contains("\x1b[1Hhello"), "viewport write inside sync");
+        assert!(
+            output.contains("\x1b[1Hhello"),
+            "viewport write inside sync"
+        );
         assert!(output.contains("\x1b[2H"), "cursor park inside sync");
     }
 
@@ -615,7 +628,11 @@ mod tests {
     fn cursor_parked_at_viewport_bottom() {
         let mut r = renderer(80, 24, false, ResizeScrollbackMode::Preserve);
         let rows: Vec<String> = vec!["a", "b", "c"].into_iter().map(String::from).collect();
-        r.draw(FramePlan { history: None, viewport: rows }).unwrap();
+        r.draw(FramePlan {
+            history: None,
+            viewport: rows,
+        })
+        .unwrap();
         let output = r.out().output();
         // 3 viewport rows → park at row 4.
         assert!(output.ends_with("\x1b[4H"), "cursor parked at row 4");
@@ -625,9 +642,17 @@ mod tests {
     fn no_changes_skips_park_and_sync() {
         let mut r = renderer(80, 24, true, ResizeScrollbackMode::Preserve);
         let rows: Vec<String> = vec!["same"].into_iter().map(String::from).collect();
-        r.draw(FramePlan { history: None, viewport: rows.clone() }).unwrap();
+        r.draw(FramePlan {
+            history: None,
+            viewport: rows.clone(),
+        })
+        .unwrap();
         r.out_mut().data.clear();
-        r.draw(FramePlan { history: None, viewport: rows }).unwrap();
+        r.draw(FramePlan {
+            history: None,
+            viewport: rows,
+        })
+        .unwrap();
         assert!(r.out().output().is_empty(), "identical frame emits nothing");
     }
 
@@ -643,14 +668,26 @@ mod tests {
             Box::new(Mock::new(&["OVERLAY1", "OVERLAY2"])),
             Anchor::BottomCenter,
         );
-        r.draw(FramePlan { history: None, viewport: base.clone() }).unwrap();
+        r.draw(FramePlan {
+            history: None,
+            viewport: base.clone(),
+        })
+        .unwrap();
 
         // Frame 2: overlay still shown — different content.
-        r.draw(FramePlan { history: None, viewport: base.clone() }).unwrap();
+        r.draw(FramePlan {
+            history: None,
+            viewport: base.clone(),
+        })
+        .unwrap();
 
         // Frame 3: hide overlay.
         r.hide_overlay(handle);
-        r.draw(FramePlan { history: None, viewport: base }).unwrap();
+        r.draw(FramePlan {
+            history: None,
+            viewport: base,
+        })
+        .unwrap();
 
         // No history rows were ever written: history writes are
         // newline-terminated; viewport writes are cursor-positioned.
@@ -660,7 +697,10 @@ mod tests {
             !output.contains("OVERLAY\n"),
             "overlay rows never written as history"
         );
-        assert!(output.contains("\x1b[9H"), "overlay composited into viewport");
+        assert!(
+            output.contains("\x1b[9H"),
+            "overlay composited into viewport"
+        );
     }
 
     #[test]
@@ -672,11 +712,19 @@ mod tests {
             Box::new(Mock::new(&["OVERLAY1", "OVERLAY2"])),
             Anchor::BottomCenter,
         );
-        r.draw(FramePlan { history: None, viewport: base.clone() }).unwrap();
+        r.draw(FramePlan {
+            history: None,
+            viewport: base.clone(),
+        })
+        .unwrap();
 
         r.out_mut().data.clear();
         r.hide_overlay(handle);
-        r.draw(FramePlan { history: None, viewport: base }).unwrap();
+        r.draw(FramePlan {
+            history: None,
+            viewport: base,
+        })
+        .unwrap();
 
         // After close, the frame reverts to the pure viewport: the overlay
         // rows are replaced by the underlying viewport rows, and nothing is
@@ -684,7 +732,10 @@ mod tests {
         let diff = r.out().output();
         assert!(diff.contains("\x1b[9Hrow8"), "overlay row 1 reverted");
         assert!(diff.contains("\x1b[10Hrow9"), "overlay row 2 reverted");
-        assert!(!diff.contains("OVERLAY"), "overlay content gone after close");
+        assert!(
+            !diff.contains("OVERLAY"),
+            "overlay content gone after close"
+        );
     }
 
     // ---- Resize policies --------------------------------------------------
@@ -810,7 +861,10 @@ mod tests {
         };
         r.draw(plan).unwrap();
         let output = r.out().output();
-        assert!(!output.contains("floating\n"), "no history write without finalization");
+        assert!(
+            !output.contains("floating\n"),
+            "no history write without finalization"
+        );
         assert!(output.contains("\x1b[1Hfloating"), "viewport-only render");
     }
 

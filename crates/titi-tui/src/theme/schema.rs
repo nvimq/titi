@@ -374,8 +374,13 @@ pub fn is_valid_theme_color(s: &str) -> bool {
 pub fn is_valid_theme_bg(s: &str) -> bool {
     matches!(
         s,
-        "selectedBg" | "userMessageBg" | "customMessageBg" | "toolPendingBg" | "toolSuccessBg"
-            | "toolErrorBg" | "statusLineBg"
+        "selectedBg"
+            | "userMessageBg"
+            | "customMessageBg"
+            | "toolPendingBg"
+            | "toolSuccessBg"
+            | "toolErrorBg"
+            | "statusLineBg"
     )
 }
 
@@ -516,8 +521,18 @@ mod tests {
         let raw = include_str!("../../themes/dark.json");
         let theme: ThemeJson = serde_json::from_str(raw).expect("dark.json parses");
         assert_eq!(theme.name, "dark");
-        assert!(theme.schema.as_deref().is_some_and(|s| s.contains("theme-schema")));
-        assert!(theme.vars.as_ref().is_some_and(|v| v.contains_key("accent")));
+        assert!(
+            theme
+                .schema
+                .as_deref()
+                .is_some_and(|s| s.contains("theme-schema"))
+        );
+        assert!(
+            theme
+                .vars
+                .as_ref()
+                .is_some_and(|v| v.contains_key("accent"))
+        );
         assert!(theme.colors.contains_key("accent"));
         assert!(theme.export.is_some());
         assert!(theme.symbols.is_none());
@@ -559,9 +574,18 @@ mod tests {
         assert_eq!(v, serde_json::json!("#123456"));
 
         // Hex, empty string, and numbers pass through untouched.
-        assert_eq!(resolve_var_refs(&serde_json::json!("#abc"), &vars).unwrap(), serde_json::json!("#abc"));
-        assert_eq!(resolve_var_refs(&serde_json::json!(""), &vars).unwrap(), serde_json::json!(""));
-        assert_eq!(resolve_var_refs(&serde_json::json!(244), &vars).unwrap(), serde_json::json!(244));
+        assert_eq!(
+            resolve_var_refs(&serde_json::json!("#abc"), &vars).unwrap(),
+            serde_json::json!("#abc")
+        );
+        assert_eq!(
+            resolve_var_refs(&serde_json::json!(""), &vars).unwrap(),
+            serde_json::json!("")
+        );
+        assert_eq!(
+            resolve_var_refs(&serde_json::json!(244), &vars).unwrap(),
+            serde_json::json!(244)
+        );
 
         // Unknown key stays as-is.
         let v = resolve_var_refs(&serde_json::json!("nope"), &vars).unwrap();
@@ -593,15 +617,16 @@ mod tests {
             "badCycle": "$badCycle",
         }))
         .unwrap();
-        let colors: HashMap<String, serde_json::Value> = serde_json::from_value(serde_json::json!({
-            "accent": "$ok",
-            "text": "",
-            "statusLineSep": 244,
-            "broken": "#zzzzzz",
-            "missingVar": "ghost",
-            "cyclic": "$badCycle",
-        }))
-        .unwrap();
+        let colors: HashMap<String, serde_json::Value> =
+            serde_json::from_value(serde_json::json!({
+                "accent": "$ok",
+                "text": "",
+                "statusLineSep": 244,
+                "broken": "#zzzzzz",
+                "missingVar": "ghost",
+                "cyclic": "$badCycle",
+            }))
+            .unwrap();
         let resolved = resolve_theme_colors(&colors, &vars);
         assert_eq!(resolved.len(), 3, "only accent/text/statusLineSep survive");
         assert_eq!(resolved["accent"], serde_json::json!("#abcdef"));

@@ -55,8 +55,20 @@ mod tests {
         next[9] = "also".into();
         let updates = diff_viewport(&prev, &next);
         assert_eq!(updates.len(), 2);
-        assert_eq!(updates[0], RowUpdate { index: 3, row: "changed".into() });
-        assert_eq!(updates[1], RowUpdate { index: 9, row: "also".into() });
+        assert_eq!(
+            updates[0],
+            RowUpdate {
+                index: 3,
+                row: "changed".into()
+            }
+        );
+        assert_eq!(
+            updates[1],
+            RowUpdate {
+                index: 9,
+                row: "also".into()
+            }
+        );
     }
 
     #[test]
@@ -67,8 +79,14 @@ mod tests {
         assert_eq!(
             updates,
             vec![
-                RowUpdate { index: 2, row: "c".into() },
-                RowUpdate { index: 3, row: "d".into() },
+                RowUpdate {
+                    index: 2,
+                    row: "c".into()
+                },
+                RowUpdate {
+                    index: 3,
+                    row: "d".into()
+                },
             ]
         );
     }
@@ -82,9 +100,18 @@ mod tests {
         assert_eq!(
             updates,
             vec![
-                RowUpdate { index: 2, row: String::new() },
-                RowUpdate { index: 3, row: String::new() },
-                RowUpdate { index: 4, row: String::new() },
+                RowUpdate {
+                    index: 2,
+                    row: String::new()
+                },
+                RowUpdate {
+                    index: 3,
+                    row: String::new()
+                },
+                RowUpdate {
+                    index: 4,
+                    row: String::new()
+                },
             ]
         );
     }
@@ -97,9 +124,18 @@ mod tests {
         assert_eq!(
             updates,
             vec![
-                RowUpdate { index: 0, row: "x".into() },
-                RowUpdate { index: 2, row: String::new() },
-                RowUpdate { index: 3, row: String::new() },
+                RowUpdate {
+                    index: 0,
+                    row: "x".into()
+                },
+                RowUpdate {
+                    index: 2,
+                    row: String::new()
+                },
+                RowUpdate {
+                    index: 3,
+                    row: String::new()
+                },
             ]
         );
     }

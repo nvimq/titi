@@ -3,11 +3,11 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use crate::theme::builtin::{get_builtin_theme, list_builtin_themes};
-use crate::theme::color::{detect_color_mode, ColorMode};
-use crate::theme::schema::{normalize_spinner_frames_override, resolve_theme_colors, ThemeJson};
-use crate::theme::symbols::SymbolPreset;
 use crate::theme::Theme;
+use crate::theme::builtin::{get_builtin_theme, list_builtin_themes};
+use crate::theme::color::{ColorMode, detect_color_mode};
+use crate::theme::schema::{ThemeJson, normalize_spinner_frames_override, resolve_theme_colors};
+use crate::theme::symbols::SymbolPreset;
 
 /// Options for creating a theme.
 #[derive(Debug, Clone, Default)]
@@ -29,8 +29,8 @@ fn load_theme_json_in(name: &str, custom_dir: &Path) -> Result<ThemeJson, String
             .map_err(|e| format!("Failed to parse built-in theme '{name}': {e}"));
     }
     let theme_path = custom_dir.join(format!("{name}.json"));
-    let content = std::fs::read_to_string(&theme_path)
-        .map_err(|_| format!("Theme not found: {name}"))?;
+    let content =
+        std::fs::read_to_string(&theme_path).map_err(|_| format!("Theme not found: {name}"))?;
     serde_json::from_str(&content).map_err(|e| format!("Failed to parse theme '{name}': {e}"))
 }
 
@@ -159,8 +159,10 @@ pub fn load_theme_sync(name: &str, options: &CreateThemeOptions) -> Result<Theme
 
 /// Get all available theme names (built-in + custom).
 pub fn get_available_themes() -> Vec<String> {
-    let mut names: Vec<String> =
-        list_builtin_themes().into_iter().map(|s| s.to_string()).collect();
+    let mut names: Vec<String> = list_builtin_themes()
+        .into_iter()
+        .map(|s| s.to_string())
+        .collect();
     scan_custom_theme_names(&mut names, &custom_themes_dir());
     names.sort();
     names
@@ -269,10 +271,8 @@ mod tests {
 
     #[test]
     fn named_profile_nests_under_profiles() {
-        let dir = custom_themes_dir_from_env(env(&[
-            ("HOME", "/Users/me"),
-            ("TITI_PROFILE", "work"),
-        ]));
+        let dir =
+            custom_themes_dir_from_env(env(&[("HOME", "/Users/me"), ("TITI_PROFILE", "work")]));
         assert_eq!(
             dir,
             PathBuf::from("/Users/me/.titi/profiles/work/agent/themes")
@@ -281,10 +281,8 @@ mod tests {
 
     #[test]
     fn default_profile_name_is_ignored() {
-        let dir = custom_themes_dir_from_env(env(&[
-            ("HOME", "/Users/me"),
-            ("TITI_PROFILE", "default"),
-        ]));
+        let dir =
+            custom_themes_dir_from_env(env(&[("HOME", "/Users/me"), ("TITI_PROFILE", "default")]));
         assert_eq!(dir, PathBuf::from("/Users/me/.titi/agent/themes"));
     }
 

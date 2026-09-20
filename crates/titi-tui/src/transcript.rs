@@ -9,7 +9,7 @@
 //! Pure crate (no terminal I/O, no global state): render needs a width and
 //! a theme so it is deterministic in tests.
 
-use crate::markdown::{render_markdown, Section, SectionMode, SectionVisibility};
+use crate::markdown::{Section, SectionMode, SectionVisibility, render_markdown};
 use crate::theme::{Theme, ThemeColor};
 use crate::width::truncate_to_width;
 
@@ -157,10 +157,22 @@ impl Transcript {
             match self.visibility.get(section) {
                 SectionMode::Hidden => {}
                 SectionMode::Collapsed => {
-                    rows.push(section_header(section, self.count(section), &self.visibility, theme, w));
+                    rows.push(section_header(
+                        section,
+                        self.count(section),
+                        &self.visibility,
+                        theme,
+                        w,
+                    ));
                 }
                 SectionMode::Expanded => {
-                    rows.push(section_header(section, self.count(section), &self.visibility, theme, w));
+                    rows.push(section_header(
+                        section,
+                        self.count(section),
+                        &self.visibility,
+                        theme,
+                        w,
+                    ));
                     for entry in self.entries.iter().filter(|e| e.section == section) {
                         rows.extend(render_markdown(&entry.text, theme, width));
                     }
@@ -216,8 +228,8 @@ fn section_header(
 mod tests {
     use super::*;
     use crate::theme::{ColorMode, SymbolPreset};
-    use std::collections::HashMap;
     use serde_json::json;
+    use std::collections::HashMap;
 
     /// Minimal synthetic theme for deterministic tests.
     fn test_theme() -> Theme {
@@ -271,7 +283,9 @@ mod tests {
         t.details("subagents hidden");
         // activity already hidden by default.
         assert!(t.all_hidden());
-        t.set_alert(Alert { text: "tool failed".into() });
+        t.set_alert(Alert {
+            text: "tool failed".into(),
+        });
         let theme = test_theme();
         let rows = t.render(40, &theme);
         assert_eq!(rows.len(), 1, "only alert when all hidden: {rows:?}");
@@ -296,7 +310,11 @@ mod tests {
         // Collapsed: header only, with count, no body.
         t.details("thinking collapsed");
         let rows = t.render(40, &theme);
-        assert_eq!(rows.len(), 1, "only thinking header when collapsed: {rows:?}");
+        assert_eq!(
+            rows.len(),
+            1,
+            "only thinking header when collapsed: {rows:?}"
+        );
         assert!(rows[0].contains("thinking (2)"));
         assert!(rows[0].contains('▸'));
 
@@ -329,9 +347,15 @@ mod tests {
         let theme = test_theme();
         let rows = t.render(40, &theme);
         // thinking header before tools header before subagents header.
-        let idx_thinking = rows.iter().position(|r| r.contains("thinking (1)")).unwrap();
+        let idx_thinking = rows
+            .iter()
+            .position(|r| r.contains("thinking (1)"))
+            .unwrap();
         let idx_tools = rows.iter().position(|r| r.contains("tools (1)")).unwrap();
-        let idx_subagents = rows.iter().position(|r| r.contains("subagents (1)")).unwrap();
+        let idx_subagents = rows
+            .iter()
+            .position(|r| r.contains("subagents (1)"))
+            .unwrap();
         assert!(idx_thinking < idx_tools);
         assert!(idx_tools < idx_subagents);
         // No activity header (hidden).

@@ -4,8 +4,8 @@
 //! real 100 built-in themes (via loader, which is tested separately).
 
 use super::*;
-use std::collections::HashMap;
 use serde_json::json;
+use std::collections::HashMap;
 
 /// Build a theme with an explicit fg + bg color set and default symbols.
 fn make_theme(
@@ -143,12 +143,18 @@ fn get_contrast_fg_ansi_by_luma() {
     let mut fg = HashMap::new();
     fg.insert("accent".to_string(), json!("#ffffff")); // bright
     let theme = make_theme(fg, HashMap::new(), HashMap::new());
-    assert_eq!(theme.get_contrast_fg_ansi(ThemeColor::Accent), "\x1b[38;2;0;0;0m");
+    assert_eq!(
+        theme.get_contrast_fg_ansi(ThemeColor::Accent),
+        "\x1b[38;2;0;0;0m"
+    );
 
     let mut fg = HashMap::new();
     fg.insert("accent".to_string(), json!("#000080")); // dark
     let theme = make_theme(fg, HashMap::new(), HashMap::new());
-    assert_eq!(theme.get_contrast_fg_ansi(ThemeColor::Accent), "\x1b[38;2;255;255;255m");
+    assert_eq!(
+        theme.get_contrast_fg_ansi(ThemeColor::Accent),
+        "\x1b[38;2;255;255;255m"
+    );
 }
 
 #[test]
@@ -182,7 +188,10 @@ fn symbol_overrides_patch_preset() {
 fn styled_symbol_wraps() {
     let theme = dark_theme();
     let out = theme.styled_symbol("common.check", ThemeColor::Success);
-    assert!(out.starts_with("\x1b[39m") || out.starts_with("\x1b[38;"), "{out:?}");
+    assert!(
+        out.starts_with("\x1b[39m") || out.starts_with("\x1b[38;"),
+        "{out:?}"
+    );
     assert!(out.ends_with("\x1b[39m"), "{out:?}");
 }
 
@@ -224,9 +233,15 @@ fn spinner_frames_overrides() {
 fn lang_icon_alias_resolution() {
     let theme = dark_theme();
     assert!(!theme.get_lang_icon(Some("python")).is_empty());
-    assert_eq!(theme.get_lang_icon(Some("py")), theme.get_lang_icon(Some("python")));
+    assert_eq!(
+        theme.get_lang_icon(Some("py")),
+        theme.get_lang_icon(Some("python"))
+    );
     assert!(!theme.get_lang_icon(Some("rs")).is_empty());
-    assert_eq!(theme.get_lang_icon(Some("bogus")), theme.get_lang_icon(None));
+    assert_eq!(
+        theme.get_lang_icon(Some("bogus")),
+        theme.get_lang_icon(None)
+    );
 }
 
 #[test]
@@ -234,10 +249,16 @@ fn lang_icon_styled_brand() {
     let theme = dark_theme();
     let py = theme.get_lang_icon_styled(Some("python"));
     // Brand-colored: contains the python blue.
-    assert!(py.starts_with("\x1b[38;2;55;118;171m") || py.starts_with("\x1b[38;5;"), "{py:?}");
+    assert!(
+        py.starts_with("\x1b[38;2;55;118;171m") || py.starts_with("\x1b[38;5;"),
+        "{py:?}"
+    );
     let plain = theme.get_lang_icon_styled(Some("rust"));
     // No brand entry → muted fg.
-    assert!(plain.starts_with("\x1b[39m") || plain.starts_with("\x1b[38;"), "{plain:?}");
+    assert!(
+        plain.starts_with("\x1b[39m") || plain.starts_with("\x1b[38;"),
+        "{plain:?}"
+    );
 }
 
 // ---- thinking border color ------------------------------------------------
@@ -245,13 +266,25 @@ fn lang_icon_styled_brand() {
 #[test]
 fn thinking_border_color_max_fallback() {
     let theme = dark_theme();
-    assert_eq!(theme.get_thinking_border_color("max"), ThemeColor::ThinkingXhigh);
+    assert_eq!(
+        theme.get_thinking_border_color("max"),
+        ThemeColor::ThinkingXhigh
+    );
     let mut fg = HashMap::new();
     fg.insert("thinkingMax".to_string(), json!("#ff0000"));
     let theme = make_theme(fg, HashMap::new(), HashMap::new());
-    assert_eq!(theme.get_thinking_border_color("max"), ThemeColor::ThinkingMax);
-    assert_eq!(theme.get_thinking_border_color("minimal"), ThemeColor::ThinkingMinimal);
-    assert_eq!(theme.get_thinking_border_color("bogus"), ThemeColor::ThinkingOff);
+    assert_eq!(
+        theme.get_thinking_border_color("max"),
+        ThemeColor::ThinkingMax
+    );
+    assert_eq!(
+        theme.get_thinking_border_color("minimal"),
+        ThemeColor::ThinkingMinimal
+    );
+    assert_eq!(
+        theme.get_thinking_border_color("bogus"),
+        ThemeColor::ThinkingOff
+    );
 }
 
 // ---- colorblind mode ------------------------------------------------------
@@ -265,14 +298,20 @@ fn colorblind_adjusts_tool_diff_added() {
     let hex = adjusted.get_color_hex(ThemeColor::ToolDiffAdded);
     // Green shifted 60° toward blue: #00ff00 → #00ffff-ish.
     let (h, _, _) = color::rgb_to_hsv(color::hex_to_rgb(&hex).expect("hex parses"));
-    assert!((h - 180.0).abs() < 2.0, "expected hue ~180, got {h} for {hex}");
+    assert!(
+        (h - 180.0).abs() < 2.0,
+        "expected hue ~180, got {h} for {hex}"
+    );
 }
 
 #[test]
 fn colorblind_noop_without_tool_diff_added() {
     let theme = dark_theme();
     let adjusted = theme.with_color_blind_mode();
-    assert_eq!(adjusted.get_color_hex(ThemeColor::ToolDiffAdded), DARK_DEFAULT_FG);
+    assert_eq!(
+        adjusted.get_color_hex(ThemeColor::ToolDiffAdded),
+        DARK_DEFAULT_FG
+    );
 }
 
 // ---- text styles ----------------------------------------------------------
@@ -298,7 +337,11 @@ fn accessors() {
     assert_eq!(theme.get_symbol_preset(), SymbolPreset::Unicode);
     assert_eq!(theme.get_accent_color_hex(), "#ff0000");
     assert!(!theme.get_all_theme_color_hexes().is_empty());
-    assert!(theme.get_major_theme_color_hexes().contains(&"#ff0000".to_string()));
+    assert!(
+        theme
+            .get_major_theme_color_hexes()
+            .contains(&"#ff0000".to_string())
+    );
 }
 
 // ---- GlobalTheme ----------------------------------------------------------
@@ -361,17 +404,20 @@ fn every_builtin_theme_loads() {
         let hex = theme.get_color_hex(ThemeColor::Accent);
         assert!(hex.starts_with('#'), "accent hex for {name}: {hex}");
         assert_eq!(hex.len(), 7, "accent hex for {name}: {hex}");
-        assert!(!theme.symbol("status.success").is_empty(), "symbols missing for {name}");
+        assert!(
+            !theme.symbol("status.success").is_empty(),
+            "symbols missing for {name}"
+        );
     }
 }
 
 #[test]
 fn dark_and_light_load_through_loader() {
-    let dark = loader::load_theme("dark", &loader::CreateThemeOptions::default())
-        .expect("dark loads");
+    let dark =
+        loader::load_theme("dark", &loader::CreateThemeOptions::default()).expect("dark loads");
     assert!(!dark.is_light());
-    let light = loader::load_theme("light", &loader::CreateThemeOptions::default())
-        .expect("light loads");
+    let light =
+        loader::load_theme("light", &loader::CreateThemeOptions::default()).expect("light loads");
     assert!(light.is_light());
 }
 

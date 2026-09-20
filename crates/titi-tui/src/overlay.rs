@@ -255,7 +255,12 @@ mod tests {
         let frame = stack.composite(&vp, 8);
         assert_eq!(
             frame,
-            vec!["a".to_owned(), "b".to_owned(), " first  ".to_owned(), " second ".to_owned()]
+            vec![
+                "a".to_owned(),
+                "b".to_owned(),
+                " first  ".to_owned(),
+                " second ".to_owned()
+            ]
         );
     }
 

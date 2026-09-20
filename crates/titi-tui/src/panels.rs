@@ -29,7 +29,9 @@ fn box_top_title(inner_w: usize, title: &str) -> String {
         return box_top(inner_w);
     }
     let shown = truncate_to_width(&format!(" {title} "), inner_w.saturating_sub(1));
-    let fill = inner_w.saturating_sub(1).saturating_sub(visible_width(&shown));
+    let fill = inner_w
+        .saturating_sub(1)
+        .saturating_sub(visible_width(&shown));
     format!("╭─{shown}{}╮", "─".repeat(fill))
 }
 
@@ -699,11 +701,7 @@ mod tests {
 
     #[test]
     fn panel_esc_cancels() {
-        let mut p = SelectionPanel::new(
-            "Choose",
-            vec!["a", "b"],
-            vec!["A".into(), "B".into()],
-        );
+        let mut p = SelectionPanel::new("Choose", vec!["a", "b"], vec!["A".into(), "B".into()]);
         p.handle_input("\x1b"); // Esc
         assert!(p.is_closed());
         let res = p.result().unwrap();
@@ -750,11 +748,7 @@ mod tests {
 
     #[test]
     fn panel_backspace_edits_filter() {
-        let mut p = SelectionPanel::new(
-            "X",
-            vec!["aa", "ab"],
-            vec!["aa".into(), "ab".into()],
-        );
+        let mut p = SelectionPanel::new("X", vec!["aa", "ab"], vec!["aa".into(), "ab".into()]);
         p.handle_input("b");
         assert_eq!(p.visible_count(), 1);
         p.handle_input("\x7f");
@@ -773,11 +767,7 @@ mod tests {
             rows[0].contains("Model"),
             "title stays in top border: {rows:?}"
         );
-        assert!(
-            rows.len() <= 7,
-            "chrome + 5 items: {}",
-            rows.len()
-        );
+        assert!(rows.len() <= 7, "chrome + 5 items: {}", rows.len());
         p.handle_input("\x1b[B");
         p.handle_input("\x1b[B");
         p.handle_input("\x1b[B");
@@ -847,7 +837,10 @@ mod tests {
     fn render_wide_panel_has_border() {
         let mut p = SelectionPanel::new("Choose", vec!["x"], vec!["Item".into()]);
         let rows = p.render(40);
-        assert!(rows[0].starts_with('╭'), "should start with top border: {rows:?}");
+        assert!(
+            rows[0].starts_with('╭'),
+            "should start with top border: {rows:?}"
+        );
         assert!(
             rows.last().unwrap().starts_with('╰'),
             "should end with bottom border"
@@ -991,6 +984,9 @@ mod tests {
         p.refresh(completions());
         let rows = p.render(4);
         assert!(!rows.is_empty());
-        assert!(rows.iter().all(|r| r.starts_with('>') || r.starts_with("  ")));
+        assert!(
+            rows.iter()
+                .all(|r| r.starts_with('>') || r.starts_with("  "))
+        );
     }
 }

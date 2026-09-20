@@ -1,9 +1,9 @@
 //! OMP `app.*` action dispatch (followUp, dequeue, model.select, session.switch).
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use titi_cli::app::{default_theme, App, Dispatch};
+use titi_cli::app::{App, Dispatch, default_theme};
 use titi_tui::composer::QueueMode;
 
 fn app() -> App {
@@ -81,7 +81,10 @@ fn pause_and_hotkeys_are_builtins() {
 #[test]
 fn default_manager_binds_follow_up() {
     let app = app();
-    assert!(app.keys().matches_canonical("ctrl+q", "app.message.followUp"));
+    assert!(
+        app.keys()
+            .matches_canonical("ctrl+q", "app.message.followUp")
+    );
     assert!(app.keys().matches_canonical("alt+m", "app.model.select"));
     assert!(app.keys().matches_canonical("ctrl+x", "app.session.switch"));
 }
@@ -216,7 +219,10 @@ fn cycle_forward_advances_model() {
         Dispatch::Handled(None)
     );
     let after = app.render().join("\n");
-    assert_ne!(before, after, "cycleForward should change the model segment");
+    assert_ne!(
+        before, after,
+        "cycleForward should change the model segment"
+    );
 }
 
 #[test]

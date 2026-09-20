@@ -20,11 +20,7 @@ pub enum InputEvent {
     /// Bracketed paste content.
     Paste(String),
     /// Mouse event (SGR/1006).
-    Mouse {
-        kind: MouseKind,
-        x: u16,
-        y: u16,
-    },
+    Mouse { kind: MouseKind, x: u16, y: u16 },
     /// Terminal resize.
     Resize(u16, u16),
     /// An unrecognised or probe-targeted escape sequence.  These bytes are
