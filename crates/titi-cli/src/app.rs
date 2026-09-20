@@ -109,6 +109,8 @@ pub struct App {
     assistant_messages: Vec<String>,
     /// Assistant text currently arriving from the engine stream.
     streaming_response: String,
+    /// Live session id, so `/checkpoint` and `/rewind` can address it.
+    session_id: Option<String>,
 }
 
 impl App {
@@ -146,6 +148,7 @@ impl App {
             last_terminal_appearance: None,
             assistant_messages: Vec::new(),
             streaming_response: String::new(),
+            session_id: None,
         }
     }
 
@@ -164,7 +167,23 @@ impl App {
         registry.register_builtin("pause", "Pause the agent at the next safe boundary");
         registry.register_builtin("hotkeys", "Show active keybinding chords");
         registry.register_builtin("switch", "Open the session switcher");
+        registry.register_builtin("checkpoint", "Record a rewind point for this session");
+        registry.register_builtin("checkpoints", "List this session's rewind points");
+        registry.register_builtin(
+            "rewind",
+            "Rewind the session to a checkpoint (newest by default)",
+        );
         registry
+    }
+
+    /// Bind the live session id (set once the engine has resumed or created it).
+    pub fn set_session_id(&mut self, id: impl Into<String>) {
+        self.session_id = Some(id.into());
+    }
+
+    /// The live session id, if the engine has reported one.
+    pub fn session_id(&self) -> Option<&str> {
+        self.session_id.as_deref()
     }
 
     /// Whether a modal overlay panel is currently shown.
@@ -1265,6 +1284,46 @@ impl App {
                 let _ = self.details(args);
                 None
             }
+            "checkpoint" => {
+                match self.session_id.as_deref() {
+                    Some(id) => match checkpoint_session(&titi_config::agent_dir(), id) {
+                        Ok(summary) => self.set_alert(summary),
+                        Err(reason) => self.set_alert(format!("checkpoint: {reason}")),
+                    },
+                    None => self.set_alert("checkpoint: no live session"),
+                }
+                None
+            }
+            "checkpoints" => {
+                match self.session_id.as_deref() {
+                    Some(id) => match list_checkpoints(&titi_config::agent_dir(), id) {
+                        Ok(summary) => self.set_alert(summary),
+                        Err(reason) => self.set_alert(format!("checkpoints: {reason}")),
+                    },
+                    None => self.set_alert("checkpoints: no live session"),
+                }
+                None
+            }
+            "rewind" => {
+                let index = match args {
+                    "" => Ok(None),
+                    other => other
+                        .parse::<usize>()
+                        .map(Some)
+                        .map_err(|_| format!("usage: /rewind [n] (got {other})")),
+                };
+                match (self.session_id.as_deref(), index) {
+                    (None, _) => self.set_alert("rewind: no live session"),
+                    (Some(_), Err(reason)) => self.set_alert(format!("rewind: {reason}")),
+                    (Some(id), Ok(index)) => {
+                        match rewind_session(&titi_config::agent_dir(), id, index) {
+                            Ok(summary) => self.set_alert(summary),
+                            Err(reason) => self.set_alert(format!("rewind: {reason}")),
+                        }
+                    }
+                }
+                None
+            }
             "mouse" => {
                 if args == "toggle" || args.is_empty() {
                     Some(SubmitEffect::MouseToggle)
@@ -1560,6 +1619,56 @@ pub fn delete_session_from(agent_dir: &std::path::Path, id: &str) -> Result<(), 
 /// [`delete_session_from`] against the real agent directory.
 pub fn delete_session(id: &str) -> Result<(), String> {
     delete_session_from(&titi_config::agent_dir(), id)
+}
+
+/// Record a rewind point on a session; returns a human summary.
+pub fn checkpoint_session(agent_dir: &std::path::Path, session_id: &str) -> Result<String, String> {
+    let store = titi_core::session::SessionStore::new(agent_dir).map_err(|e| e.to_string())?;
+    let checkpoint = store.checkpoint(session_id).map_err(|e| e.to_string())?;
+    Ok(format!("checkpoint: {} entries", checkpoint.entries))
+}
+
+/// List a session's rewind points, oldest first.
+pub fn list_checkpoints(agent_dir: &std::path::Path, session_id: &str) -> Result<String, String> {
+    let store = titi_core::session::SessionStore::new(agent_dir).map_err(|e| e.to_string())?;
+    let all = store.checkpoints(session_id).map_err(|e| e.to_string())?;
+    if all.is_empty() {
+        return Ok("checkpoints: none".into());
+    }
+    let rows: Vec<String> = all
+        .iter()
+        .enumerate()
+        .map(|(i, cp)| format!("#{} · {} entries", i + 1, cp.entries))
+        .collect();
+    Ok(format!("checkpoints: {}", rows.join(" | ")))
+}
+
+/// Rewind a session to checkpoint `index` (1-based); the newest when `None`.
+pub fn rewind_session(
+    agent_dir: &std::path::Path,
+    session_id: &str,
+    index: Option<usize>,
+) -> Result<String, String> {
+    let store = titi_core::session::SessionStore::new(agent_dir).map_err(|e| e.to_string())?;
+    let all = store.checkpoints(session_id).map_err(|e| e.to_string())?;
+    if all.is_empty() {
+        return Err("no checkpoints recorded".into());
+    }
+    let position = match index {
+        None => all.len() - 1,
+        Some(0) => return Err("checkpoints are numbered from 1".into()),
+        Some(n) if n <= all.len() => n - 1,
+        Some(n) => return Err(format!("no checkpoint #{n} (have {})", all.len())),
+    };
+    let target = all[position].clone();
+    store
+        .rewind(session_id, &target)
+        .map_err(|e| e.to_string())?;
+    Ok(format!(
+        "rewound to checkpoint #{} ({} entries)",
+        position + 1,
+        target.entries
+    ))
 }
 
 /// Result of dispatching a canonical key.
