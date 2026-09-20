@@ -101,7 +101,7 @@ pub(crate) async fn execute_tools(
             });
         }
         let started = std::time::Instant::now();
-        let result = invoke_one(call, tools, approval_mode, waiters, aborted).await;
+        let result = invoke_one(turn_id, call, tools, approval_mode, waiters, aborted, events).await;
         if let Some(recorder) = trajectory.lock().await.as_mut() {
             let _ = recorder.record(titi_core::trajectory::EventKind::ToolResult {
                 id: result.call_id.to_string(),
@@ -133,11 +133,13 @@ struct Executed {
 }
 
 async fn invoke_one(
+    turn_id: TurnId,
     call: PendingToolCall,
     tools: &ToolRegistry,
     approval_mode: ApprovalMode,
     waiters: &ApprovalWaiters,
     aborted: &AtomicBool,
+    events: &mpsc::Sender<EngineEvent>,
 ) -> Executed {
     let Some(handler) = tools.get(&call.name) else {
         return Executed {
@@ -148,6 +150,13 @@ async fn invoke_one(
     };
     let tier = tools.approval_tier(&call.name);
     if !approval_mode.auto_approves(tier) {
+        let _ = events
+            .send(EngineEvent::ToolApprovalNeeded {
+                turn_id,
+                call_id: call.call_id.clone(),
+                name: call.name.clone(),
+            })
+            .await;
         let (tx, rx) = oneshot::channel();
         waiters.lock().await.insert(call.call_id.clone(), tx);
         let approved = tokio::select! {

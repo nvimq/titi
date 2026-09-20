@@ -130,6 +130,12 @@ async fn exec_tool_waits_for_approval() {
         tool_started,
         Some(EngineEvent::ToolStarted { name, .. }) if name == "shell_probe"
     ));
+    let needed = engine.recv().await;
+    assert!(matches!(
+        needed,
+        Some(EngineEvent::ToolApprovalNeeded { name, call_id, .. })
+            if name == "shell_probe" && call_id == "call-1"
+    ));
     engine
         .send(EngineCommand::ApproveTool {
             call_id: "call-1".into(),
@@ -192,9 +198,25 @@ async fn session_trajectory_records_user_tools_and_turn_end() {
         .unwrap();
     let _ = collect_until_terminal(&mut engine).await;
     let replay = TrajectoryRecorder::open(dir.path(), "sess").unwrap();
-    let kinds: Vec<_> = replay.tail(16).into_iter().map(|event| event.kind).collect();
-    assert!(kinds.iter().any(|kind| matches!(kind, EventKind::UserMessage { text } if text == "hi")));
-    assert!(kinds.iter().any(|kind| matches!(kind, EventKind::ToolCall { name, .. } if name == "echo")));
-    assert!(kinds.iter().any(|kind| matches!(kind, EventKind::ToolResult { ok: true, .. })));
+    let kinds: Vec<_> = replay
+        .tail(16)
+        .into_iter()
+        .map(|event| event.kind)
+        .collect();
+    assert!(
+        kinds
+            .iter()
+            .any(|kind| matches!(kind, EventKind::UserMessage { text } if text == "hi"))
+    );
+    assert!(
+        kinds
+            .iter()
+            .any(|kind| matches!(kind, EventKind::ToolCall { name, .. } if name == "echo"))
+    );
+    assert!(
+        kinds
+            .iter()
+            .any(|kind| matches!(kind, EventKind::ToolResult { ok: true, .. }))
+    );
     assert!(kinds.iter().any(|kind| matches!(kind, EventKind::TurnEnd)));
 }

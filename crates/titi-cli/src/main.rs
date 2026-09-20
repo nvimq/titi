@@ -12,8 +12,8 @@
 //! Contract: `docs/research/agent-ux/README.md` (DoD).
 
 use std::io::{self, Write};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use crossterm::cursor::{Hide, Show};
@@ -23,17 +23,17 @@ use crossterm::event::{
 };
 use crossterm::execute;
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, size, EnterAlternateScreen, LeaveAlternateScreen,
+    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode, size,
 };
 
 use titi_cli::app::{
-    default_theme, delete_session, load_mouse_preset, save_mouse_preset, App,
-    Dispatch, OverlayOutcome, SubmitEffect,
+    App, Dispatch, OverlayOutcome, SubmitEffect, default_theme, delete_session, load_mouse_preset,
+    save_mouse_preset,
 };
 use titi_cli::engine::start_engine;
 use titi_cli::keys::{canonical_from_key_event, overlay_key_data};
 use titi_engine::EngineCommand;
-use titi_tui::caps::{osc52_copy, MousePreset, MODE_2031_DISABLE, MODE_2031_ENABLE, OSC11_QUERY};
+use titi_tui::caps::{MODE_2031_DISABLE, MODE_2031_ENABLE, MousePreset, OSC11_QUERY, osc52_copy};
 use titi_tui::renderer::{FramePlan, FrameProvider, Renderer, ResizeScrollbackMode};
 
 /// The startup banner shown before the provider is ready.
@@ -58,11 +58,11 @@ fn main() -> io::Result<()> {
     let mut mouse = load_mouse_preset().unwrap_or(MousePreset::Off);
     let mut headless = false;
     let mut args = std::env::args().skip(1);
-      while let Some(arg) = args.next() {
+    while let Some(arg) = args.next() {
         if arg == "--mouse"
-              && let Some(preset) = args.next().and_then(|v| MousePreset::parse(&v))
+            && let Some(preset) = args.next().and_then(|v| MousePreset::parse(&v))
         {
-              mouse = preset;
+            mouse = preset;
         } else if arg == "--headless" || arg == "-p" {
             headless = true;
         }
@@ -81,7 +81,7 @@ fn main() -> io::Result<()> {
     }
     let (mut engine, models) = start_engine().map_err(io::Error::other)?;
     if headless {
-          let code = runtime.block_on(titi_cli::headless::run(engine))?;
+        let code = runtime.block_on(titi_cli::headless::run(engine))?;
         std::process::exit(code);
     }
 
@@ -120,10 +120,7 @@ fn main() -> io::Result<()> {
                     };
                     // Pause overlay: Esc/Enter/Space/Ctrl+C resume (OMP /pause).
                     if app.is_paused()
-                        && matches!(
-                            canonical.as_str(),
-                            "escape" | "enter" | "space" | "ctrl+c"
-                        )
+                        && matches!(canonical.as_str(), "escape" | "enter" | "space" | "ctrl+c")
                     {
                         app.close_overlay();
                         paint(&mut renderer, &mut app, &input)?;
@@ -152,7 +149,7 @@ fn main() -> io::Result<()> {
                                     &mut engine,
                                     &mut app,
                                     &mut input,
-                                      effect,
+                                    effect,
                                 )?;
                             } else {
                                 paint(&mut renderer, &mut app, &input)?;
@@ -162,10 +159,14 @@ fn main() -> io::Result<()> {
                 }
                 Event::Resize(w, h) => {
                     app.set_size(w, h);
-                    renderer.on_resize(w, h, &mut AppFrame {
-                        app: &mut app,
-                        input: &input,
-                    })?;
+                    renderer.on_resize(
+                        w,
+                        h,
+                        &mut AppFrame {
+                            app: &mut app,
+                            input: &input,
+                        },
+                    )?;
                 }
                 Event::Mouse(mouse_event) => {
                     handle_mouse(&mut app, mouse_event);
@@ -194,13 +195,15 @@ fn main() -> io::Result<()> {
 
         let flushed = app.flush_queued(&ready);
         for prompt in flushed {
-              let _ = engine.try_send(EngineCommand::SubmitPrompt { text: prompt.into() });
-          }
+            let _ = engine.try_send(EngineCommand::SubmitPrompt {
+                text: prompt.into(),
+            });
+        }
         let mut events = false;
         while let Ok(event) = engine.try_recv() {
             app.ingest_engine_event(event);
-              events = true;
-          }
+            events = true;
+        }
         if events {
             paint(&mut renderer, &mut app, &input)?;
         }
@@ -264,16 +267,31 @@ fn handle_outcome(
             },
             None => eprintln!("approval: yes (no pending action)"),
         },
-        OverlayOutcome::Approval(false) => eprintln!("approval: declined (nothing deleted)"),
+        OverlayOutcome::Approval(false) => {
+            let _ = app.take_pending_close();
+            eprintln!("approval: declined (nothing deleted)");
+        }
+        OverlayOutcome::ToolApproval { call_id, approved } => {
+            let _ = engine.try_send(EngineCommand::ApproveTool {
+                call_id: call_id.into(),
+                approved,
+            });
+        }
         OverlayOutcome::Dismissed => {}
         OverlayOutcome::HubSelected(id) => {
-            let _ = engine.try_send(EngineCommand::FocusAgent { agent_id: id.into() });
+            let _ = engine.try_send(EngineCommand::FocusAgent {
+                agent_id: id.into(),
+            });
         }
         OverlayOutcome::HubRevive(id) => {
-            let _ = engine.try_send(EngineCommand::ReviveAgent { agent_id: id.into() });
+            let _ = engine.try_send(EngineCommand::ReviveAgent {
+                agent_id: id.into(),
+            });
         }
         OverlayOutcome::HubStop(id) => {
-            let _ = engine.try_send(EngineCommand::StopAgent { agent_id: id.into() });
+            let _ = engine.try_send(EngineCommand::StopAgent {
+                agent_id: id.into(),
+            });
         }
     }
 }
@@ -334,7 +352,9 @@ fn apply_submit_effect(
             }
         }
         SubmitEffect::Queued(prompt) | SubmitEffect::Delivered(prompt) => {
-            let _ = engine.try_send(EngineCommand::SubmitPrompt { text: prompt.into() });
+            let _ = engine.try_send(EngineCommand::SubmitPrompt {
+                text: prompt.into(),
+            });
         }
         SubmitEffect::Copy(text) => {
             write!(stdout, "{}", osc52_copy(&text))?;
@@ -355,11 +375,7 @@ fn cycle_mouse(current: MousePreset) -> MousePreset {
 }
 
 /// Viewport-diff paint via [`Renderer`] — never `Clear(All)`.
-fn paint(
-    renderer: &mut Renderer<io::Stdout>,
-    app: &mut App,
-    input: &str,
-) -> io::Result<()> {
+fn paint(renderer: &mut Renderer<io::Stdout>, app: &mut App, input: &str) -> io::Result<()> {
     let mut provider = AppFrame { app, input };
     let plan = provider.plan((renderer.width(), renderer.height()));
     if let Some(ack) = renderer.draw(plan)? {

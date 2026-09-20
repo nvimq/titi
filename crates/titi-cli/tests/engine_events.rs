@@ -1,7 +1,7 @@
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use titi_cli::app::{default_theme, App};
+use titi_cli::app::{App, default_theme};
 use titi_engine::{AgentKind, AgentStatus, EngineEvent, TurnId};
 use titi_providers::StopReason;
 
@@ -104,4 +104,43 @@ fn hub_r_and_x_emit_engine_commands() {
         app.overlay_input("x"),
         Some(titi_cli::app::OverlayOutcome::HubStop("agent-1".into()))
     );
+}
+
+#[test]
+fn tool_approval_needed_opens_overlay_and_emits_command() {
+    let mut app = app();
+    app.ingest_engine_event(EngineEvent::ToolApprovalNeeded {
+        turn_id: TurnId(1),
+        call_id: "call-1".into(),
+        name: "bash".into(),
+    });
+    assert!(app.overlay_open());
+    let rendered = app.render().join("\n");
+    assert!(rendered.contains("Run tool bash?"), "{rendered}");
+    assert_eq!(
+        app.overlay_input("\r"),
+        Some(titi_cli::app::OverlayOutcome::ToolApproval {
+            call_id: "call-1".into(),
+            approved: true,
+        })
+    );
+    assert!(!app.overlay_open());
+}
+
+#[test]
+fn tool_approval_esc_denies_without_session_close() {
+    let mut app = app();
+    app.ingest_engine_event(EngineEvent::ToolApprovalNeeded {
+        turn_id: TurnId(1),
+        call_id: "call-9".into(),
+        name: "bash".into(),
+    });
+    assert_eq!(
+        app.overlay_input("\x1b"),
+        Some(titi_cli::app::OverlayOutcome::ToolApproval {
+            call_id: "call-9".into(),
+            approved: false,
+        })
+    );
+    assert!(app.take_pending_close().is_none());
 }

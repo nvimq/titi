@@ -105,6 +105,7 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 - [x] Tool registry, schemas, approval tiers (`read`/`write`/`exec`).
 - [x] Bounded tool rounds + tool-result replay into the next provider request.
 - [x] `ApproveTool` gates exec-tier tools under `write`/`always-ask`.
+- [x] TUI Approval overlay on `ToolApprovalNeeded`; Yes/Esc map to `ApproveTool`.
 - [x] Real filesystem/shell handlers (`read`/`write`/`edit`/`glob`/`grep`/`bash`) jailed to cwd.
 - [x] Trajectory records ToolCall/ToolResult when a recorder is attached.
 
@@ -122,7 +123,7 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 
 Background dispatch, shared read cache, per-file write claims, findings bus, steering, fresh-context reviewer.
 
-Готовый foundation: engine protocol, provider registry, tools, session trajectory, headless JSONL. Следующий слой — TUI approval overlay, Genome, background agents.
+Готовый foundation: engine protocol, provider registry, tools, session trajectory, headless JSONL, TUI tool-approval overlay. Следующий слой — Genome, затем background agents.
 
 ### E5 — GPUI desktop
 

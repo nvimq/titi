@@ -1,7 +1,7 @@
 # STATE — Empryo port
 
-Updated: 2026-09-19
-Phase: E0 — Engine protocol and bounded provider loop
+Updated: 2026-09-20
+Phase: E1 — Tool loop (TUI approval overlay)
 Status: in-progress
 Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 
@@ -30,6 +30,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `LayeredCredentialSource`: process env → layered `.env` → `auth.db`.
 - CLI создаёт session + `TrajectoryRecorder` на старте; UserMessage/ToolCall/ToolResult/TurnEnd пишутся на диск.
 - `titi --headless` читает JSONL `{"command": EngineCommand}` со stdin и пишет `EngineEvent` в stdout.
+- Engine шлёт `ToolApprovalNeeded` перед ожиданием `ApproveTool`.
+- TUI открывает Approval overlay на exec-tier tool; Yes/Esc шлют `ApproveTool { approved }`.
+- Session-close и tool-approval не смешиваются: `pending_close` остаётся отдельным от `pending_tool_approval`.
 
 ## VERIFIED
 
@@ -56,6 +59,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `session_trajectory_records_user_tools_and_turn_end` PASS.
 - `engine_events_round_trip_as_jsonl` PASS.
 - `project check` после session trajectory + headless JSONL — PASS.
+- `exec_tool_waits_for_approval` ждёт `ToolApprovalNeeded` перед `ApproveTool` — PASS.
+- `engine_events`: overlay Yes → `ToolApproval { approved: true }`; Esc не трогает session close — PASS.
+- `overlays_paste` session-close gate — PASS.
 
 ## DECISIONS
 
@@ -76,8 +82,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 
 ## NEXT
 
-1. Approval overlay в TUI для exec-tier tools.
-2. Genome indexing (E3).
+1. Genome indexing (E3): crate `titi-genome`, incremental parse, prompt projection.
+2. Restore/checkpoints и versioned RPC framing (остаток E2).
 3. Background agents / file claims (E4).
 
 ## Verification baseline
