@@ -102,7 +102,10 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 
 ### E1 — Tool loop
 
-Tool registry, schemas, approval tiers, bounded tool rounds, tool-result replay, trajectory.
+- [x] Tool registry, schemas, approval tiers (`read`/`write`/`exec`).
+- [x] Bounded tool rounds + tool-result replay into the next provider request.
+- [x] `ApproveTool` gates exec-tier tools under `write`/`always-ask`.
+- [ ] Real filesystem/shell handlers and trajectory persistence.
 
 ### E2 — Session/headless
 
@@ -116,7 +119,7 @@ JSONL/SQLite persistence, restore, checkpoints, JSON/events RPC, stable exit cod
 
 Background dispatch, shared read cache, per-file write claims, findings bus, steering, fresh-context reviewer.
 
-Готовый foundation: engine protocol содержит lifecycle-команды/события агентов, TUI показывает progress/thinking/tools и живой roster через `/agents`, `AgentSupervisor` исполняет spawn/stop/revive, `StreamingAgentRunner` ходит в тот же provider registry. Следующий слой — tool loop, shared tools и file claims.
+Готовый foundation: engine protocol, provider registry, AgentSupervisor, StreamingAgentRunner и bounded tool loop. Следующий слой — реальные tool handlers, trajectory, secrets store и headless/RPC.
 
 ### E5 — GPUI desktop
 

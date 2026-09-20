@@ -1511,6 +1511,7 @@ dependencies = [
  "smol_str",
  "thiserror",
  "titi-providers",
+ "titi-tools",
  "tokio",
 ]
 
@@ -1545,6 +1546,14 @@ dependencies = [
 [[package]]
 name = "titi-tools"
 version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "serde",
+ "serde_json",
+ "smol_str",
+ "titi-providers",
+ "tokio",
+]
 
 [[package]]
 name = "titi-tui"

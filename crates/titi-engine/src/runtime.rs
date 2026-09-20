@@ -5,12 +5,15 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use futures::StreamExt;
 use smol_str::SmolStr;
 use titi_providers::{
-    ChatMessage, ErrorReason, RequestCtx, Role, StreamEvent, Transport, TransportError, WireRequest,
+    ChatMessage, ErrorReason, RequestCtx, Role, StreamEvent, Transport, TransportError,
+    WireRequest,
 };
+use titi_tools::{ApprovalMode, ToolRegistry};
 use tokio::sync::mpsc;
 
 use crate::protocol::{EngineCommand, EngineEvent, TurnId};
 use crate::registry::{RegistryError, ResolvedModel};
+use crate::tool_loop::{execute_tools, ApprovalWaiters, ToolCallCollector};
 
 /// Resolves a model id to its provider transport.
 pub trait TransportResolver: Send + Sync + 'static {
@@ -33,6 +36,8 @@ pub struct EngineConfig {
     pub max_transient_retries: u32,
     pub command_capacity: usize,
     pub event_capacity: usize,
+      pub max_tool_rounds: u32,
+    pub approval_mode: ApprovalMode,
 }
 
 impl EngineConfig {
@@ -43,6 +48,8 @@ impl EngineConfig {
             max_transient_retries: 2,
             command_capacity: 64,
             event_capacity: 256,
+              max_tool_rounds: 8,
+            approval_mode: ApprovalMode::Write,
         }
     }
 }
@@ -90,11 +97,13 @@ pub struct EngineRuntime {
     events: mpsc::Sender<EngineEvent>,
     next_turn: Arc<AtomicU64>,
     agents: Option<crate::agents::AgentSupervisor>,
+      tools: ToolRegistry,
+    approval_waiters: ApprovalWaiters,
 }
 
 impl EngineRuntime {
     pub fn start(config: EngineConfig, resolver: Arc<dyn TransportResolver>) -> Engine {
-        Self::start_inner(config, resolver, None)
+        Self::start_inner(config, resolver, None, ToolRegistry::new())
     }
 
     pub fn start_with_agents(
@@ -102,16 +111,34 @@ impl EngineRuntime {
         resolver: Arc<dyn TransportResolver>,
         runner: Arc<dyn crate::agents::AgentRunner>,
     ) -> Engine {
-        Self::start_inner(config, resolver, Some(runner))
+        Self::start_inner(config, resolver, Some(runner), ToolRegistry::new())
     }
 
-    fn start_inner(
+    pub fn start_with_tools(
         config: EngineConfig,
         resolver: Arc<dyn TransportResolver>,
-        runner: Option<Arc<dyn crate::agents::AgentRunner>>,
+        tools: ToolRegistry,
     ) -> Engine {
-        let (command_tx, command_rx) = mpsc::channel(config.command_capacity);
-        let (event_tx, event_rx) = mpsc::channel(config.event_capacity);
+        Self::start_inner(config, resolver, None, tools)
+      }
+
+      pub fn start_with_agents_and_tools(
+        config: EngineConfig,
+        resolver: Arc<dyn TransportResolver>,
+        runner: Arc<dyn crate::agents::AgentRunner>,
+        tools: ToolRegistry,
+      ) -> Engine {
+        Self::start_inner(config, resolver, Some(runner), tools)
+      }
+
+      fn start_inner(
+        config: EngineConfig,
+          resolver: Arc<dyn TransportResolver>,
+          runner: Option<Arc<dyn crate::agents::AgentRunner>>,
+          tools: ToolRegistry,
+      ) -> Engine {
+          let (command_tx, command_rx) = mpsc::channel(config.command_capacity);
+          let (event_tx, event_rx) = mpsc::channel(config.event_capacity);
         let agents =
             runner.map(|runner| crate::agents::AgentSupervisor::new(runner, event_tx.clone()));
         let runtime = Self {
@@ -121,6 +148,8 @@ impl EngineRuntime {
             events: event_tx,
             next_turn: Arc::new(AtomicU64::new(1)),
             agents,
+            tools,
+            approval_waiters: ApprovalWaiters::default(),
         };
         tokio::spawn(runtime.run());
         Engine {
@@ -162,8 +191,10 @@ impl EngineRuntime {
                             }
                             break;
                         }
-                        EngineCommand::ApproveTool { .. } => {
-                            self.emit_control_failure("tool approval is not configured").await;
+                        EngineCommand::ApproveTool { call_id, approved } => {
+                            if let Some(waiter) = self.approval_waiters.lock().await.remove(&call_id) {
+                                  let _ = waiter.send(approved);
+                            }
                         }
                         EngineCommand::SpawnAgent { name, task, kind } => {
                             if let Some(agents) = &self.agents {
@@ -238,15 +269,19 @@ impl EngineRuntime {
         let config = self.config.clone();
         let resolver = Arc::clone(&self.resolver);
         let events = self.events.clone();
-        tokio::spawn(async move {
-            run_turn(
+        let tools = self.tools.clone();
+          let waiters = Arc::clone(&self.approval_waiters);
+          tokio::spawn(async move {
+              run_turn(
                 turn_id,
                 prompt,
                 primary_model,
                 config,
                 resolver,
-                events,
-                task_abort,
+                  events,
+                  task_abort,
+                tools,
+                waiters,
             )
             .await;
             let _ = done.send(turn_id).await;
@@ -263,6 +298,8 @@ async fn run_turn(
     resolver: Arc<dyn TransportResolver>,
     events: mpsc::Sender<EngineEvent>,
     aborted: Arc<AtomicBool>,
+      tools: ToolRegistry,
+    waiters: ApprovalWaiters,
 ) {
     let mut models = Vec::with_capacity(1 + config.fallback_models.len());
     models.push(primary_model);
@@ -305,32 +342,76 @@ async fn run_turn(
             })
             .await;
 
-        for attempt in 0..=config.max_transient_retries {
-            match stream_attempt(
-                turn_id,
-                &prompt,
-                &wire_model,
-                Arc::clone(&transport),
-                api_key.clone(),
-                events.clone(),
-                Arc::clone(&aborted),
-            )
-            .await
-            {
-                Ok(()) => return,
-                Err((error, visible_content)) => {
-                    if aborted.load(Ordering::SeqCst) {
-                        return;
-                    }
-                    if visible_content || !error.is_retryable() {
-                        emit_transport_failure(&events, turn_id, error).await;
-                        return;
-                    }
-                    if attempt == config.max_transient_retries {
-                        previous_model = Some(model.clone());
+        let mut messages = vec![ChatMessage {
+            role: Role::User,
+              content: prompt.clone(),
+              tool_calls: Vec::new(),
+          }];
+          let mut tool_rounds = 0;
+          loop {
+              let mut last_error = None;
+              let mut completed = false;
+            for _attempt in 0..=config.max_transient_retries {
+                  match stream_attempt(
+                      turn_id,
+                      &messages,
+                      &wire_model,
+                    Arc::clone(&transport),
+                      api_key.clone(),
+                    events.clone(),
+                    Arc::clone(&aborted),
+                      &tools,
+                  )
+                  .await
+                  {
+                      Ok(calls) if calls.is_empty() => {
+                        completed = true;
+                          break;
+                      }
+                      Ok(calls) => {
+                          if tool_rounds >= config.max_tool_rounds {
+                            let _ = events
+                                .send(EngineEvent::Failed {
+                                    turn_id: Some(turn_id),
+                                    reason: ErrorReason::Rejected,
+                                    message: "tool round cap reached".into(),
+                                })
+                                .await;
+                            return;
+                        }
+                        tool_rounds += 1;
+                        let extra = execute_tools(
+                            turn_id,
+                            calls,
+                            &tools,
+                            config.approval_mode,
+                            &waiters,
+                            &events,
+                            &aborted,
+                        )
+                        .await;
+                        messages.extend(extra);
+                        last_error = None;
                         break;
                     }
+                    Err((error, visible_content)) => {
+                        if aborted.load(Ordering::SeqCst) {
+                            return;
+                        }
+                        if visible_content || !error.is_retryable() {
+                            emit_transport_failure(&events, turn_id, error).await;
+                            return;
+                        }
+                        last_error = Some(error);
+                    }
                 }
+            }
+            if completed {
+                return;
+            }
+            if last_error.is_some() {
+                previous_model = Some(model.clone());
+                break;
             }
         }
     }
@@ -346,19 +427,17 @@ async fn run_turn(
 
 async fn stream_attempt(
     turn_id: TurnId,
-    prompt: &SmolStr,
+    messages: &[ChatMessage],
     model: &SmolStr,
     transport: Arc<dyn Transport>,
     api_key: Option<SmolStr>,
     events: mpsc::Sender<EngineEvent>,
     aborted: Arc<AtomicBool>,
-) -> Result<(), (TransportError, bool)> {
+      tools: &ToolRegistry,
+  ) -> Result<Vec<crate::tool_loop::PendingToolCall>, (TransportError, bool)> {
     let mut request = WireRequest::new(model.clone());
-    request.messages.push(ChatMessage {
-        role: Role::User,
-        content: prompt.clone(),
-        tool_calls: Vec::new(),
-    });
+      request.messages = messages.to_vec();
+      request.tools = tools.specs();
     let context = RequestCtx {
         api_key,
         aborted: Arc::clone(&aborted),
@@ -368,55 +447,51 @@ async fn stream_attempt(
         .await
         .map_err(|error| (error, false))?;
     let mut visible_content = false;
+    let mut collector = ToolCallCollector::default();
 
-    while let Some(event) = stream.next().await {
-        if aborted.load(Ordering::SeqCst) {
-            return Ok(());
+      while let Some(event) = stream.next().await {
+          if aborted.load(Ordering::SeqCst) {
+              return Ok(Vec::new());
         }
         visible_content |= event.is_content();
-        match event {
-            StreamEvent::TextDelta { text, .. } => {
-                let _ = events
-                    .send(EngineEvent::StreamDelta { turn_id, text })
-                    .await;
-            }
-            StreamEvent::ThinkingDelta { text, .. } => {
-                let _ = events
-                    .send(EngineEvent::ThinkingDelta { turn_id, text })
-                    .await;
-            }
-            StreamEvent::ToolcallStart { call, .. } => {
-                let _ = events
-                    .send(EngineEvent::ToolStarted {
-                        turn_id,
-                        call_id: call.call_id,
-                        name: call.name,
-                    })
-                    .await;
-            }
-            StreamEvent::Done { reason } => {
-                let _ = events
-                    .send(EngineEvent::TurnFinished { turn_id, reason })
-                    .await;
-                return Ok(());
-            }
-            StreamEvent::Error { reason, message } => {
-                let error = if reason == ErrorReason::Connection && !visible_content {
-                    TransportError::Retryable {
+          collector.observe(&event);
+          match event {
+              StreamEvent::TextDelta { text, .. } => {
+                  let _ = events
+                      .send(EngineEvent::StreamDelta { turn_id, text })
+                      .await;
+              }
+              StreamEvent::ThinkingDelta { text, .. } => {
+                  let _ = events
+                      .send(EngineEvent::ThinkingDelta { turn_id, text })
+                      .await;
+              }
+              StreamEvent::Done { reason } => {
+                  let calls = collector.take();
+                  if calls.is_empty() {
+                      let _ = events
+                          .send(EngineEvent::TurnFinished { turn_id, reason })
+                          .await;
+                  }
+                  return Ok(calls);
+              }
+              StreamEvent::Error { reason, message } => {
+                  let error = if reason == ErrorReason::Connection && !visible_content {
+                      TransportError::Retryable {
+                          status: None,
+                          message,
+                      }
+                  } else {
+                      TransportError::Fatal {
                         status: None,
-                        message,
-                    }
-                } else {
-                    TransportError::Fatal {
-                        status: None,
-                        message,
-                    }
-                };
-                return Err((error, visible_content));
-            }
-            _ => {}
-        }
-    }
+                          message,
+                      }
+                  };
+                  return Err((error, visible_content));
+              }
+              _ => {}
+          }
+      }
 
     Err((
         TransportError::Retryable {

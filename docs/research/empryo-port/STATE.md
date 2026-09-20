@@ -23,6 +23,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Registry descriptors читаются из settings (`providers`/`models`), иначе fallback на `default_registry_config()`.
 - `StreamingAgentRunner` исполняет spawn через тот же transport/credential resolver.
 - Hub `r`/`x` шлют `ReviveAgent`/`StopAgent` без закрытия overlay.
+- `titi-tools` содержит registry, approval tiers (`read`/`write`/`exec`) и режимы `always-ask`/`write`/`yolo`.
+- Engine исполняет bounded tool loop: collect toolcall triplet → approve → invoke → replay tool messages, cap `max_tool_rounds`.
 
 ## VERIFIED
 
@@ -41,6 +43,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `StreamingAgentRunner` progress test PASS.
 - Hub revive/stop overlay tests PASS.
 - `project check` после config descriptors / hub commands / runner — PASS.
+- `titi-tools` unit tests PASS.
+- `titi-engine` tools tests: auto-approve read, exec waits for ApproveTool, round cap — PASS.
+- `project check` после tool loop — PASS.
 
 ## DECISIONS
 
@@ -61,9 +66,10 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 
 ## NEXT
 
-1. Tool loop: registry, schemas, approval, bounded rounds, trajectory.
-2. Читать credentials из secrets store, не только env.
-3. Headless/RPC surface на том же EngineCommand/EngineEvent.
+1. Реальные read/edit/write/bash/glob/grep handlers вместо EchoTool.
+2. Trajectory log на каждый tool call.
+3. Читать credentials из secrets store, не только env.
+4. Headless/RPC surface на том же EngineCommand/EngineEvent.
 
 ## Verification baseline
 

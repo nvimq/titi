@@ -4,6 +4,7 @@ pub mod agents;
 pub mod protocol;
 pub mod registry;
 pub mod runtime;
+pub mod tool_loop;
 
 pub use agents::{AgentContext, AgentRequest, AgentRunner, AgentSupervisor, StreamingAgentRunner};
 pub use protocol::{AgentKind, AgentStatus, EngineCommand, EngineEvent, TurnId};
