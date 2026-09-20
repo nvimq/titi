@@ -35,8 +35,11 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Session-close и tool-approval не смешиваются: `pending_close` остаётся отдельным от `pending_tool_approval`.
 - Добавлен crate `titi-genome`: обход файлов (`scan`), парсер Rust/TS/Python (`parse`), граф + PageRank (`graph`), prompt-проекция (`project`).
 - `scan` соблюдает `.gitignore` и `.empryoignore` (gitignore-семантика: `*` не пересекает `/`, `**` пересекает, `dir/` только каталоги), prune build/dot-каталогов, сорс-расширения, cap 1 MB/файл.
-- `EngineConfig.genome: Option<String>` — готовая проекция уходит отдельным `Role::System` message перед user-prompt.
-- CLI строит индекс на старте; `TITI_NO_GENOME=1` отключает.
+- `EngineConfig.genome_root`/`genome_limit` — индекс живёт в runtime и обновляется перед каждым turn; проекция уходит отдельным `Role::System` message перед user-prompt.
+- `Genome::refresh` — incremental: re-parse только при смене size/mtime, исчезнувшие файлы выпадают, `RefreshStats { parsed, removed, total }`.
+- Personalized rank: `TouchedSink` собирает пути из `read`/`write`/`edit` tool calls, `project_with` даёт им ×3 буст.
+- CLI передаёт cwd как `genome_root`; `TITI_NO_GENOME=1` отключает.
+- `cargo run -p titi-genome --example map -- [path] [limit]` печатает карту вручную.
 
 ## VERIFIED
 
@@ -70,7 +73,11 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-genome` integration: Rust-граф + PageRank + проекция, `.empryoignore`, TS relative imports — PASS.
 - `indexes_this_workspace`: реальный titi-репозиторий индексируется за 0.10s, `target/` отсечён, runtime.rs выше leaf-модуля — PASS.
 - `genome_is_injected_as_system_message` / `no_genome_means_prompt_only`: mock transport получил ровно system+user (или только user) — PASS.
-- `project check` после Genome — PASS.
+- `genome_refreshes_between_turns`: файл, созданный после старта, попадает в карту следующего turn — PASS.
+- `titi-genome`: `refresh_reparses_only_changed_files`, `touched_files_are_boosted_in_projection`, `gitignore_anchoring_and_negation`, `hostile_file_names_cannot_forge_the_frame` — PASS.
+- `titi-engine`: `genome_is_indexed_and_injected_as_system_message`, `no_genome_means_prompt_only`, `touched_file_leads_the_next_projection` — PASS.
+- `cargo test --workspace` — 767 passed, 0 failed; `cargo fmt --check` чистый; `cargo clippy -p titi-genome --all-targets` — 0 warnings.
+- Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS
 
@@ -89,11 +96,12 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Все Empryo fallback models используют один `subscriptions` provider, поэтому общий outage этого provider цепочка не переживёт.
 - Research consolidation audit на `subscriptions/grok-4.6` завершён: `empryo-port` остаётся каноном; OMP — reference для TUI/tool UX; Hermes/Vellum — точечные источники идей.
 - Genome знает Rust/TS/Python; прочие языки дают файл без рёбер (сознательно, до tree-sitter).
-- Индекс строится синхронно на старте CLI: на titi это 0.10s, на очень больших репо потребуется фон + incremental.
+- `refresh` каждый turn заново обходит дерево (parse скипается по mtime, обход — нет) и пересчитывает PageRank целиком. На titi дёшево; на больших репо понадобится watcher + инкрементальный rank.
+- Граф file-level, не symbol-level: `(→N)` считает файлы-импортёры, а не вызовы конкретного символа.
 
 ## NEXT
 
-1. Genome: incremental re-index по mtime и personalized rank (edited/read файлы бустятся).
+1. Genome: tree-sitter для остальных языков и symbol-level граф.
 2. Restore/checkpoints и versioned RPC framing (остаток E2).
 3. Background agents / file claims (E4).
 

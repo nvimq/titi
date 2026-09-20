@@ -2,7 +2,7 @@
 
 ## Активное направление: Empryo functional port
 
-Статус: **in-progress**, фаза E3 (Genome index + prompt projection done). Канонический handoff: [`empryo-port/STATE.md`](empryo-port/STATE.md). Решения и roadmap: [`empryo-port/README.md`](empryo-port/README.md). NEXT: incremental Genome (mtime + personalized rank).
+Статус: **in-progress**, фаза E3 (live Genome: incremental refresh + personalized rank + prompt projection done). Канонический handoff: [`empryo-port/STATE.md`](empryo-port/STATE.md). Решения и roadmap: [`empryo-port/README.md`](empryo-port/README.md). NEXT: symbol-level Genome (tree-sitter), checkpoints/RPC, background agents.
 
 Правило продолжения: сначала прочитать dedicated STATE, прогнать baseline, выполнить только NEXT, затем синхронизировать оба STATE-файла.
 

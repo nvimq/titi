@@ -57,6 +57,12 @@ impl ToolCallCollector {
 pub(crate) type ApprovalWaiters = Arc<Mutex<HashMap<SmolStr, oneshot::Sender<bool>>>>;
 pub type TrajectorySink = Arc<Mutex<Option<titi_core::trajectory::TrajectoryRecorder>>>;
 
+/// Workspace paths the session read or edited; the Genome boosts them.
+pub type TouchedSink = Arc<Mutex<std::collections::HashSet<String>>>;
+
+/// Tools whose `path` argument counts as "touched by this session".
+const TOUCHING_TOOLS: &[&str] = &["read", "write", "edit"];
+
 pub(crate) async fn execute_tools(
     turn_id: TurnId,
     calls: Vec<PendingToolCall>,
@@ -66,6 +72,7 @@ pub(crate) async fn execute_tools(
     events: &mpsc::Sender<EngineEvent>,
     aborted: &AtomicBool,
     trajectory: &TrajectorySink,
+    touched: &TouchedSink,
 ) -> Vec<ChatMessage> {
     let mut messages = Vec::new();
     let mut assistant_calls = Vec::new();
@@ -93,6 +100,11 @@ pub(crate) async fn execute_tools(
             })
             .await;
         let args = serde_json::from_str(&call.arguments).unwrap_or(serde_json::Value::Null);
+        if TOUCHING_TOOLS.contains(&call.name.as_str())
+            && let Some(path) = args.get("path").and_then(|value| value.as_str())
+        {
+            touched.lock().await.insert(path.to_owned());
+        }
         if let Some(recorder) = trajectory.lock().await.as_mut() {
             let _ = recorder.record(titi_core::trajectory::EventKind::ToolCall {
                 id: call.call_id.to_string(),
@@ -101,7 +113,16 @@ pub(crate) async fn execute_tools(
             });
         }
         let started = std::time::Instant::now();
-        let result = invoke_one(turn_id, call, tools, approval_mode, waiters, aborted, events).await;
+        let result = invoke_one(
+            turn_id,
+            call,
+            tools,
+            approval_mode,
+            waiters,
+            aborted,
+            events,
+        )
+        .await;
         if let Some(recorder) = trajectory.lock().await.as_mut() {
             let _ = recorder.record(titi_core::trajectory::EventKind::ToolResult {
                 id: result.call_id.to_string(),

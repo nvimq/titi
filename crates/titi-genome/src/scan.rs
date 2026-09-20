@@ -41,7 +41,7 @@ pub fn list_files(root: &Path) -> std::io::Result<Vec<ListedFile>> {
     rules.extend(load_rules(root, ".gitignore"));
     rules.extend(load_rules(root, ".empryoignore"));
     let mut out = Vec::new();
-    walk(root, root, "", &rules, &mut out)?;
+    walk(root, "", &rules, &mut out)?;
     Ok(out)
 }
 
@@ -80,29 +80,31 @@ fn parse_rule(line: &str) -> Option<Rule> {
     })
 }
 
-fn walk(
-    root: &Path,
-    dir: &Path,
-    rel: &str,
-    rules: &[Rule],
-    out: &mut Vec<ListedFile>,
-) -> std::io::Result<()> {
-    let entries = fs::read_dir(dir)?;
-    for entry in entries {
-        let entry = entry?;
+fn walk(dir: &Path, rel: &str, rules: &[Rule], out: &mut Vec<ListedFile>) -> std::io::Result<()> {
+    // A directory that vanishes or is unreadable mid-walk is skipped, not fatal.
+    let Ok(entries) = fs::read_dir(dir) else {
+        return Ok(());
+    };
+    for entry in entries.flatten() {
         let name = entry.file_name();
         let name = name.to_string_lossy();
+        // Control characters would break the line-oriented prompt projection.
+        if name.chars().any(char::is_control) {
+            continue;
+        }
         let child_rel = if rel.is_empty() {
             name.to_string()
         } else {
             format!("{rel}/{name}")
         };
-        let file_type = entry.file_type()?;
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
         if file_type.is_dir() {
             if should_prune_dir(&name) || is_ignored(&child_rel, true, rules) {
                 continue;
             }
-            walk(root, &entry.path(), &child_rel, rules, out)?;
+            walk(&entry.path(), &child_rel, rules, out)?;
             continue;
         }
         if !file_type.is_file() || is_ignored(&child_rel, false, rules) {
@@ -111,7 +113,9 @@ fn walk(
         if !is_source(&name) {
             continue;
         }
-        let meta = entry.metadata()?;
+        let Ok(meta) = entry.metadata() else {
+            continue;
+        };
         if meta.len() > MAX_FILE_BYTES {
             continue;
         }
@@ -126,12 +130,12 @@ fn walk(
 }
 
 fn should_prune_dir(name: &str) -> bool {
-    name.starts_with('.') || PRUNE_DIRS.iter().any(|dir| *dir == name)
+    name.starts_with('.') || PRUNE_DIRS.contains(&name)
 }
 
 fn is_source(name: &str) -> bool {
     name.rsplit_once('.')
-        .is_some_and(|(_, ext)| SOURCE_EXTS.iter().any(|want| *want == ext))
+        .is_some_and(|(_, ext)| SOURCE_EXTS.contains(&ext))
 }
 
 fn is_ignored(rel: &str, is_dir: bool, rules: &[Rule]) -> bool {
@@ -189,9 +193,7 @@ fn glob_match(pattern: &str, text: &str) -> bool {
                 } else {
                     dp[i + 1][j] || (j < m && text[j] != '/' && dp[i][j + 1])
                 }
-            } else if j < m && pattern[i] == text[j] {
-                dp[i + 1][j + 1]
-            } else if j < m && pattern[i] == '?' && text[j] != '/' {
+            } else if j < m && (pattern[i] == text[j] || (pattern[i] == '?' && text[j] != '/')) {
                 dp[i + 1][j + 1]
             } else {
                 false
@@ -203,6 +205,8 @@ fn glob_match(pattern: &str, text: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    #![allow(clippy::unwrap_used)]
+
     use super::*;
 
     #[test]
@@ -221,6 +225,14 @@ mod tests {
         assert!(glob_match("a/**/b", "a/b"));
         assert!(glob_match("a/**/b", "a/x/y/b"));
         assert!(!glob_match("a/**/b", "a/x/y/c"));
+    }
+
+    #[test]
+    fn question_mark_never_crosses_a_separator() {
+        assert!(glob_match("?", "a"));
+        assert!(!glob_match("?", "/"));
+        assert!(glob_match("a?c", "abc"));
+        assert!(!glob_match("a?c", "a/c"));
     }
 
     #[test]
