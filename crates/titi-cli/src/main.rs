@@ -57,6 +57,8 @@ fn main() -> io::Result<()> {
     // requires `buttons` or `all`).
     let mut mouse = load_mouse_preset().unwrap_or(MousePreset::Off);
     let mut headless = false;
+    let mut set_key: Option<(String, String)> = None;
+    let mut list_keys = false;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--mouse"
@@ -65,7 +67,49 @@ fn main() -> io::Result<()> {
             mouse = preset;
         } else if arg == "--headless" || arg == "-p" {
             headless = true;
+        } else if arg == "--set-key" {
+            match (args.next(), args.next()) {
+                (Some(provider), Some(key)) => set_key = Some((provider, key)),
+                _ => {
+                    eprintln!("usage: titi --set-key <provider> <key>");
+                    std::process::exit(2);
+                }
+            }
+        } else if arg == "--list-keys" {
+            list_keys = true;
         }
+    }
+
+    // Credential administration runs without starting the engine.
+    if let Some((provider, key)) = set_key {
+        return match titi_cli::secrets::store_key(&titi_config::agent_dir(), &provider, &key) {
+            Ok(()) => {
+                eprintln!("stored an API key for {provider}");
+                Ok(())
+            }
+            Err(reason) => {
+                eprintln!("not stored: {reason}");
+                std::process::exit(1);
+            }
+        };
+    }
+    if list_keys {
+        return match titi_cli::secrets::list_keys(&titi_config::agent_dir()) {
+            Ok(keys) if keys.is_empty() => {
+                eprintln!("no stored keys");
+                Ok(())
+            }
+            Ok(keys) => {
+                for key in keys {
+                    eprintln!("{}  ({})", key.provider, key.kind);
+                }
+                Ok(())
+            }
+            Err(reason) => {
+                eprintln!("could not read keys: {reason}");
+                std::process::exit(1);
+            }
+        };
     }
 
     let runtime = tokio::runtime::Builder::new_multi_thread()

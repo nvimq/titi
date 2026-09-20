@@ -99,6 +99,18 @@ impl LayeredCredentialSource {
             store_path: agent_dir.join("auth.db"),
         }
     }
+
+    /// Bound to an explicit agent directory, for tests and alternate profiles.
+    pub fn for_agent_dir(agent_dir: impl Into<std::path::PathBuf>) -> Self {
+        let agent_dir = agent_dir.into();
+        Self {
+            env: titi_secrets::env::LayeredEnv::new(
+                std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from(".")),
+                agent_dir.clone(),
+            ),
+            store_path: agent_dir.join("auth.db"),
+        }
+    }
 }
 
 impl CredentialSource for LayeredCredentialSource {
