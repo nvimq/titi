@@ -180,7 +180,10 @@ mod tests {
     use super::*;
 
     fn ladder(efforts: &[Effort]) -> ModelCompat {
-        ModelCompat { efforts: efforts.to_vec(), ..ModelCompat::default() }
+        ModelCompat {
+            efforts: efforts.to_vec(),
+            ..ModelCompat::default()
+        }
     }
 
     #[test]
@@ -193,7 +196,10 @@ mod tests {
         let p = resolve_compat(ApiKind::OpenAiResponses, &m, &o);
         assert_eq!(p.max_tokens_field, MaxTokensField::MaxCompletionTokens);
         let p = resolve_compat(ApiKind::AnthropicMessages, &m, &o);
-        assert!(matches!(p.thinking_format, ThinkingFormat::AnthropicAdaptive));
+        assert!(matches!(
+            p.thinking_format,
+            ThinkingFormat::AnthropicAdaptive
+        ));
         let p = resolve_compat(ApiKind::GeminiGenerateContent, &m, &o);
         assert!(matches!(p.thinking_format, ThinkingFormat::GoogleLevel));
     }
@@ -211,7 +217,11 @@ mod tests {
             (Effort::Max, Effort::High),
         ];
         for (requested, expected) in cases {
-            assert_eq!(clamp_effort(requested, &m), expected, "clamping {requested:?}");
+            assert_eq!(
+                clamp_effort(requested, &m),
+                expected,
+                "clamping {requested:?}"
+            );
         }
         // Global xhigh must not 400 a low..max endpoint.
         assert_eq!(clamp_effort(Effort::Xhigh, &m), Effort::High);

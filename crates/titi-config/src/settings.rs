@@ -17,9 +17,17 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Debug, thiserror::Error)]
 pub enum SettingsError {
     #[error("invalid global settings at {original}: {reason}; quarantined to {backup}")]
-    Quarantined { original: PathBuf, backup: PathBuf, reason: String },
+    Quarantined {
+        original: PathBuf,
+        backup: PathBuf,
+        reason: String,
+    },
     #[error("invalid project settings at {original}: {reason}; quarantined to {backup}")]
-    ProjectQuarantined { original: PathBuf, backup: PathBuf, reason: String },
+    ProjectQuarantined {
+        original: PathBuf,
+        backup: PathBuf,
+        reason: String,
+    },
     #[error("config overlay {path}: {reason}")]
     Overlay { path: PathBuf, reason: String },
     #[error("io error: {0}")]
@@ -48,12 +56,18 @@ impl Settings {
     /// `extra_overlays` are appended after `$TITI_CONFIG_FILES` overlays
     /// (the `--config <file>` equivalents) and are resolved relative to
     /// `project_dir` with `~` expansion.
-    pub fn load(agent_dir: &Path, project_dir: &Path, extra_overlays: &[PathBuf]) -> Result<Self, SettingsError> {
+    pub fn load(
+        agent_dir: &Path,
+        project_dir: &Path,
+        extra_overlays: &[PathBuf],
+    ) -> Result<Self, SettingsError> {
         let existing_global = GLOBAL_FILES
             .iter()
             .map(|f| agent_dir.join(f))
             .find(|p| p.exists());
-        let global_path = existing_global.clone().unwrap_or_else(|| agent_dir.join("config.yml"));
+        let global_path = existing_global
+            .clone()
+            .unwrap_or_else(|| agent_dir.join("config.yml"));
         let global = match &existing_global {
             Some(path) => match read_yaml_value(path) {
                 Ok(Some(v)) => v,
@@ -76,7 +90,11 @@ impl Settings {
                 Ok(None) => Value::Object(Map::new()),
                 Err(reason) => {
                     let backup = quarantine(&path)?;
-                    return Err(SettingsError::ProjectQuarantined { original: path, backup, reason });
+                    return Err(SettingsError::ProjectQuarantined {
+                        original: path,
+                        backup,
+                        reason,
+                    });
                 }
             },
             _ => Value::Object(Map::new()),
@@ -101,11 +119,14 @@ impl Settings {
                     return Err(SettingsError::Overlay {
                         path: path.clone(),
                         reason: "top-level document is not a mapping".into(),
-                    })
+                    });
                 }
                 Ok(None) => overlays.push(Value::Object(Map::new())),
                 Err(e) => {
-                    return Err(SettingsError::Overlay { path: path.clone(), reason: e })
+                    return Err(SettingsError::Overlay {
+                        path: path.clone(),
+                        reason: e,
+                    });
                 }
             }
         }
@@ -120,20 +141,20 @@ impl Settings {
         })
     }
     /// Parse an overlay document by extension: `.json`/`.jsonc` via JSON, else YAML.
-fn parse_overlay(path: &Path, text: &str) -> Result<Option<Value>, String> {
-    let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
-    let value = match ext {
-        "json" | "jsonc" => {
-            let stripped = crate::config_file::strip_jsonc_comments(text);
-            serde_json::from_str::<Value>(&stripped).map_err(|e| e.to_string())?
-        }
-        _ => serde_yaml::from_str::<Value>(text).map_err(|e| e.to_string())?,
-    };
-    Ok(match value {
-        Value::Null => None,
-        v => Some(v),
-    })
-}
+    fn parse_overlay(path: &Path, text: &str) -> Result<Option<Value>, String> {
+        let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
+        let value = match ext {
+            "json" | "jsonc" => {
+                let stripped = crate::config_file::strip_jsonc_comments(text);
+                serde_json::from_str::<Value>(&stripped).map_err(|e| e.to_string())?
+            }
+            _ => serde_yaml::from_str::<Value>(text).map_err(|e| e.to_string())?,
+        };
+        Ok(match value {
+            Value::Null => None,
+            v => Some(v),
+        })
+    }
 
     /// Effective value of a dotted key (`theme.dark`), highest layer wins.
     pub fn get(&self, key: &str) -> Option<Value> {
@@ -160,20 +181,29 @@ fn parse_overlay(path: &Path, text: &str) -> Result<Option<Value>, String> {
     /// Write a dotted key into the **global** layer and persist it (the only
     /// persistent write path through this API).
     pub fn set(&mut self, key: &str, value: Value) -> Result<(), SettingsError> {
-        set_nested(&mut self.global, key, value).map_err(|reason| SettingsError::Key { key: key.into(), reason })?;
+        set_nested(&mut self.global, key, value).map_err(|reason| SettingsError::Key {
+            key: key.into(),
+            reason,
+        })?;
         self.save_global()
     }
 
     /// Remove a dotted key from the global layer, restoring the next layer's
     /// (or default) value at read time.
     pub fn reset(&mut self, key: &str) -> Result<(), SettingsError> {
-        remove_nested(&mut self.global, key).map_err(|reason| SettingsError::Key { key: key.into(), reason })?;
+        remove_nested(&mut self.global, key).map_err(|reason| SettingsError::Key {
+            key: key.into(),
+            reason,
+        })?;
         self.save_global()
     }
 
     /// In-memory override for this process; never persisted.
     pub fn set_runtime(&mut self, key: &str, value: Value) -> Result<(), SettingsError> {
-        set_nested(&mut self.runtime, key, value).map_err(|reason| SettingsError::Key { key: key.into(), reason })
+        set_nested(&mut self.runtime, key, value).map_err(|reason| SettingsError::Key {
+            key: key.into(),
+            reason,
+        })
     }
 
     fn save_global(&self) -> Result<(), SettingsError> {
@@ -182,8 +212,9 @@ fn parse_overlay(path: &Path, text: &str) -> Result<Option<Value>, String> {
         }
         with_file_lock(&self.global_path, || {
             let tmp = self.global_path.with_extension("yml.tmp");
-            let yaml = serde_yaml::to_string(&self.global)
-                .map_err(|e| SettingsError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+            let yaml = serde_yaml::to_string(&self.global).map_err(|e| {
+                SettingsError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            })?;
             fs::write(&tmp, yaml)?;
             fs::rename(&tmp, &self.global_path)?;
             Ok(())
@@ -262,7 +293,10 @@ fn read_yaml_value(path: &Path) -> Result<Option<Value>, String> {
 
 /// Move an invalid persistent settings file to a unique `.broken-<ts>-<pid>` sibling.
 fn quarantine(path: &Path) -> Result<PathBuf, SettingsError> {
-    let ts = SystemTime::now().duration_since(UNIX_EPOCH).unwrap_or_default().as_millis();
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_millis();
     let mut name = format!(".broken-{ts}-{}", std::process::id());
     if let Some(ext) = path.extension() {
         name.push('.');
@@ -275,9 +309,11 @@ fn quarantine(path: &Path) -> Result<PathBuf, SettingsError> {
 
 fn env_overlay_paths() -> Vec<PathBuf> {
     match std::env::var("TITI_CONFIG_FILES") {
-        Ok(list) if !list.trim().is_empty() => {
-            list.split(':').filter(|s| !s.is_empty()).map(PathBuf::from).collect()
-        }
+        Ok(list) if !list.trim().is_empty() => list
+            .split(':')
+            .filter(|s| !s.is_empty())
+            .map(PathBuf::from)
+            .collect(),
         _ => Vec::new(),
     }
 }
@@ -306,17 +342,37 @@ mod tests {
     }
 
     fn obj(pairs: &[(&str, Value)]) -> Value {
-        Value::Object(pairs.iter().map(|(k, v)| (k.to_string(), v.clone())).collect())
+        Value::Object(
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+        )
     }
 
     #[test]
     fn deep_merges_objects_replaces_scalars_and_arrays() {
         let mut base = obj(&[
-            ("tools", obj(&[("approvalMode", Value::from("write")), ("approval", obj(&[("bash", Value::from("prompt")), ("read", Value::from("allow"))]))])),
+            (
+                "tools",
+                obj(&[
+                    ("approvalMode", Value::from("write")),
+                    (
+                        "approval",
+                        obj(&[
+                            ("bash", Value::from("prompt")),
+                            ("read", Value::from("allow")),
+                        ]),
+                    ),
+                ]),
+            ),
             ("providers", Value::Array(vec![Value::from("anthropic")])),
         ]);
         let over = obj(&[
-            ("tools", obj(&[("approval", obj(&[("bash", Value::from("allow"))]))])),
+            (
+                "tools",
+                obj(&[("approval", obj(&[("bash", Value::from("allow"))]))]),
+            ),
             ("providers", Value::Array(vec![Value::from("groq")])),
         ]);
         deep_merge(&mut base, &over);
@@ -330,12 +386,19 @@ mod tests {
     fn precedence_runtime_beats_project_beats_global() {
         let tmp = TempDir::new().unwrap();
         let agent = tmp.path().join("agent");
-        write(&agent.join("config.yml"), "tools:\n  approval:\n    bash: prompt\n    read: allow\n");
-        write(&tmp.path().join(PROJECT_SUBPATH), "tools:\n  approval:\n    bash: deny\n");
+        write(
+            &agent.join("config.yml"),
+            "tools:\n  approval:\n    bash: prompt\n    read: allow\n",
+        );
+        write(
+            &tmp.path().join(PROJECT_SUBPATH),
+            "tools:\n  approval:\n    bash: deny\n",
+        );
         let mut s = Settings::load(&agent, tmp.path(), &[]).unwrap();
         assert_eq!(s.get("tools.approval.bash"), Some(Value::from("deny")));
         assert_eq!(s.get("tools.approval.read"), Some(Value::from("allow")));
-        s.set_runtime("tools.approval.bash", Value::from("prompt")).unwrap();
+        s.set_runtime("tools.approval.bash", Value::from("prompt"))
+            .unwrap();
         assert_eq!(s.get("tools.approval.bash"), Some(Value::from("prompt")));
     }
 
@@ -344,12 +407,19 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let agent = tmp.path().join("agent");
         let mut s = Settings::load(&agent, tmp.path(), &[]).unwrap();
-        s.set("modelRoles.default", Value::from("anthropic/claude")).unwrap();
-        assert_eq!(s.get("modelRoles.default"), Some(Value::from("anthropic/claude")));
+        s.set("modelRoles.default", Value::from("anthropic/claude"))
+            .unwrap();
+        assert_eq!(
+            s.get("modelRoles.default"),
+            Some(Value::from("anthropic/claude"))
+        );
         let on_disk = fs::read_to_string(agent.join("config.yml")).unwrap();
         assert!(on_disk.contains("anthropic/claude"));
         let reloaded = Settings::load(&agent, tmp.path(), &[]).unwrap();
-        assert_eq!(reloaded.get("modelRoles.default"), Some(Value::from("anthropic/claude")));
+        assert_eq!(
+            reloaded.get("modelRoles.default"),
+            Some(Value::from("anthropic/claude"))
+        );
     }
 
     #[test]
@@ -358,10 +428,14 @@ mod tests {
         // is used here. After reset the key falls to schema defaults (none yet).
         let tmp = TempDir::new().unwrap();
         let agent = tmp.path().join("agent");
-        write(&agent.join("config.yml"), "compaction:\n  thresholdPercent: 80\n");
+        write(
+            &agent.join("config.yml"),
+            "compaction:\n  thresholdPercent: 80\n",
+        );
         let mut s = Settings::load(&agent, tmp.path(), &[]).unwrap();
         assert_eq!(s.get("compaction.thresholdPercent"), Some(Value::from(80)));
-        s.set("compaction.thresholdPercent", Value::from(70)).unwrap();
+        s.set("compaction.thresholdPercent", Value::from(70))
+            .unwrap();
         assert_eq!(s.get("compaction.thresholdPercent"), Some(Value::from(70)));
         s.reset("compaction.thresholdPercent").unwrap();
         assert_eq!(s.get("compaction.thresholdPercent"), None);
@@ -371,9 +445,13 @@ mod tests {
     fn project_overrides_global_write() {
         let tmp = TempDir::new().unwrap();
         let agent = tmp.path().join("agent");
-        write(&tmp.path().join(PROJECT_SUBPATH), "compaction:\n  thresholdPercent: 80\n");
+        write(
+            &tmp.path().join(PROJECT_SUBPATH),
+            "compaction:\n  thresholdPercent: 80\n",
+        );
         let mut s = Settings::load(&agent, tmp.path(), &[]).unwrap();
-        s.set("compaction.thresholdPercent", Value::from(70)).unwrap();
+        s.set("compaction.thresholdPercent", Value::from(70))
+            .unwrap();
         assert_eq!(s.get("compaction.thresholdPercent"), Some(Value::from(80)));
     }
 
@@ -383,7 +461,10 @@ mod tests {
         let agent = tmp.path().join("agent");
         write(&agent.join("config.yml"), "tools: [broken\n");
         let err = Settings::load(&agent, tmp.path(), &[]).unwrap_err();
-        let SettingsError::Quarantined { original, backup, .. } = err else {
+        let SettingsError::Quarantined {
+            original, backup, ..
+        } = err
+        else {
             panic!("expected Quarantined, got {err:?}");
         };
         assert!(!original.exists());
@@ -407,7 +488,10 @@ mod tests {
         let tmp = TempDir::new().unwrap();
         let agent = tmp.path().join("agent");
         let cfg = tmp.path().join("overlay.jsonc");
-        write(&cfg, "{\n  // comment\n  \"theme\": { \"dark\": \"titanium\" } /* block */\n}\n");
+        write(
+            &cfg,
+            "{\n  // comment\n  \"theme\": { \"dark\": \"titanium\" } /* block */\n}\n",
+        );
         let s = Settings::load(&agent, tmp.path(), &[cfg]).unwrap();
         assert_eq!(s.get("theme.dark"), Some(Value::from("titanium")));
     }

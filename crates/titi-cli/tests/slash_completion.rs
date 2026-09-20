@@ -4,10 +4,10 @@
 //!
 //! Contract: `docs/research/agent-ux/README.md` (Slash DoD).
 
-use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 
-use titi_cli::app::{default_theme, App};
+use titi_cli::app::{App, default_theme};
 use titi_tui::slash::Route;
 
 fn app() -> App {
@@ -26,8 +26,14 @@ fn app() -> App {
 fn reserved_builtins_route_as_builtin() {
     let app = app();
     assert_eq!(app.route_slash("/model"), Route::Builtin("model".into()));
-    assert_eq!(app.route_slash("/details"), Route::Builtin("details".into()));
-    assert_eq!(app.route_slash("/sessions"), Route::Builtin("sessions".into()));
+    assert_eq!(
+        app.route_slash("/details"),
+        Route::Builtin("details".into())
+    );
+    assert_eq!(
+        app.route_slash("/sessions"),
+        Route::Builtin("sessions".into())
+    );
     assert_eq!(app.route_slash("/help"), Route::Builtin("help".into()));
     assert_eq!(app.route_slash("/mouse"), Route::Builtin("mouse".into()));
 }

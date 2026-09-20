@@ -26,22 +26,58 @@ pub struct Rgb {
 
 /// Basic ANSI 16-color RGB values, indices 0-15 of the 256-color palette.
 const ANSI_16: [Rgb; 16] = [
-    Rgb { r: 0, g: 0, b: 0 },         // 0 black
-    Rgb { r: 128, g: 0, b: 0 },       // 1 maroon
-    Rgb { r: 0, g: 128, b: 0 },       // 2 green
-    Rgb { r: 128, g: 128, b: 0 },     // 3 olive
-    Rgb { r: 0, g: 0, b: 128 },       // 4 navy
-    Rgb { r: 128, g: 0, b: 128 },     // 5 purple
-    Rgb { r: 0, g: 128, b: 128 },     // 6 teal
-    Rgb { r: 192, g: 192, b: 192 },   // 7 silver
-    Rgb { r: 128, g: 128, b: 128 },   // 8 gray
-    Rgb { r: 255, g: 0, b: 0 },       // 9 red
-    Rgb { r: 0, g: 255, b: 0 },       // 10 lime
-    Rgb { r: 255, g: 255, b: 0 },     // 11 yellow
-    Rgb { r: 0, g: 0, b: 255 },       // 12 blue
-    Rgb { b: 255, r: 255, g: 0 },     // 13 fuchsia
-    Rgb { r: 0, g: 255, b: 255 },     // 14 aqua
-    Rgb { r: 255, g: 255, b: 255 },   // 15 white
+    Rgb { r: 0, g: 0, b: 0 },   // 0 black
+    Rgb { r: 128, g: 0, b: 0 }, // 1 maroon
+    Rgb { r: 0, g: 128, b: 0 }, // 2 green
+    Rgb {
+        r: 128,
+        g: 128,
+        b: 0,
+    }, // 3 olive
+    Rgb { r: 0, g: 0, b: 128 }, // 4 navy
+    Rgb {
+        r: 128,
+        g: 0,
+        b: 128,
+    }, // 5 purple
+    Rgb {
+        r: 0,
+        g: 128,
+        b: 128,
+    }, // 6 teal
+    Rgb {
+        r: 192,
+        g: 192,
+        b: 192,
+    }, // 7 silver
+    Rgb {
+        r: 128,
+        g: 128,
+        b: 128,
+    }, // 8 gray
+    Rgb { r: 255, g: 0, b: 0 }, // 9 red
+    Rgb { r: 0, g: 255, b: 0 }, // 10 lime
+    Rgb {
+        r: 255,
+        g: 255,
+        b: 0,
+    }, // 11 yellow
+    Rgb { r: 0, g: 0, b: 255 }, // 12 blue
+    Rgb {
+        b: 255,
+        r: 255,
+        g: 0,
+    }, // 13 fuchsia
+    Rgb {
+        r: 0,
+        g: 255,
+        b: 255,
+    }, // 14 aqua
+    Rgb {
+        r: 255,
+        g: 255,
+        b: 255,
+    }, // 15 white
 ];
 
 /// Cube steps for 256-color palette entries 16-231.
@@ -60,7 +96,11 @@ pub fn hex_to_rgb(hex: &str) -> Option<Rgb> {
                 let v = u8::from_str_radix(&ch.to_string(), 16).ok()?;
                 channels[slot] = v * 17; // 0xF -> 0xFF
             }
-            Some(Rgb { r: channels[0], g: channels[1], b: channels[2] })
+            Some(Rgb {
+                r: channels[0],
+                g: channels[1],
+                b: channels[2],
+            })
         }
         6 => {
             let (pairs, _) = digits.as_bytes().as_chunks::<2>();
@@ -70,7 +110,11 @@ pub fn hex_to_rgb(hex: &str) -> Option<Rgb> {
                 let lo = u8::from_str_radix(std::str::from_utf8(&pair[1..]).ok()?, 16).ok()?;
                 channels[slot] = hi * 16 + lo;
             }
-            Some(Rgb { r: channels[0], g: channels[1], b: channels[2] })
+            Some(Rgb {
+                r: channels[0],
+                g: channels[1],
+                b: channels[2],
+            })
         }
         _ => None,
     }
@@ -156,7 +200,11 @@ pub fn palette_to_rgb(index: u8) -> Rgb {
         }
         _ => {
             let gray = 8 + (u16::from(index - 232)) * 10;
-            Rgb { r: gray as u8, g: gray as u8, b: gray as u8 }
+            Rgb {
+                r: gray as u8,
+                g: gray as u8,
+                b: gray as u8,
+            }
         }
     }
 }
@@ -171,7 +219,9 @@ pub fn ansi256_to_hex(index: u8) -> String {
 /// Returns `None` for non-hex input.
 pub fn color_luma(value: &str) -> Option<f64> {
     let rgb = hex_to_rgb(value)?;
-    Some((0.2126 * f64::from(rgb.r) + 0.7152 * f64::from(rgb.g) + 0.0722 * f64::from(rgb.b)) / 255.0)
+    Some(
+        (0.2126 * f64::from(rgb.r) + 0.7152 * f64::from(rgb.g) + 0.0722 * f64::from(rgb.b)) / 255.0,
+    )
 }
 
 /// WCAG 2.x relative luminance, normalized to `0.0..=1.0`.
@@ -317,16 +367,51 @@ mod tests {
 
     #[test]
     fn hex_to_rgb_three_digit() {
-        assert_eq!(hex_to_rgb("#f0a"), Some(Rgb { r: 255, g: 0, b: 170 }));
-        assert_eq!(hex_to_rgb("f0a"), Some(Rgb { r: 255, g: 0, b: 170 }));
-        assert_eq!(hex_to_rgb("#abc"), Some(Rgb { r: 170, g: 187, b: 204 }));
+        assert_eq!(
+            hex_to_rgb("#f0a"),
+            Some(Rgb {
+                r: 255,
+                g: 0,
+                b: 170
+            })
+        );
+        assert_eq!(
+            hex_to_rgb("f0a"),
+            Some(Rgb {
+                r: 255,
+                g: 0,
+                b: 170
+            })
+        );
+        assert_eq!(
+            hex_to_rgb("#abc"),
+            Some(Rgb {
+                r: 170,
+                g: 187,
+                b: 204
+            })
+        );
     }
 
     #[test]
     fn hex_to_rgb_six_digit() {
         assert_eq!(hex_to_rgb("#ff0000"), Some(Rgb { r: 255, g: 0, b: 0 }));
-        assert_eq!(hex_to_rgb("00ff88"), Some(Rgb { r: 0, g: 255, b: 136 }));
-        assert_eq!(hex_to_rgb("#AbCdEf"), Some(Rgb { r: 0xab, g: 0xcd, b: 0xef }));
+        assert_eq!(
+            hex_to_rgb("00ff88"),
+            Some(Rgb {
+                r: 0,
+                g: 255,
+                b: 136
+            })
+        );
+        assert_eq!(
+            hex_to_rgb("#AbCdEf"),
+            Some(Rgb {
+                r: 0xab,
+                g: 0xcd,
+                b: 0xef
+            })
+        );
     }
 
     #[test]
@@ -341,17 +426,35 @@ mod tests {
 
     #[test]
     fn rgb_to_hex_round_trip() {
-        let rgb = Rgb { r: 0xfe, g: 0xbc, b: 0x38 };
+        let rgb = Rgb {
+            r: 0xfe,
+            g: 0xbc,
+            b: 0x38,
+        };
         assert_eq!(rgb_to_hex(rgb), "#febc38");
         assert_eq!(hex_to_rgb(&rgb_to_hex(rgb)), Some(rgb));
         assert_eq!(rgb_to_hex(Rgb { r: 0, g: 0, b: 0 }), "#000000");
-        assert_eq!(rgb_to_hex(Rgb { r: 255, g: 255, b: 255 }), "#ffffff");
+        assert_eq!(
+            rgb_to_hex(Rgb {
+                r: 255,
+                g: 255,
+                b: 255
+            }),
+            "#ffffff"
+        );
     }
 
     #[test]
     fn hsv_round_trip_pure_colors() {
         for (rgb, want_h) in [
-            (Rgb { r: 255, g: 255, b: 255 }, None),
+            (
+                Rgb {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                },
+                None,
+            ),
             (Rgb { r: 0, g: 0, b: 0 }, None),
             (Rgb { r: 255, g: 0, b: 0 }, Some(0.0)),
             (Rgb { r: 0, g: 255, b: 0 }, Some(120.0)),
@@ -409,7 +512,10 @@ mod tests {
         assert_eq!(fg_ansi("", ColorMode::Truecolor), "\x1b[39m");
         assert_eq!(fg_ansi("244", ColorMode::Truecolor), "\x1b[38;5;244m");
         assert_eq!(fg_ansi("0", ColorMode::Truecolor), "\x1b[38;5;0m");
-        assert_eq!(fg_ansi("#ff0000", ColorMode::Truecolor), "\x1b[38;2;255;0;0m");
+        assert_eq!(
+            fg_ansi("#ff0000", ColorMode::Truecolor),
+            "\x1b[38;2;255;0;0m"
+        );
         assert_eq!(fg_ansi("zzz", ColorMode::Truecolor), "\x1b[39m");
     }
 
@@ -417,18 +523,33 @@ mod tests {
     fn bg_ansi_forms() {
         assert_eq!(bg_ansi("", ColorMode::Truecolor), "\x1b[49m");
         assert_eq!(bg_ansi("244", ColorMode::Truecolor), "\x1b[48;5;244m");
-        assert_eq!(bg_ansi("#ff0000", ColorMode::Truecolor), "\x1b[48;2;255;0;0m");
+        assert_eq!(
+            bg_ansi("#ff0000", ColorMode::Truecolor),
+            "\x1b[48;2;255;0;0m"
+        );
         assert_eq!(bg_ansi("zzz", ColorMode::Truecolor), "\x1b[49m");
     }
 
     #[test]
     fn ansi_from_value() {
         let num = serde_json::json!(244);
-        assert_eq!(fg_ansi_from_value(&num, ColorMode::Truecolor), "\x1b[38;5;244m");
-        assert_eq!(bg_ansi_from_value(&num, ColorMode::Truecolor), "\x1b[48;5;244m");
+        assert_eq!(
+            fg_ansi_from_value(&num, ColorMode::Truecolor),
+            "\x1b[38;5;244m"
+        );
+        assert_eq!(
+            bg_ansi_from_value(&num, ColorMode::Truecolor),
+            "\x1b[48;5;244m"
+        );
         let hex = serde_json::json!("#ff0000");
-        assert_eq!(fg_ansi_from_value(&hex, ColorMode::Truecolor), "\x1b[38;2;255;0;0m");
-        assert_eq!(bg_ansi_from_value(&hex, ColorMode::Truecolor), "\x1b[48;2;255;0;0m");
+        assert_eq!(
+            fg_ansi_from_value(&hex, ColorMode::Truecolor),
+            "\x1b[38;2;255;0;0m"
+        );
+        assert_eq!(
+            bg_ansi_from_value(&hex, ColorMode::Truecolor),
+            "\x1b[48;2;255;0;0m"
+        );
         let empty = serde_json::json!("");
         assert_eq!(fg_ansi_from_value(&empty, ColorMode::Truecolor), "\x1b[39m");
         assert_eq!(bg_ansi_from_value(&empty, ColorMode::Truecolor), "\x1b[49m");
@@ -464,7 +585,10 @@ mod tests {
             detect_color_mode_from(true, Some("dumb"), Some("xterm-256color")),
             ColorMode::Truecolor
         );
-        assert_eq!(detect_color_mode_from(true, None, None), ColorMode::Truecolor);
+        assert_eq!(
+            detect_color_mode_from(true, None, None),
+            ColorMode::Truecolor
+        );
         // COLORTERM truecolor / 24bit.
         assert_eq!(
             detect_color_mode_from(false, Some("truecolor"), Some("dumb")),
@@ -480,7 +604,10 @@ mod tests {
             ColorMode::Color256
         );
         // No / empty / dumb / linux TERM -> 256color.
-        assert_eq!(detect_color_mode_from(false, None, None), ColorMode::Color256);
+        assert_eq!(
+            detect_color_mode_from(false, None, None),
+            ColorMode::Color256
+        );
         assert_eq!(
             detect_color_mode_from(false, None, Some("")),
             ColorMode::Color256
@@ -536,8 +663,29 @@ mod tests {
     #[test]
     fn palette_to_rgb_grays_and_cube() {
         assert_eq!(palette_to_rgb(16), Rgb { r: 0, g: 0, b: 0 });
-        assert_eq!(palette_to_rgb(231), Rgb { r: 255, g: 255, b: 255 });
-        assert_eq!(palette_to_rgb(60), Rgb { r: 95, g: 95, b: 135 });
-        assert_eq!(palette_to_rgb(250), Rgb { r: 188, g: 188, b: 188 });
+        assert_eq!(
+            palette_to_rgb(231),
+            Rgb {
+                r: 255,
+                g: 255,
+                b: 255
+            }
+        );
+        assert_eq!(
+            palette_to_rgb(60),
+            Rgb {
+                r: 95,
+                g: 95,
+                b: 135
+            }
+        );
+        assert_eq!(
+            palette_to_rgb(250),
+            Rgb {
+                r: 188,
+                g: 188,
+                b: 188
+            }
+        );
     }
 }

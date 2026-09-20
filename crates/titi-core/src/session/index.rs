@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use rusqlite::{params, Connection, OptionalExtension};
+use rusqlite::{Connection, OptionalExtension, params};
 
 use super::entry::Entry;
 use super::{SessionError, SessionMeta};
@@ -191,10 +191,12 @@ mod tests {
         assert_eq!(hits[0].entry_id, e.id);
 
         // Phrase matches only the exact token sequence, not arbitrary text.
-        assert!(index
-            .search("kafka deploy", None)
-            .unwrap_or_else(|e| panic!("{e}"))
-            .is_empty());
+        assert!(
+            index
+                .search("kafka deploy", None)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .is_empty()
+        );
         assert!(
             index
                 .search("deploy kafka", None)
@@ -215,9 +217,11 @@ mod tests {
             .index_entry("s1", &e)
             .unwrap_or_else(|e| panic!("{e}"));
         // Raw FTS5 grammar in user input must not error or escape the phrase.
-        assert!(index
-            .search("safe\" OR (1=1) AND \"", None)
-            .unwrap_or_else(|e| panic!("{e}"))
-            .is_empty());
+        assert!(
+            index
+                .search("safe\" OR (1=1) AND \"", None)
+                .unwrap_or_else(|e| panic!("{e}"))
+                .is_empty()
+        );
     }
 }

@@ -14,8 +14,8 @@
 
 use std::fs;
 use std::fs::OpenOptions;
-use std::io::Write;
 use std::io::ErrorKind;
+use std::io::Write;
 use std::path::Path;
 
 /// Built-in default identity: the fallback for missing, empty, unreadable
@@ -123,7 +123,10 @@ mod tests {
 
     #[test]
     fn default_identity_scans_clean() {
-        assert_eq!(crate::scan::scan(DEFAULT_IDENTITY), crate::ScanVerdict::Clean);
+        assert_eq!(
+            crate::scan::scan(DEFAULT_IDENTITY),
+            crate::ScanVerdict::Clean
+        );
     }
 
     #[test]
@@ -145,7 +148,10 @@ mod tests {
         let soul = load(dir.path()).unwrap();
         assert_eq!(soul.source, SoulSource::Loaded);
         assert_eq!(soul.text, custom);
-        assert_eq!(fs::read_to_string(dir.path().join("SOUL.md")).unwrap(), custom);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("SOUL.md")).unwrap(),
+            custom
+        );
     }
 
     #[test]
@@ -158,7 +164,10 @@ mod tests {
         assert_eq!(soul.source, SoulSource::DefaultFallback);
         assert_eq!(soul.text, DEFAULT_IDENTITY);
         // The user's blank file is left as-is, not reseeded.
-        assert_eq!(fs::read_to_string(dir.path().join("SOUL.md")).unwrap(), blank);
+        assert_eq!(
+            fs::read_to_string(dir.path().join("SOUL.md")).unwrap(),
+            blank
+        );
     }
 
     #[test]

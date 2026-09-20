@@ -24,16 +24,21 @@ enum BlockKind {
 }
 
 fn malformed(message: impl Into<String>) -> StreamEvent {
-    StreamEvent::Error { reason: ErrorReason::Malformed, message: message.into().into() }
+    StreamEvent::Error {
+        reason: ErrorReason::Malformed,
+        message: message.into().into(),
+    }
 }
 
 fn block_id(kind: BlockKind, index: usize) -> BlockId {
-    BlockId(match kind {
-        BlockKind::Text => format!("text_{index}"),
-        BlockKind::Thinking => format!("thinking_{index}"),
-        BlockKind::Tool => format!("tool_{index}"),
-    }
-    .into())
+    BlockId(
+        match kind {
+            BlockKind::Text => format!("text_{index}"),
+            BlockKind::Thinking => format!("thinking_{index}"),
+            BlockKind::Tool => format!("tool_{index}"),
+        }
+        .into(),
+    )
 }
 
 /// Decode one Anthropic Messages SSE event.
@@ -42,10 +47,7 @@ pub fn decode_event(
     payload: &Value,
     state: &mut AnthropicStreamState,
 ) -> Vec<StreamEvent> {
-    let typ = payload
-        .get("type")
-        .and_then(Value::as_str)
-        .unwrap_or(event);
+    let typ = payload.get("type").and_then(Value::as_str).unwrap_or(event);
     let mut events = Vec::new();
     match typ {
         "message_start" => {
@@ -68,15 +70,27 @@ pub fn decode_event(
             state.open[index] = kind;
             match kind {
                 BlockKind::Text => {
-                    events.push(StreamEvent::TextStart { id: block_id(kind, index) });
+                    events.push(StreamEvent::TextStart {
+                        id: block_id(kind, index),
+                    });
                 }
                 BlockKind::Thinking => {
-                    events.push(StreamEvent::ThinkingStart { id: block_id(kind, index) });
+                    events.push(StreamEvent::ThinkingStart {
+                        id: block_id(kind, index),
+                    });
                 }
                 BlockKind::Tool => {
                     let call = ToolCallRef {
-                        call_id: block.get("id").and_then(Value::as_str).unwrap_or_default().into(),
-                        name: block.get("name").and_then(Value::as_str).unwrap_or_default().into(),
+                        call_id: block
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .into(),
+                        name: block
+                            .get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or_default()
+                            .into(),
                     };
                     events.push(StreamEvent::ToolcallStart {
                         id: block_id(kind, index),
@@ -127,20 +141,27 @@ pub fn decode_event(
             let index = payload.get("index").and_then(Value::as_u64).unwrap_or(0) as usize;
             match state.open.get(index).copied() {
                 Some(kind @ BlockKind::Text) => {
-                    events.push(StreamEvent::TextEnd { id: block_id(kind, index) });
+                    events.push(StreamEvent::TextEnd {
+                        id: block_id(kind, index),
+                    });
                 }
                 Some(kind @ BlockKind::Thinking) => {
-                    events.push(StreamEvent::ThinkingEnd { id: block_id(kind, index) });
+                    events.push(StreamEvent::ThinkingEnd {
+                        id: block_id(kind, index),
+                    });
                 }
                 Some(kind @ BlockKind::Tool) => {
-                    events.push(StreamEvent::ToolcallEnd { id: block_id(kind, index) });
+                    events.push(StreamEvent::ToolcallEnd {
+                        id: block_id(kind, index),
+                    });
                 }
                 None => {}
             }
         }
         "message_delta" => {
-            if let Some(reason) =
-                payload.pointer("/delta/stop_reason").and_then(Value::as_str)
+            if let Some(reason) = payload
+                .pointer("/delta/stop_reason")
+                .and_then(Value::as_str)
             {
                 match map_stop_reason(ApiKind::AnthropicMessages, reason) {
                     crate::stop::StopMapping::Stop(reason) => {
@@ -164,7 +185,10 @@ pub fn decode_event(
                 .pointer("/error/message")
                 .and_then(Value::as_str)
                 .unwrap_or("upstream error event");
-            events.push(StreamEvent::Error { reason: ErrorReason::Rejected, message: message.into() });
+            events.push(StreamEvent::Error {
+                reason: ErrorReason::Rejected,
+                message: message.into(),
+            });
         }
         _ => {}
     }
@@ -194,7 +218,12 @@ mod tests {
             &json!({"type":"content_block_start","index":0,"content_block":{"type":"text"}}),
             &mut s,
         );
-        assert_eq!(ev, vec![StreamEvent::TextStart { id: BlockId("text_0".into()) }]);
+        assert_eq!(
+            ev,
+            vec![StreamEvent::TextStart {
+                id: BlockId("text_0".into())
+            }]
+        );
 
         let ev = decode_event(
             "content_block_delta",
@@ -203,7 +232,10 @@ mod tests {
         );
         assert_eq!(
             ev,
-            vec![StreamEvent::TextDelta { id: BlockId("text_0".into()), text: "Hi".into() }]
+            vec![StreamEvent::TextDelta {
+                id: BlockId("text_0".into()),
+                text: "Hi".into()
+            }]
         );
 
         let ev = decode_event(
@@ -211,14 +243,21 @@ mod tests {
             &json!({"type":"content_block_stop","index":0}),
             &mut s,
         );
-        assert_eq!(ev, vec![StreamEvent::TextEnd { id: BlockId("text_0".into()) }]);
+        assert_eq!(
+            ev,
+            vec![StreamEvent::TextEnd {
+                id: BlockId("text_0".into())
+            }]
+        );
 
         let ev = decode_event(
             "content_block_start",
             &json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"tu_1","name":"grep"}}),
             &mut s,
         );
-        assert!(matches!(ev[0], StreamEvent::ToolcallStart { ref call, .. } if call.name == "grep" && call.call_id == "tu_1"));
+        assert!(
+            matches!(ev[0], StreamEvent::ToolcallStart { ref call, .. } if call.name == "grep" && call.call_id == "tu_1")
+        );
 
         let ev = decode_event(
             "content_block_delta",
@@ -238,14 +277,24 @@ mod tests {
             &json!({"type":"content_block_stop","index":1}),
             &mut s,
         );
-        assert_eq!(ev, vec![StreamEvent::ToolcallEnd { id: BlockId("tool_1".into()) }]);
+        assert_eq!(
+            ev,
+            vec![StreamEvent::ToolcallEnd {
+                id: BlockId("tool_1".into())
+            }]
+        );
 
         let ev = decode_event(
             "message_delta",
             &json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}}),
             &mut s,
         );
-        assert_eq!(ev, vec![StreamEvent::Done { reason: StopReason::ToolUse }]);
+        assert_eq!(
+            ev,
+            vec![StreamEvent::Done {
+                reason: StopReason::ToolUse
+            }]
+        );
     }
 
     #[test]
@@ -260,10 +309,28 @@ mod tests {
             .pop()
             .expect("terminal")
         };
-        assert_eq!(check("end_turn", &mut s), StreamEvent::Done { reason: StopReason::Stop });
-        assert_eq!(check("max_tokens", &mut s), StreamEvent::Done { reason: StopReason::Length });
-        assert_eq!(check("tool_use", &mut s), StreamEvent::Done { reason: StopReason::ToolUse });
-        assert!(matches!(check("refusal", &mut s), StreamEvent::Error { .. }));
+        assert_eq!(
+            check("end_turn", &mut s),
+            StreamEvent::Done {
+                reason: StopReason::Stop
+            }
+        );
+        assert_eq!(
+            check("max_tokens", &mut s),
+            StreamEvent::Done {
+                reason: StopReason::Length
+            }
+        );
+        assert_eq!(
+            check("tool_use", &mut s),
+            StreamEvent::Done {
+                reason: StopReason::ToolUse
+            }
+        );
+        assert!(matches!(
+            check("refusal", &mut s),
+            StreamEvent::Error { .. }
+        ));
         assert!(matches!(check("bogus", &mut s), StreamEvent::Error { .. }));
     }
 
@@ -276,7 +343,12 @@ mod tests {
             &json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking"}}),
             &mut s,
         );
-        assert_eq!(ev, vec![StreamEvent::ThinkingStart { id: BlockId("thinking_0".into()) }]);
+        assert_eq!(
+            ev,
+            vec![StreamEvent::ThinkingStart {
+                id: BlockId("thinking_0".into())
+            }]
+        );
         let ev = decode_event(
             "content_block_delta",
             &json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"let me think"}}),
@@ -294,7 +366,12 @@ mod tests {
             &json!({"type":"content_block_stop","index":0}),
             &mut s,
         );
-        assert_eq!(ev, vec![StreamEvent::ThinkingEnd { id: BlockId("thinking_0".into()) }]);
+        assert_eq!(
+            ev,
+            vec![StreamEvent::ThinkingEnd {
+                id: BlockId("thinking_0".into())
+            }]
+        );
     }
 
     #[test]
@@ -317,7 +394,10 @@ mod tests {
         );
         assert_eq!(
             ev,
-            vec![StreamEvent::TextDelta { id: BlockId("text_1".into()), text: "a".into() }]
+            vec![StreamEvent::TextDelta {
+                id: BlockId("text_1".into()),
+                text: "a".into()
+            }]
         );
     }
 
@@ -331,7 +411,10 @@ mod tests {
         );
         assert!(matches!(
             ev[0],
-            StreamEvent::Error { reason: ErrorReason::Rejected, .. }
+            StreamEvent::Error {
+                reason: ErrorReason::Rejected,
+                ..
+            }
         ));
     }
 

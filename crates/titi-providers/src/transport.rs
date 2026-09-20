@@ -5,11 +5,11 @@
 use std::pin::Pin;
 use std::time::Duration;
 
+use crate::stream::StreamEvent;
 use async_trait::async_trait;
 use futures::Stream;
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
-use crate::stream::StreamEvent;
 
 /// Endpoint family. Dispatch key for transports and decoders.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -102,7 +102,10 @@ pub struct RequestCtx {
 
 impl RequestCtx {
     pub fn with_key(key: impl Into<SmolStr>) -> Self {
-        Self { api_key: Some(key.into()), ..Self::default() }
+        Self {
+            api_key: Some(key.into()),
+            ..Self::default()
+        }
     }
 
     pub fn is_aborted(&self) -> bool {
@@ -115,9 +118,15 @@ impl RequestCtx {
 pub enum TransportError {
     /// Upstream rate limited / temporarily unavailable (fallback-eligible
     /// between turns).
-    Retryable { status: Option<u16>, message: SmolStr },
+    Retryable {
+        status: Option<u16>,
+        message: SmolStr,
+    },
     /// Definitive rejection: do not retry, do not fall back.
-    Fatal { status: Option<u16>, message: SmolStr },
+    Fatal {
+        status: Option<u16>,
+        message: SmolStr,
+    },
     /// Watchdog: no first event or too long between events.
     Stalled { phase: StallPhase },
 }
@@ -142,7 +151,10 @@ impl std::fmt::Display for TransportError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             TransportError::Retryable { status, message } => {
-                write!(f, "retryable transport error (status {status:?}): {message}")
+                write!(
+                    f,
+                    "retryable transport error (status {status:?}): {message}"
+                )
             }
             TransportError::Fatal { status, message } => {
                 write!(f, "fatal transport error (status {status:?}): {message}")
@@ -181,8 +193,7 @@ impl Default for WatchdogConfig {
 }
 
 /// Push stream of normalized events.
-pub type EventStream =
-    Pin<Box<dyn Stream<Item = StreamEvent> + Send>>;
+pub type EventStream = Pin<Box<dyn Stream<Item = StreamEvent> + Send>>;
 
 /// Transport for one endpoint family.
 #[async_trait]
@@ -219,11 +230,26 @@ mod tests {
 
     #[test]
     fn retryability_classes() {
-        assert!(TransportError::Retryable { status: Some(429), message: "rl".into() }
-            .is_retryable());
-        assert!(TransportError::Stalled { phase: StallPhase::Idle }.is_retryable());
-        assert!(!TransportError::Fatal { status: Some(401), message: "no".into() }
-            .is_retryable());
+        assert!(
+            TransportError::Retryable {
+                status: Some(429),
+                message: "rl".into()
+            }
+            .is_retryable()
+        );
+        assert!(
+            TransportError::Stalled {
+                phase: StallPhase::Idle
+            }
+            .is_retryable()
+        );
+        assert!(
+            !TransportError::Fatal {
+                status: Some(401),
+                message: "no".into()
+            }
+            .is_retryable()
+        );
     }
 
     #[test]

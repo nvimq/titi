@@ -276,9 +276,9 @@ impl SlashRegistry {
             .catalog()
             .into_iter()
             .find(|item| item.name == name && !item.shadowed)?;
-        self.capabilities.iter().find(|c| {
-            c.name == name && c.provider == item.provider && c.priority == item.priority
-        })
+        self.capabilities
+            .iter()
+            .find(|c| c.name == name && c.provider == item.provider && c.priority == item.priority)
     }
 
     /// Number of registered builtins.
@@ -681,13 +681,7 @@ mod tests {
     #[test]
     fn capability_template_routes_when_not_shadowed() {
         let mut reg = SlashRegistry::new();
-        reg.register_capability(
-            "omp-plugins",
-            90,
-            "greet",
-            "Greet",
-            Some("hello $1"),
-        );
+        reg.register_capability("omp-plugins", 90, "greet", "Greet", Some("hello $1"));
         assert_eq!(
             reg.route("/greet world"),
             Route::Expanded("hello world".into())

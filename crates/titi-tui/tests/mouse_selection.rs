@@ -5,8 +5,8 @@
 //! 1006 events are decoded by [`titi_tui::input::InputBuffer`] into
 //! [`titi_tui::input::InputEvent::Mouse`] and drive the selection model.
 
-use std::collections::HashMap;
 use serde_json::json;
+use std::collections::HashMap;
 
 use titi_tui::input::{InputBuffer, InputEvent, MouseKind};
 use titi_tui::selection::Selection;
@@ -46,7 +46,12 @@ fn mouse_events(sequences: &[&str]) -> Vec<(MouseKind, u16, u16)> {
 
 #[test]
 fn sgr_events_decode_press_drag_release() {
-    let events = mouse_events(&["\x1b[<0;10;20M", "\x1b[<32;15;22M", "\x1b[<32;18;24M", "\x1b[<0;18;24m"]);
+    let events = mouse_events(&[
+        "\x1b[<0;10;20M",
+        "\x1b[<32;15;22M",
+        "\x1b[<32;18;24M",
+        "\x1b[<0;18;24m",
+    ]);
     assert_eq!(
         events,
         vec![
@@ -72,24 +77,46 @@ fn drag_select_paints_background_over_selected_rows() {
 
     // A viewport: rows 0..4.  Selection covers rows 1..=3, cols 2..=6.
     let theme = test_theme();
-    let rows: Vec<String> = (0..4)
-        .map(|i| format!("row {i} — pad"), )
-        .collect();
+    let rows: Vec<String> = (0..4).map(|i| format!("row {i} — pad")).collect();
     let painted = selection.apply_background(&rows, &theme);
     let bg = theme.get_bg_ansi(ThemeBg::SelectedBg);
 
     // Row 0 outside the selection → untouched.
-    assert!(!painted[0].contains(&bg), "row 0 untouched: {:?}", painted[0]);
+    assert!(
+        !painted[0].contains(&bg),
+        "row 0 untouched: {:?}",
+        painted[0]
+    );
     // Rows 1..=3 painted (cols 2..=6 of 11 columns).
     for i in 1..=3 {
-        assert!(painted[i].contains(&bg), "row {i} painted: {:?}", painted[i]);
-        assert!(painted[i].contains("\x1b[49m"), "row {i} closes bg: {:?}", painted[i]);
+        assert!(
+            painted[i].contains(&bg),
+            "row {i} painted: {:?}",
+            painted[i]
+        );
+        assert!(
+            painted[i].contains("\x1b[49m"),
+            "row {i} closes bg: {:?}",
+            painted[i]
+        );
     }
     // The bg splits the row at column 2, but the visible text survives
     // across the split: prefix "ro" before the bg, "w 1 " inside, "pad" after.
-    assert!(painted[1].starts_with("ro"), "prefix preserved: {:?}", painted[1]);
-    assert!(painted[1].contains("w 1 "), "selected text preserved: {:?}", painted[1]);
-    assert!(painted[3].ends_with(" pad"), "suffix preserved: {:?}", painted[3]);
+    assert!(
+        painted[1].starts_with("ro"),
+        "prefix preserved: {:?}",
+        painted[1]
+    );
+    assert!(
+        painted[1].contains("w 1 "),
+        "selected text preserved: {:?}",
+        painted[1]
+    );
+    assert!(
+        painted[3].ends_with(" pad"),
+        "suffix preserved: {:?}",
+        painted[3]
+    );
 }
 
 #[test]

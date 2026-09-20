@@ -19,7 +19,11 @@ pub async fn run(mut engine: Engine) -> io::Result<i32> {
         let frame: HeadlessFrame = match serde_json::from_str(&line) {
             Ok(frame) => frame,
             Err(error) => {
-                writeln!(stdout, "{}", serde_json::json!({"error": error.to_string()}))?;
+                writeln!(
+                    stdout,
+                    "{}",
+                    serde_json::json!({"error": error.to_string()})
+                )?;
                 continue;
             }
         };
@@ -28,7 +32,11 @@ pub async fn run(mut engine: Engine) -> io::Result<i32> {
             return Ok(1);
         }
         while let Some(event) = engine.recv().await {
-            writeln!(stdout, "{}", serde_json::to_string(&event).unwrap_or_default())?;
+            writeln!(
+                stdout,
+                "{}",
+                serde_json::to_string(&event).unwrap_or_default()
+            )?;
             stdout.flush()?;
             let terminal = matches!(
                 event,

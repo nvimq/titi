@@ -88,7 +88,10 @@ mod tests {
 
     #[test]
     fn clean_text_passes() {
-        assert_eq!(scan("You are a careful agent. Be honest."), ScanVerdict::Clean);
+        assert_eq!(
+            scan("You are a careful agent. Be honest."),
+            ScanVerdict::Clean
+        );
     }
 
     #[test]
@@ -162,10 +165,7 @@ mod tests {
     #[test]
     fn pattern_deduplicated_across_occurrences() {
         let verdict = scan("ignore previous. also IGNORE PREVIOUS again.");
-        assert_eq!(
-            verdict,
-            ScanVerdict::Flagged(vec![Pattern::IgnorePrevious])
-        );
+        assert_eq!(verdict, ScanVerdict::Flagged(vec![Pattern::IgnorePrevious]));
     }
 
     #[test]

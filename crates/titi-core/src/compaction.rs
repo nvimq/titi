@@ -6,8 +6,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::session::entry::{new_id, now_ms};
 use crate::session::Entry;
+use crate::session::entry::{new_id, now_ms};
 
 /// Errors surfaced by compaction.
 #[derive(Debug)]

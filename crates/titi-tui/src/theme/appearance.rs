@@ -146,7 +146,9 @@ pub fn classify_appearance_bytes(bytes: &[u8]) -> Option<AppearanceEvent> {
         return Some(AppearanceEvent::Mode2031Requery);
     }
     let (r, g, b) = parse_osc11_reply(bytes)?;
-    Some(AppearanceEvent::Osc11(appearance_from_osc11_hex(&r, &g, &b)))
+    Some(AppearanceEvent::Osc11(appearance_from_osc11_hex(
+        &r, &g, &b,
+    )))
 }
 
 /// Parse a Mode 2031 DSR (`CSI ? 997 ; 1/2 n`). OMP uses this as a re-query
@@ -258,14 +260,8 @@ mod tests {
             appearance_from_osc11_hex("ffff", "ffff", "ffff"),
             Appearance::Light
         );
-        assert_eq!(
-            appearance_from_osc11_hex("f", "f", "f"),
-            Appearance::Light
-        );
-        assert_eq!(
-            appearance_from_osc11_hex("0", "0", "0"),
-            Appearance::Dark
-        );
+        assert_eq!(appearance_from_osc11_hex("f", "f", "f"), Appearance::Light);
+        assert_eq!(appearance_from_osc11_hex("0", "0", "0"), Appearance::Dark);
     }
 
     #[test]
@@ -362,10 +358,7 @@ mod tests {
 
     #[test]
     fn mode_2031_dsr() {
-        assert_eq!(
-            parse_mode_2031_dsr(b"\x1b[?997;1n"),
-            Some(Appearance::Dark)
-        );
+        assert_eq!(parse_mode_2031_dsr(b"\x1b[?997;1n"), Some(Appearance::Dark));
         assert_eq!(
             parse_mode_2031_dsr(b"\x1b[?997;2n"),
             Some(Appearance::Light)

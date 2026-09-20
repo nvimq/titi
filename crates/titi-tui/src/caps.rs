@@ -441,11 +441,11 @@ mod tests {
     fn sync_output_detected_via_decrqm() {
         let reply = b"\x1b[?2026;1$y";
         let mut io = ScriptedIo::new(vec![
-            b"\x1b[?1;2c".to_vec(),    // DA1
-            reply.to_vec(),            // DECRQM for 2026
-            b"".to_vec(),              // CPR — no reply
-            b"".to_vec(),              // kitty — no reply
-            b"".to_vec(),              // bg — no reply
+            b"\x1b[?1;2c".to_vec(), // DA1
+            reply.to_vec(),         // DECRQM for 2026
+            b"".to_vec(),           // CPR — no reply
+            b"".to_vec(),           // kitty — no reply
+            b"".to_vec(),           // bg — no reply
         ]);
         let mut owners = default_owners();
         let caps = Capabilities::probe(&mut io, &mut owners, Duration::from_millis(5));
@@ -490,11 +490,11 @@ mod tests {
     #[test]
     fn kitty_reply_detected() {
         let mut io = ScriptedIo::new(vec![
-            b"".to_vec(),                         // DA1 — no reply
-            b"".to_vec(),                         // sync output — no reply
-            b"".to_vec(),                         // CPR — no reply
-            b"\x1b_Gi=1;OK\x1b\\".to_vec(),       // kitty
-            b"".to_vec(),                         // bg — no reply
+            b"".to_vec(),                   // DA1 — no reply
+            b"".to_vec(),                   // sync output — no reply
+            b"".to_vec(),                   // CPR — no reply
+            b"\x1b_Gi=1;OK\x1b\\".to_vec(), // kitty
+            b"".to_vec(),                   // bg — no reply
         ]);
         let mut owners = default_owners();
         let caps = Capabilities::probe(&mut io, &mut owners, Duration::from_millis(5));
@@ -529,10 +529,7 @@ mod tests {
     fn bg_color_parse_black() {
         let owner = BgColorOwner;
         let reply = b"\x1b]11;rgb:0000/0000/0000\x1b\\";
-        assert_eq!(
-            owner.parse(reply),
-            Some(Cap::Bg(Rgb { r: 0, g: 0, b: 0 }))
-        );
+        assert_eq!(owner.parse(reply), Some(Cap::Bg(Rgb { r: 0, g: 0, b: 0 })));
     }
 
     #[test]
@@ -646,10 +643,10 @@ mod tests {
     #[test]
     fn scripted_probe_sets_multiple_caps() {
         let mut io = ScriptedIo::new(vec![
-            b"\x1b[?1;2c".to_vec(),              // DA1
-            b"\x1b[?2026;1$y".to_vec(),          // sync output
-            b"\x1b[5;10R".to_vec(),              // CPR
-            b"\x1b_Gi=1;OK\x1b\\".to_vec(),      // kitty
+            b"\x1b[?1;2c".to_vec(),                       // DA1
+            b"\x1b[?2026;1$y".to_vec(),                   // sync output
+            b"\x1b[5;10R".to_vec(),                       // CPR
+            b"\x1b_Gi=1;OK\x1b\\".to_vec(),               // kitty
             b"\x1b]11;rgb:1234/5678/9abc\x1b\\".to_vec(), // bg
         ]);
         let mut owners = default_owners();

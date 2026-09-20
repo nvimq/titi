@@ -45,7 +45,9 @@ pub enum Error {
     NoMatch,
     /// `replace`/`remove` substring matched more than one entry; the caller
     /// must use a substring that identifies exactly one entry.
-    Ambiguous { matches: Vec<String> },
+    Ambiguous {
+        matches: Vec<String>,
+    },
     /// `replace` would push the store past its char limit; nothing was written.
     Capacity(CapacityError),
     /// Entry or search text is empty or would corrupt the `§`-separated format.
@@ -140,7 +142,10 @@ impl Store {
     /// Build a store from entries, recomputing `usage_chars`.
     pub fn from_entries(entries: Vec<String>) -> Self {
         let usage_chars = entries.iter().map(|e| e.chars().count()).sum();
-        Self { entries, usage_chars }
+        Self {
+            entries,
+            usage_chars,
+        }
     }
 }
 
@@ -161,12 +166,18 @@ impl MemoryStore {
 
     /// The `user` store: `<agent_dir>/memories/USER.md`, 1,375 chars.
     pub fn user(agent_dir: impl AsRef<Path>) -> Self {
-        Self::new(memories_file(agent_dir.as_ref(), USER_FILE), USER_LIMIT_CHARS)
+        Self::new(
+            memories_file(agent_dir.as_ref(), USER_FILE),
+            USER_LIMIT_CHARS,
+        )
     }
 
     /// Any bounded store: explicit backing file and char limit.
     pub fn new(path: impl Into<PathBuf>, limit_chars: usize) -> Self {
-        Self { path: path.into(), limit_chars }
+        Self {
+            path: path.into(),
+            limit_chars,
+        }
     }
 
     /// Backing file of this store.
@@ -216,12 +227,7 @@ impl MemoryStore {
     /// Replace the single entry containing `old_substring` with `new_text`.
     /// A substring matching zero or several entries is an error; a
     /// replacement that would exceed the limit is rejected without writing.
-    pub fn replace(
-        &self,
-        store: &mut Store,
-        old_substring: &str,
-        new_text: &str,
-    ) -> Result<()> {
+    pub fn replace(&self, store: &mut Store, old_substring: &str, new_text: &str) -> Result<()> {
         let idx = self.unique_match(store, old_substring)?;
         let entry = validate_entry(new_text)?;
         let old_len = store.entries[idx].chars().count();
@@ -378,12 +384,7 @@ mod tests {
         let mut names: Vec<String> = Vec::new();
         for entry in fs::read_dir(dir.path()).unwrap_or_else(|e| panic!("read_dir failed: {e}")) {
             let entry = entry.unwrap_or_else(|e| panic!("dirent failed: {e}"));
-            names.push(
-                entry
-                    .file_name()
-                    .to_string_lossy()
-                    .into_owned(),
-            );
+            names.push(entry.file_name().to_string_lossy().into_owned());
         }
         names.sort();
         names
@@ -414,14 +415,22 @@ mod tests {
     fn add_roundtrips_through_separator_format() {
         let (_dir, store) = tmp_store(MEMORY_LIMIT_CHARS);
         let mut s = check(store.load());
-        assert_eq!(check(store.add(&mut s, "Prefers concise answers")), AddOutcome::Added);
         assert_eq!(
-            check(store.add(&mut s, "Проект titi: cargo test -p titi-memory\nзапускает стор-тесты")),
+            check(store.add(&mut s, "Prefers concise answers")),
+            AddOutcome::Added
+        );
+        assert_eq!(
+            check(store.add(
+                &mut s,
+                "Проект titi: cargo test -p titi-memory\nзапускает стор-тесты"
+            )),
             AddOutcome::Added
         );
 
         let expected_usage = "Prefers concise answers".chars().count()
-            + "Проект titi: cargo test -p titi-memory\nзапускает стор-тесты".chars().count();
+            + "Проект titi: cargo test -p titi-memory\nзапускает стор-тесты"
+                .chars()
+                .count();
         assert_eq!(s.usage_chars, expected_usage);
 
         // Reload from disk: entries and usage survive the roundtrip.
@@ -470,7 +479,10 @@ mod tests {
         let mut s = check(store.load());
         assert_eq!(check(store.add(&mut s, "likes tea")), AddOutcome::Added);
         // Duplicate after trimming and through a reload.
-        assert_eq!(check(store.add(&mut s, "  likes tea  ")), AddOutcome::Duplicate);
+        assert_eq!(
+            check(store.add(&mut s, "  likes tea  ")),
+            AddOutcome::Duplicate
+        );
         assert_eq!(
             check(store.add(&mut check(store.load()), "likes tea")),
             AddOutcome::Duplicate
@@ -551,7 +563,10 @@ mod tests {
         check(store.add(&mut s, "Uses ghostty terminal"));
 
         check(store.replace(&mut s, "ghostty", "Uses iTerm2 now"));
-        assert_eq!(s.entries, vec!["Prefers Rust over Python", "Uses iTerm2 now"]);
+        assert_eq!(
+            s.entries,
+            vec!["Prefers Rust over Python", "Uses iTerm2 now"]
+        );
         assert_eq!(
             s.usage_chars,
             "Prefers Rust over Python".chars().count() + "Uses iTerm2 now".chars().count()
@@ -569,7 +584,10 @@ mod tests {
 
         match store.replace(&mut s, "likes", "likes nothing") {
             Err(Error::Ambiguous { matches }) => {
-                assert_eq!(matches, vec!["likes tea".to_string(), "likes coffee".to_string()]);
+                assert_eq!(
+                    matches,
+                    vec!["likes tea".to_string(), "likes coffee".to_string()]
+                );
             }
             other => panic!("expected Ambiguous, got {other:?}"),
         }

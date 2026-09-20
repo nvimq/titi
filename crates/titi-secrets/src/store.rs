@@ -97,7 +97,13 @@ impl AuthStore {
     }
 
     /// Insert or update a credential for its provider.
-    pub fn store(&self, provider: &str, kind: &str, token: &str, expires_at: Option<i64>) -> Result<()> {
+    pub fn store(
+        &self,
+        provider: &str,
+        kind: &str,
+        token: &str,
+        expires_at: Option<i64>,
+    ) -> Result<()> {
         self.conn.execute(
             "INSERT INTO credentials (provider, kind, token, expires_at, updated_at)
              VALUES (?1, ?2, ?3, ?4, ?5)
@@ -190,40 +196,73 @@ mod tests {
 
     fn open_tmp(tag: &str) -> (tempfile::TempDir, AuthStore) {
         let dir = tempfile::tempdir().unwrap_or_else(|e| panic!("tempdir failed: {e}"));
-        let store = AuthStore::open(&dir.path().join(tag))
-            .unwrap_or_else(|e| panic!("open failed: {e}"));
+        let store =
+            AuthStore::open(&dir.path().join(tag)).unwrap_or_else(|e| panic!("open failed: {e}"));
         (dir, store)
     }
 
     #[test]
     fn store_get_remove_roundtrip() {
         let (_dir, store) = open_tmp("auth.db");
-        assert_eq!(store.get("anthropic").unwrap_or_else(|e| panic!("get: {e}")), None);
+        assert_eq!(
+            store
+                .get("anthropic")
+                .unwrap_or_else(|e| panic!("get: {e}")),
+            None
+        );
 
-        store.store("anthropic", "oauth", "tok-1", None).unwrap_or_else(|e| panic!("store: {e}"));
-        let cred = store.get("anthropic").unwrap_or_else(|e| panic!("get: {e}"));
+        store
+            .store("anthropic", "oauth", "tok-1", None)
+            .unwrap_or_else(|e| panic!("store: {e}"));
+        let cred = store
+            .get("anthropic")
+            .unwrap_or_else(|e| panic!("get: {e}"));
         assert_eq!(cred.as_ref().map(|c| c.token.as_str()), Some("tok-1"));
         assert_eq!(cred.as_ref().map(|c| c.kind.as_str()), Some("oauth"));
         assert_eq!(cred.as_ref().and_then(|c| c.expires_at), None);
         assert!(cred.is_some_and(|c| c.updated_at > 0));
 
         // Upsert replaces token and expiry.
-        store.store("anthropic", "api_key", "tok-2", Some(1_700_000_000)).unwrap_or_else(|e| panic!("store: {e}"));
-        let cred = store.get("anthropic").unwrap_or_else(|e| panic!("get: {e}"));
+        store
+            .store("anthropic", "api_key", "tok-2", Some(1_700_000_000))
+            .unwrap_or_else(|e| panic!("store: {e}"));
+        let cred = store
+            .get("anthropic")
+            .unwrap_or_else(|e| panic!("get: {e}"));
         assert_eq!(cred.as_ref().map(|c| c.token.as_str()), Some("tok-2"));
-        assert_eq!(cred.as_ref().and_then(|c| c.expires_at), Some(1_700_000_000));
+        assert_eq!(
+            cred.as_ref().and_then(|c| c.expires_at),
+            Some(1_700_000_000)
+        );
 
         assert!(store.list().unwrap_or_else(|e| panic!("list: {e}")).len() == 1);
-        assert!(store.remove("anthropic").unwrap_or_else(|e| panic!("remove: {e}")));
-        assert!(!store.remove("anthropic").unwrap_or_else(|e| panic!("remove: {e}")));
-        assert_eq!(store.get("anthropic").unwrap_or_else(|e| panic!("get: {e}")), None);
+        assert!(
+            store
+                .remove("anthropic")
+                .unwrap_or_else(|e| panic!("remove: {e}"))
+        );
+        assert!(
+            !store
+                .remove("anthropic")
+                .unwrap_or_else(|e| panic!("remove: {e}"))
+        );
+        assert_eq!(
+            store
+                .get("anthropic")
+                .unwrap_or_else(|e| panic!("get: {e}")),
+            None
+        );
     }
 
     #[test]
     fn list_and_remove_are_provider_scoped() {
         let (_dir, store) = open_tmp("auth.db");
-        store.store("a", "api_key", "ta", None).unwrap_or_else(|e| panic!("store: {e}"));
-        store.store("b", "oauth", "tb", None).unwrap_or_else(|e| panic!("store: {e}"));
+        store
+            .store("a", "api_key", "ta", None)
+            .unwrap_or_else(|e| panic!("store: {e}"));
+        store
+            .store("b", "oauth", "tb", None)
+            .unwrap_or_else(|e| panic!("store: {e}"));
         assert!(store.remove("a").unwrap_or_else(|e| panic!("remove: {e}")));
         let listed = store.list().unwrap_or_else(|e| panic!("list: {e}"));
         assert_eq!(listed.len(), 1);
@@ -236,7 +275,10 @@ mod tests {
         let path = dir.path().join("auth.db");
         AuthStore::open(&path).unwrap_or_else(|e| panic!("open failed: {e}"));
         use std::os::unix::fs::PermissionsExt;
-        let mode = fs::metadata(&path).unwrap_or_else(|e| panic!("stat: {e}")).permissions().mode();
+        let mode = fs::metadata(&path)
+            .unwrap_or_else(|e| panic!("stat: {e}"))
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o600, "db file must be 0600, got {mode:o}");
     }
 
@@ -246,19 +288,29 @@ mod tests {
         let path = dir.path().join("auth.db");
         {
             let store = AuthStore::open(&path).unwrap_or_else(|e| panic!("open: {e}"));
-            store.store("openai", "api_key", "k", None).unwrap_or_else(|e| panic!("store: {e}"));
+            store
+                .store("openai", "api_key", "k", None)
+                .unwrap_or_else(|e| panic!("store: {e}"));
         }
         // Simulate a wrong-mode pre-existing file, then reopen: mode is repaired.
-        let mut perms = fs::metadata(&path).unwrap_or_else(|e| panic!("stat: {e}")).permissions();
+        let mut perms = fs::metadata(&path)
+            .unwrap_or_else(|e| panic!("stat: {e}"))
+            .permissions();
         perms.set_mode(0o644);
         fs::set_permissions(&path, perms).unwrap_or_else(|e| panic!("chmod: {e}"));
         let store = AuthStore::open(&path).unwrap_or_else(|e| panic!("reopen: {e}"));
         assert_eq!(
-            store.get("openai").unwrap_or_else(|e| panic!("get: {e}")).map(|c| c.token),
+            store
+                .get("openai")
+                .unwrap_or_else(|e| panic!("get: {e}"))
+                .map(|c| c.token),
             Some("k".to_string())
         );
         use std::os::unix::fs::PermissionsExt;
-        let mode = fs::metadata(&path).unwrap_or_else(|e| panic!("stat: {e}")).permissions().mode();
+        let mode = fs::metadata(&path)
+            .unwrap_or_else(|e| panic!("stat: {e}"))
+            .permissions()
+            .mode();
         assert_eq!(mode & 0o777, 0o600);
     }
 
@@ -266,15 +318,45 @@ mod tests {
     fn quarantine_expired_drops_only_dead_rows() {
         let (_dir, store) = open_tmp("auth.db");
         let now = now();
-        store.store("dead-refresh", "oauth", "r1", Some(now - 100)).unwrap_or_else(|e| panic!("store: {e}"));
-        store.store("live-refresh", "oauth", "r2", Some(now + 3_600)).unwrap_or_else(|e| panic!("store: {e}"));
-        store.store("never-expires", "api_key", "k", None).unwrap_or_else(|e| panic!("store: {e}"));
+        store
+            .store("dead-refresh", "oauth", "r1", Some(now - 100))
+            .unwrap_or_else(|e| panic!("store: {e}"));
+        store
+            .store("live-refresh", "oauth", "r2", Some(now + 3_600))
+            .unwrap_or_else(|e| panic!("store: {e}"));
+        store
+            .store("never-expires", "api_key", "k", None)
+            .unwrap_or_else(|e| panic!("store: {e}"));
 
-        assert_eq!(store.quarantine_expired().unwrap_or_else(|e| panic!("quarantine: {e}")), 1);
-        assert!(!store.remove("dead-refresh").unwrap_or_else(|e| panic!("remove: {e}")));
-        assert!(store.get("live-refresh").unwrap_or_else(|e| panic!("get: {e}")).is_some());
-        assert!(store.get("never-expires").unwrap_or_else(|e| panic!("get: {e}")).is_some());
+        assert_eq!(
+            store
+                .quarantine_expired()
+                .unwrap_or_else(|e| panic!("quarantine: {e}")),
+            1
+        );
+        assert!(
+            !store
+                .remove("dead-refresh")
+                .unwrap_or_else(|e| panic!("remove: {e}"))
+        );
+        assert!(
+            store
+                .get("live-refresh")
+                .unwrap_or_else(|e| panic!("get: {e}"))
+                .is_some()
+        );
+        assert!(
+            store
+                .get("never-expires")
+                .unwrap_or_else(|e| panic!("get: {e}"))
+                .is_some()
+        );
         // Idempotent: nothing left to quarantine.
-        assert_eq!(store.quarantine_expired().unwrap_or_else(|e| panic!("quarantine: {e}")), 0);
+        assert_eq!(
+            store
+                .quarantine_expired()
+                .unwrap_or_else(|e| panic!("quarantine: {e}")),
+            0
+        );
     }
 }

@@ -6,7 +6,9 @@ use std::sync::Mutex;
 
 use crate::http::{HttpFetch, HttpRequest, HttpResponse};
 use crate::stream::StreamEvent;
-use crate::transport::{ApiKind, EventStream, RequestCtx, Transport, TransportError, WatchdogConfig, WireRequest};
+use crate::transport::{
+    ApiKind, EventStream, RequestCtx, Transport, TransportError, WatchdogConfig, WireRequest,
+};
 
 /// Scripted response for one fetch call.
 #[derive(Debug, Clone)]
@@ -18,7 +20,10 @@ pub struct MockFetchResponse {
 
 impl MockFetchResponse {
     pub fn sse(chunks: Vec<String>) -> Self {
-        Self { status: 200, chunks }
+        Self {
+            status: 200,
+            chunks,
+        }
     }
 
     pub fn with_status(mut self, status: u16) -> Self {
@@ -37,7 +42,10 @@ pub struct MockFetch {
 
 impl MockFetch {
     pub fn new(responses: Vec<Result<MockFetchResponse, TransportError>>) -> Self {
-        Self { responses: Mutex::new(responses), requests: Mutex::new(Vec::new()) }
+        Self {
+            responses: Mutex::new(responses),
+            requests: Mutex::new(Vec::new()),
+        }
     }
 
     pub fn sse(chunks: Vec<String>) -> Self {
@@ -65,11 +73,13 @@ impl HttpFetch for MockFetch {
             if let Ok(mut q) = self.requests.lock() {
                 q.push(req);
             }
-            let next = self
-                .responses
-                .lock()
-                .ok()
-                .and_then(|mut r| if r.is_empty() { None } else { Some(r.remove(0)) });
+            let next = self.responses.lock().ok().and_then(|mut r| {
+                if r.is_empty() {
+                    None
+                } else {
+                    Some(r.remove(0))
+                }
+            });
             let Some(resp) = next else {
                 return Err(TransportError::Fatal {
                     status: None,
@@ -118,7 +128,10 @@ impl MockTransport {
     }
 
     pub fn requests(&self) -> Vec<WireRequest> {
-        self.requests.lock().map(|guard| guard.clone()).unwrap_or_default()
+        self.requests
+            .lock()
+            .map(|guard| guard.clone())
+            .unwrap_or_default()
     }
 }
 
@@ -145,11 +158,13 @@ impl Transport for MockTransport {
         if let Ok(mut requests) = self.requests.lock() {
             requests.push(req);
         }
-        let next = self
-            .bodies
-            .lock()
-            .ok()
-            .and_then(|mut b| if b.is_empty() { None } else { Some(b.remove(0)) });
+        let next = self.bodies.lock().ok().and_then(|mut b| {
+            if b.is_empty() {
+                None
+            } else {
+                Some(b.remove(0))
+            }
+        });
         match next {
             None => Err(TransportError::Fatal {
                 status: None,
@@ -160,4 +175,3 @@ impl Transport for MockTransport {
         }
     }
 }
-

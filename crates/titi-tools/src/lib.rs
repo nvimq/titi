@@ -175,9 +175,7 @@ mod tests {
     async fn echo_is_read_tier() {
         let tool = EchoTool;
         assert_eq!(tool.definition().approval, ApprovalTier::Read);
-        let result = tool
-            .invoke(serde_json::json!({"text": "hi"}))
-            .await;
+        let result = tool.invoke(serde_json::json!({"text": "hi"})).await;
         assert_eq!(result.output, "hi");
         assert!(!result.is_error);
     }

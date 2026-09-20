@@ -42,15 +42,21 @@ impl PersonalityPreset {
     /// The personality text rendered into the prompt.
     pub fn text(&self) -> &'static str {
         match self {
-            PersonalityPreset::Default => "\
+            PersonalityPreset::Default => {
+                "\
 Respond in a clear, neutral, helpful tone. Prefer precision over flourish; \
-state conclusions first and justify them after.",
-            PersonalityPreset::Friendly => "\
+state conclusions first and justify them after."
+            }
+            PersonalityPreset::Friendly => {
+                "\
 Be warm and encouraging. Celebrate progress, keep the tone light, and never \
-let friendliness dilute correctness.",
-            PersonalityPreset::Pragmatic => "\
+let friendliness dilute correctness."
+            }
+            PersonalityPreset::Pragmatic => {
+                "\
 Be terse and outcome-focused: shortest correct answer first, caveats only \
-when they change the decision.",
+when they change the decision."
+            }
         }
     }
 }
@@ -117,7 +123,10 @@ mod tests {
         ] {
             assert_eq!(PersonalityPreset::from_name(preset.name()), Some(preset));
         }
-        assert_eq!(PersonalityPreset::from_name("  PRAGMATIC "), Some(PersonalityPreset::Pragmatic));
+        assert_eq!(
+            PersonalityPreset::from_name("  PRAGMATIC "),
+            Some(PersonalityPreset::Pragmatic)
+        );
         assert_eq!(PersonalityPreset::from_name("kawaii"), None);
     }
 
@@ -158,7 +167,10 @@ mod tests {
 
     #[test]
     fn overlay_constructors_set_priority_fields() {
-        assert_eq!(Overlay::preset(PersonalityPreset::Friendly).preset, Some(PersonalityPreset::Friendly));
+        assert_eq!(
+            Overlay::preset(PersonalityPreset::Friendly).preset,
+            Some(PersonalityPreset::Friendly)
+        );
         assert_eq!(Overlay::custom("brief").custom.as_deref(), Some("brief"));
         assert_eq!(Overlay::none(), Overlay::default());
     }

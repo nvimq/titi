@@ -27,7 +27,8 @@ pub fn rank(files: &HashMap<String, FileRecord>) -> (HashMap<String, f64>, HashM
         return (HashMap::new(), dependents);
     }
 
-    let mut score: HashMap<String, f64> = nodes.iter().map(|k| (k.clone(), 1.0 / n as f64)).collect();
+    let mut score: HashMap<String, f64> =
+        nodes.iter().map(|k| (k.clone(), 1.0 / n as f64)).collect();
     for _ in 0..ITERATIONS {
         let mut next = HashMap::new();
         for node in &nodes {
@@ -38,7 +39,10 @@ pub fn rank(files: &HashMap<String, FileRecord>) -> (HashMap<String, f64>, HashM
                     incoming += score.get(src).copied().unwrap_or(0.0) / out;
                 }
             }
-            next.insert(node.clone(), (1.0 - DAMPING) / n as f64 + DAMPING * incoming);
+            next.insert(
+                node.clone(),
+                (1.0 - DAMPING) / n as f64 + DAMPING * incoming,
+            );
         }
         score = next;
     }

@@ -34,10 +34,7 @@ pub enum PasteResult {
         omitted_lines: usize,
     },
     /// Single file path → attachment marker.
-    Attachment {
-        name: String,
-        marker: String,
-    },
+    Attachment { name: String, marker: String },
 }
 
 /// Parsed OSC 5522 enhanced paste payload.
@@ -234,12 +231,8 @@ fn is_image_path(s: &str) -> bool {
         Some((_, e)) => e.to_lowercase(),
         None => return false,
     };
-    matches!(
-        ext.as_str(),
-        "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico"
-    )
+    matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico")
 }
-
 
 /// Default box-composer padding (OMP `boxComposerStyle.defaultPaddingX`).
 const BOX_PADDING_X: usize = 2;
@@ -277,7 +270,10 @@ pub fn render_box_composer(
     let fill_w = w.saturating_sub(side * 2);
     let status_trim = truncate_to_width(status, fill_w);
     let fill = fill_w.saturating_sub(visible_width(&status_trim));
-    let top = format!("{top_left}{status_trim}{}{top_right}", border(&h.repeat(fill)));
+    let top = format!(
+        "{top_left}{status_trim}{}{top_right}",
+        border(&h.repeat(fill))
+    );
 
     let mut rows = vec![top];
     let inner_w = w.saturating_sub(2);
@@ -306,11 +302,7 @@ pub fn render_box_composer(
 
 fn glyph<'a>(theme: &'a Theme, key: &str, fallback: &'a str) -> &'a str {
     let s = theme.symbol(key);
-    if s.is_empty() {
-        fallback
-    } else {
-        s
-    }
+    if s.is_empty() { fallback } else { s }
 }
 
 fn prompt_text(input: &str, highlighted: bool, show_cursor: bool) -> String {
@@ -514,10 +506,21 @@ mod tests {
         global().init("titanium");
         let theme = global().current().expect("theme");
         let rows = render_box_composer(&theme, 40, "π model", "hi", false, true, &[]);
-        assert!(rows[0].contains('╭') && rows[0].contains('╮'), "top: {}", rows[0]);
+        assert!(
+            rows[0].contains('╭') && rows[0].contains('╮'),
+            "top: {}",
+            rows[0]
+        );
         let last = rows.last().expect("bottom");
         assert!(last.contains('╰') && last.contains('╯'), "bottom: {last}");
-        assert!(last.contains(CURSOR_MARKER), "cursor marker in prompt: {last}");
-        assert!(rows.iter().any(|r| r.contains("π model") || r.contains("model")), "{rows:?}");
+        assert!(
+            last.contains(CURSOR_MARKER),
+            "cursor marker in prompt: {last}"
+        );
+        assert!(
+            rows.iter()
+                .any(|r| r.contains("π model") || r.contains("model")),
+            "{rows:?}"
+        );
     }
 }

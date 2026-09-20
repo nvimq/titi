@@ -36,13 +36,17 @@ const MODIFIER_ORDER: [&str; 4] = ["ctrl", "shift", "alt", "super"];
 /// Symbol keys typed with Shift on a US layout; `shift+<symbol>` is a
 /// canonical alias of the symbol itself.
 const SHIFTED_SYMBOL_KEYS: &[&str] = &[
-    "!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+", "{", "}", "|", ":", "<",
-    ">", "?", "~",
+    "!", "@", "#", "$", "%", "^", "&", "*", "(", ")", "_", "+", "{", "}", "|", ":", "<", ">", "?",
+    "~",
 ];
 
 fn starts_with_modifier(key: &str, offset: usize, modifier: &str) -> bool {
-    let Some(rest) = key.get(offset..) else { return false };
-    let Some(after) = rest.get(modifier.len()..) else { return false };
+    let Some(rest) = key.get(offset..) else {
+        return false;
+    };
+    let Some(after) = rest.get(modifier.len()..) else {
+        return false;
+    };
     if !after.starts_with('+') {
         return false;
     }
@@ -91,7 +95,12 @@ pub fn canonical_key_id(key: &str) -> String {
     if modifiers.is_empty() {
         return base;
     }
-    modifiers.sort_by_key(|m| MODIFIER_ORDER.iter().position(|x| x == m).unwrap_or(usize::MAX));
+    modifiers.sort_by_key(|m| {
+        MODIFIER_ORDER
+            .iter()
+            .position(|x| x == m)
+            .unwrap_or(usize::MAX)
+    });
     format!("{}+{base}", modifiers.join("+"))
 }
 
@@ -118,7 +127,8 @@ const KITTY_MOD_CTRL: u32 = 4;
 const KITTY_MOD_SUPER: u32 = 8;
 /// Caps Lock (64) + Num Lock (128): layout locks, not modifiers.
 const KITTY_LOCK_MASK: u32 = 64 + 128;
-const SUPPORTED_MODIFIER_MASK: u32 = KITTY_MOD_SHIFT | KITTY_MOD_ALT | KITTY_MOD_CTRL | KITTY_MOD_SUPER;
+const SUPPORTED_MODIFIER_MASK: u32 =
+    KITTY_MOD_SHIFT | KITTY_MOD_ALT | KITTY_MOD_CTRL | KITTY_MOD_SUPER;
 
 /// Keypad operator keys in Kitty CSI-u encoding.
 const KITTY_KEYPAD_OPERATORS: &[(u32, &str)] = &[
@@ -183,7 +193,11 @@ struct ParsedKittySequence {
 
 fn parse_kitty_sequence(data: &str) -> Option<ParsedKittySequence> {
     let rest = data.strip_prefix("\x1b[")?.strip_suffix('u')?;
-    if rest.is_empty() || !rest.bytes().all(|b| b.is_ascii_digit() || b == b':' || b == b';') {
+    if rest.is_empty()
+        || !rest
+            .bytes()
+            .all(|b| b.is_ascii_digit() || b == b':' || b == b';')
+    {
         return None;
     }
     let mut fields = rest.split(';');
@@ -273,7 +287,10 @@ fn decode_kitty_printable(data: &str) -> Option<String> {
             return Some(printable.into_iter().collect());
         }
     }
-    if let Some((_, op)) = KITTY_KEYPAD_OPERATORS.iter().find(|(cp, _)| *cp == parsed.codepoint) {
+    if let Some((_, op)) = KITTY_KEYPAD_OPERATORS
+        .iter()
+        .find(|(cp, _)| *cp == parsed.codepoint)
+    {
         return Some((*op).to_owned());
     }
     if effective_mod == 0 {
@@ -332,10 +349,10 @@ pub fn decode_printable_key(data: &str) -> Option<String> {
 /// terminal reports NumLock; navigation with held modifiers stays canonical.
 fn decode_kitty_keypad_text(data: &str) -> Option<String> {
     let parsed = parse_kitty_sequence(data)?;
-    let is_keypad = KITTY_NUMPAD
-        .iter()
-        .any(|(cp, _)| *cp == parsed.codepoint)
-        || KITTY_KEYPAD_OPERATORS.iter().any(|(cp, _)| *cp == parsed.codepoint);
+    let is_keypad = KITTY_NUMPAD.iter().any(|(cp, _)| *cp == parsed.codepoint)
+        || KITTY_KEYPAD_OPERATORS
+            .iter()
+            .any(|(cp, _)| *cp == parsed.codepoint);
     if !is_keypad {
         return None;
     }
@@ -350,10 +367,12 @@ pub fn extract_printable_text(data: &str) -> Option<String> {
     if printable.is_some() {
         return printable;
     }
-    if data.is_empty() || data.chars().any(|c| {
-        let code = c as u32;
-        code < 32 || code == 0x7f || (0x80..=0x9f).contains(&code)
-    }) {
+    if data.is_empty()
+        || data.chars().any(|c| {
+            let code = c as u32;
+            code < 32 || code == 0x7f || (0x80..=0x9f).contains(&code)
+        })
+    {
         return None;
     }
     Some(data.to_owned())
@@ -364,11 +383,17 @@ pub fn extract_printable_text(data: &str) -> Option<String> {
 // ---------------------------------------------------------------------------
 
 fn named_key(codepoint: u32) -> Option<&'static str> {
-    NAMED_KEYS.iter().find(|(cp, _)| *cp == codepoint).map(|(_, name)| *name)
+    NAMED_KEYS
+        .iter()
+        .find(|(cp, _)| *cp == codepoint)
+        .map(|(_, name)| *name)
 }
 
 fn keypad_nav_name(codepoint: u32) -> Option<&'static str> {
-    KITTY_KEYPAD_NAV.iter().find(|(cp, _)| *cp == codepoint).map(|(_, name)| *name)
+    KITTY_KEYPAD_NAV
+        .iter()
+        .find(|(cp, _)| *cp == codepoint)
+        .map(|(_, name)| *name)
 }
 
 /// Build a canonical key id from a base name and a 0-based modifier bitmask.
@@ -416,9 +441,15 @@ fn parse_kitty_key(data: &str) -> Option<String> {
                 return Some((*digit).to_owned());
             }
         }
-        return Some(with_modifiers(keypad_nav_name(parsed.codepoint)?, effective_mod));
+        return Some(with_modifiers(
+            keypad_nav_name(parsed.codepoint)?,
+            effective_mod,
+        ));
     }
-    if let Some((_, op)) = KITTY_KEYPAD_OPERATORS.iter().find(|(cp, _)| *cp == parsed.codepoint) {
+    if let Some((_, op)) = KITTY_KEYPAD_OPERATORS
+        .iter()
+        .find(|(cp, _)| *cp == parsed.codepoint)
+    {
         return Some(with_modifiers(op, effective_mod));
     }
 
@@ -629,7 +660,11 @@ pub fn is_windows_terminal_session(env: &impl Fn(&str) -> Option<String>) -> boo
 /// input is not a recognized key sequence.
 pub fn parse_key(data: &str) -> Option<String> {
     // Raw 0x08 in a Windows Terminal session is Ctrl+Backspace.
-    if matches_raw_backspace(data, 4, is_windows_terminal_session(&|k| std::env::var(k).ok())) {
+    if matches_raw_backspace(
+        data,
+        4,
+        is_windows_terminal_session(&|k| std::env::var(k).ok()),
+    ) {
         return Some("ctrl+backspace".to_owned());
     }
     // Keypad digits/operators decode to their printable text first.
@@ -710,7 +745,11 @@ pub fn parse_key_native(data: &str) -> Option<String> {
 /// `"shift+tab"`, `"alt+enter"`, `"ctrl+alt+x"`, … Case-insensitive on
 /// modifiers and base.
 pub fn matches_key(data: &str, key_id: &str) -> bool {
-    if matches_raw_backspace(data, 4, is_windows_terminal_session(&|k| std::env::var(k).ok())) {
+    if matches_raw_backspace(
+        data,
+        4,
+        is_windows_terminal_session(&|k| std::env::var(k).ok()),
+    ) {
         return canonical_key_id(key_id) == "ctrl+backspace";
     }
     // Keypad fast path: digits/operators compare as their printable text.
@@ -757,9 +796,15 @@ mod tests {
         assert_eq!(canonical_key_id("return"), "enter");
         assert_eq!(canonical_key_id("pageUp"), "pageup");
         assert_eq!(canonical_key_id("shift+?"), "shift+?");
-        assert_eq!(canonical_key_id("alt+super+backspace"), "alt+super+backspace");
+        assert_eq!(
+            canonical_key_id("alt+super+backspace"),
+            "alt+super+backspace"
+        );
         // Canonical order: ctrl < shift < alt < super.
-        assert_eq!(canonical_key_id("super+ctrl+alt+shift+x"), "ctrl+shift+alt+super+x");
+        assert_eq!(
+            canonical_key_id("super+ctrl+alt+shift+x"),
+            "ctrl+shift+alt+super+x"
+        );
     }
 
     #[test]
@@ -770,10 +815,7 @@ mod tests {
         }
         let mut sorted: Vec<String> = keys.into_iter().collect();
         sorted.sort();
-        assert_eq!(
-            sorted,
-            vec!["?", "enter", "escape", "shift+?", "shift+a"]
-        );
+        assert_eq!(sorted, vec!["?", "enter", "escape", "shift+?", "shift+a"]);
     }
 
     #[test]
@@ -900,7 +942,10 @@ mod tests {
         assert!(matches_key("\x1b[127;11u", "alt+super+backspace"));
         assert!(!matches_key("\x1b[127;11u", "alt+backspace"));
         assert!(!matches_key("\x1b[127;11u", "backspace"));
-        assert_eq!(parse_key("\x1b[127;11u"), Some("alt+super+backspace".to_owned()));
+        assert_eq!(
+            parse_key("\x1b[127;11u"),
+            Some("alt+super+backspace".to_owned())
+        );
         set_kitty_protocol_active(false);
     }
 
@@ -940,7 +985,10 @@ mod tests {
 
     #[test]
     fn windows_terminal_session_detection_ignores_ssh_and_multiplexers() {
-        let ssh = env_map(&[("WT_SESSION", "1"), ("SSH_CONNECTION", "1.2.3.4 5 6.7.8.9 22")]);
+        let ssh = env_map(&[
+            ("WT_SESSION", "1"),
+            ("SSH_CONNECTION", "1.2.3.4 5 6.7.8.9 22"),
+        ]);
         assert!(!is_windows_terminal_session(&ssh));
         for pairs in [
             vec![("WT_SESSION", "1"), ("TMUX", "/tmp/tmux-1000/default,1,0")],
@@ -986,7 +1034,10 @@ mod tests {
     #[test]
     fn extract_printable_text_cases() {
         assert_eq!(extract_printable_text("\x1b[57407u"), Some("8".to_owned()));
-        assert_eq!(extract_printable_text("\x1b[57407;129u"), Some("8".to_owned()));
+        assert_eq!(
+            extract_printable_text("\x1b[57407;129u"),
+            Some("8".to_owned())
+        );
         assert_eq!(extract_printable_text("\x1b[57404u"), Some("5".to_owned()));
         assert_eq!(extract_printable_text("\x1b[57410u"), Some("/".to_owned()));
         assert_eq!(extract_printable_text("\x1b[57413u"), Some("+".to_owned()));
@@ -994,7 +1045,10 @@ mod tests {
         assert_eq!(extract_printable_text("\x1b[27;1;127~"), None);
         assert_eq!(extract_printable_text("\x1b[99;9u"), None);
         assert_eq!(extract_printable_text("\x1b[97;9;229u"), None);
-        assert_eq!(extract_printable_text("\x1b[97;1;229u"), Some("å".to_owned()));
+        assert_eq!(
+            extract_printable_text("\x1b[97;1;229u"),
+            Some("å".to_owned())
+        );
         assert_eq!(extract_printable_text("hello"), Some("hello".to_owned()));
         assert_eq!(extract_printable_text("\u{3}"), None);
     }

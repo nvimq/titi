@@ -24,7 +24,10 @@ pub mod schema;
 pub mod symbols;
 mod symbols_data;
 
-pub use appearance::{appearance_from_rgb, classify_appearance_bytes, Appearance, AppearanceEvent, AppearanceInputs, AUTO_DARK_THEME, AUTO_LIGHT_THEME};
+pub use appearance::{
+    AUTO_DARK_THEME, AUTO_LIGHT_THEME, Appearance, AppearanceEvent, AppearanceInputs,
+    appearance_from_rgb, classify_appearance_bytes,
+};
 pub use color::ColorMode;
 pub use schema::{ThemeBg, ThemeColor};
 pub use symbols::{SpinnerFrames, SymbolPreset};
@@ -286,8 +289,8 @@ impl Theme {
             && let Some(adjusted) =
                 color::adjust_hsv(&hex, COLORBLIND_HUE_SHIFT, COLORBLIND_SAT_MUL, 1.0)
         {
-            let ansi = color::color_to_ansi(&adjusted, next.mode)
-                .unwrap_or_else(|| FG_RESET.to_string());
+            let ansi =
+                color::color_to_ansi(&adjusted, next.mode).unwrap_or_else(|| FG_RESET.to_string());
             next.fg.insert("toolDiffAdded".to_string(), ansi);
             next.hex_fg.insert("toolDiffAdded".to_string(), adjusted);
         }
@@ -631,7 +634,9 @@ fn color_luma_of(value: &Value) -> Option<f64> {
 fn relative_luminance_of(value: &Value) -> Option<f64> {
     match value {
         Value::String(s) => color::relative_luminance(s),
-        Value::Number(n) => n.as_u64().and_then(|i| color::relative_luminance(&ansi256_hex(i))),
+        Value::Number(n) => n
+            .as_u64()
+            .and_then(|i| color::relative_luminance(&ansi256_hex(i))),
         _ => None,
     }
 }

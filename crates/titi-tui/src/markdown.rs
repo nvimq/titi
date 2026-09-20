@@ -206,7 +206,11 @@ pub fn render_markdown(text: &str, theme: &Theme, width: u16) -> Vec<String> {
             let wrapped = wrap_text_with_ansi(&styled, w.saturating_sub(4));
             for (i, wline) in wrapped.iter().enumerate() {
                 let border = if i == 0 { "▎ " } else { "  " };
-                lines.push(format!("{}{}", theme.fg(ThemeColor::MdQuoteBorder, border), theme.fg(ThemeColor::MdQuote, wline)));
+                lines.push(format!(
+                    "{}{}",
+                    theme.fg(ThemeColor::MdQuoteBorder, border),
+                    theme.fg(ThemeColor::MdQuote, wline)
+                ));
             }
             continue;
         }
@@ -231,7 +235,12 @@ pub fn render_markdown(text: &str, theme: &Theme, width: u16) -> Vec<String> {
         }
 
         // Ordered list.
-        if let Some(_) = raw.trim_start().chars().next().filter(|c| c.is_ascii_digit()) {
+        if let Some(_) = raw
+            .trim_start()
+            .chars()
+            .next()
+            .filter(|c| c.is_ascii_digit())
+        {
             if let Some(dot_pos) = raw.trim_start().find(". ") {
                 let num_str = raw.trim_start()[..dot_pos].to_owned();
                 let rest = raw.trim_start()[dot_pos + 2..].trim();
@@ -272,15 +281,15 @@ pub fn render_markdown(text: &str, theme: &Theme, width: u16) -> Vec<String> {
 fn render_code_block(lines: &[&str], lang: &str, theme: &Theme, w: usize) -> Vec<String> {
     let mut out = Vec::new();
     if !lang.is_empty() {
-        out.push(theme.fg(
-            ThemeColor::MdCodeBlock,
-            &format!("```{lang}"),
-        ));
+        out.push(theme.fg(ThemeColor::MdCodeBlock, &format!("```{lang}")));
     }
     for line in lines {
         out.push(theme.fg(ThemeColor::MdCodeBlock, line));
     }
-    out.push(theme.fg(ThemeColor::MdCodeBlockBorder, &"─".repeat(w.saturating_sub(1))));
+    out.push(theme.fg(
+        ThemeColor::MdCodeBlockBorder,
+        &"─".repeat(w.saturating_sub(1)),
+    ));
     out
 }
 
@@ -300,7 +309,12 @@ fn style_inline(text: &str, theme: &Theme) -> String {
 
         // Earliest marker wins; on ties code > link > bold > italic.
         let mut best: Option<(usize, &str)> = None;
-        for (i, kind) in [(code_at, "code"), (link_at, "link"), (bold_at, "bold"), (italic_at, "italic")] {
+        for (i, kind) in [
+            (code_at, "code"),
+            (link_at, "link"),
+            (bold_at, "bold"),
+            (italic_at, "italic"),
+        ] {
             let Some(i) = i else { continue };
             if kind == "italic" && bold_at == Some(i) {
                 continue; // part of a bold pair
@@ -477,7 +491,10 @@ mod tests {
         let theme = test_theme();
         let lines = render_markdown("this is **bold** text", &theme, 80);
         assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("\x1b[1m"), "bold should use ANSI bold: {lines:?}");
+        assert!(
+            lines[0].contains("\x1b[1m"),
+            "bold should use ANSI bold: {lines:?}"
+        );
         theme.bold("bold");
         // The bold ANSI escape should be present.
         assert!(lines[0].contains("bold"), "bold word should appear");
@@ -488,7 +505,10 @@ mod tests {
         let theme = test_theme();
         let lines = render_markdown("this is *italic* text", &theme, 80);
         assert_eq!(lines.len(), 1);
-        assert!(lines[0].contains("\x1b[3m"), "italic should use ANSI italic: {lines:?}");
+        assert!(
+            lines[0].contains("\x1b[3m"),
+            "italic should use ANSI italic: {lines:?}"
+        );
     }
 
     #[test]
@@ -497,15 +517,24 @@ mod tests {
         let lines = render_markdown("use `ffmpeg` to convert", &theme, 80);
         // mdCode token not in test theme (empty map), so returns to default.
         // The word `ffmpeg` should be present.
-        assert!(lines[0].contains("ffmpeg"), "code word should appear: {lines:?}");
+        assert!(
+            lines[0].contains("ffmpeg"),
+            "code word should appear: {lines:?}"
+        );
     }
 
     #[test]
     fn link_rendered() {
         let theme = test_theme();
         let lines = render_markdown("click [here](https://example.com)", &theme, 80);
-        assert!(lines[0].contains("here"), "link text should appear: {lines:?}");
-        assert!(lines[0].contains("example.com"), "url should appear: {lines:?}");
+        assert!(
+            lines[0].contains("here"),
+            "link text should appear: {lines:?}"
+        );
+        assert!(
+            lines[0].contains("example.com"),
+            "url should appear: {lines:?}"
+        );
     }
 
     #[test]
@@ -538,12 +567,11 @@ mod tests {
     #[test]
     fn code_block_rendered() {
         let theme = test_theme();
-        let lines = render_markdown(
-            "```rust\nfn main() {}\n```",
-            &theme,
-            80,
+        let lines = render_markdown("```rust\nfn main() {}\n```", &theme, 80);
+        assert!(
+            lines.iter().any(|l| l.contains("fn main()")),
+            "code block: {lines:?}"
         );
-        assert!(lines.iter().any(|l| l.contains("fn main()")), "code block: {lines:?}");
     }
 
     #[test]
