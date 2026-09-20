@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 use titi_providers::ToolSpec;
 
+use crate::cache::ReadCache;
 use crate::{ApprovalTier, ToolDefinition, ToolHandler, ToolResult};
 
 fn arg_str(args: &Value, key: &str) -> Option<String> {
@@ -61,6 +62,9 @@ impl WorkspaceRoot {
 
 pub struct ReadFileTool {
     pub root: PathBuf,
+    /// Shared across every agent in a dispatch, so the second read of the
+    /// same file is a memory hit.
+    pub cache: ReadCache,
 }
 
 #[async_trait]
@@ -84,9 +88,7 @@ impl ToolHandler for ReadFileTool {
         let Some(path) = arg_str(&args, "path") else {
             return err("missing path");
         };
-        match jail_path(&self.root, &path)
-            .and_then(|path| fs::read_to_string(path).map_err(|error| error.to_string()))
-        {
+        match jail_path(&self.root, &path).and_then(|path| self.cache.read(&path)) {
             Ok(content) => ok(content),
             Err(error) => err(error),
         }
@@ -95,6 +97,8 @@ impl ToolHandler for ReadFileTool {
 
 pub struct WriteFileTool {
     pub root: PathBuf,
+    /// Invalidated on write, so the next read sees the new body.
+    pub cache: ReadCache,
 }
 
 #[async_trait]
@@ -129,6 +133,7 @@ impl ToolHandler for WriteFileTool {
                 fs::create_dir_all(parent).map_err(|error| error.to_string())?;
             }
             fs::write(&path, content).map_err(|error| error.to_string())?;
+            self.cache.invalidate(&path);
             Ok(path.display().to_string())
         }) {
             Ok(written) => ok(format!("wrote {written}")),
@@ -139,6 +144,8 @@ impl ToolHandler for WriteFileTool {
 
 pub struct EditFileTool {
     pub root: PathBuf,
+    /// Invalidated on edit, so the next read sees the new body.
+    pub cache: ReadCache,
 }
 
 #[async_trait]
@@ -350,11 +357,29 @@ fn grep_walk(root: &Path, dir: &Path, pattern: &str, out: &mut Vec<String>) {
 }
 
 pub fn workspace_tools(root: impl Into<PathBuf>) -> Vec<Box<dyn ToolHandler>> {
+    workspace_tools_with_cache(root, ReadCache::default())
+}
+
+/// The workspace tools sharing one read cache, so parallel agents do not read
+/// the same file twice.
+pub fn workspace_tools_with_cache(
+    root: impl Into<PathBuf>,
+    cache: ReadCache,
+) -> Vec<Box<dyn ToolHandler>> {
     let root = root.into();
     vec![
-        Box::new(ReadFileTool { root: root.clone() }),
-        Box::new(WriteFileTool { root: root.clone() }),
-        Box::new(EditFileTool { root: root.clone() }),
+        Box::new(ReadFileTool {
+            root: root.clone(),
+            cache: cache.clone(),
+        }),
+        Box::new(WriteFileTool {
+            root: root.clone(),
+            cache: cache.clone(),
+        }),
+        Box::new(EditFileTool {
+            root: root.clone(),
+            cache,
+        }),
         Box::new(GlobTool { root: root.clone() }),
         Box::new(GrepTool { root: root.clone() }),
         Box::new(BashTool { root }),
@@ -366,8 +391,13 @@ mod tests {
     use super::*;
     use std::sync::Arc;
 
+    /// A private fixture directory. Unique per call: tests run in parallel and
+    /// a shared pid-named directory let one test delete another's files.
     fn temp_root() -> PathBuf {
-        let root = std::env::temp_dir().join(format!("titi-tools-{}", std::process::id()));
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static NEXT: AtomicU64 = AtomicU64::new(0);
+        let id = NEXT.fetch_add(1, Ordering::SeqCst);
+        let root = std::env::temp_dir().join(format!("titi-tools-{}-{id}", std::process::id()));
         let _ = fs::remove_dir_all(&root);
         fs::create_dir_all(&root).unwrap();
         fs::write(root.join("hello.txt"), "hello world").unwrap();
@@ -377,9 +407,19 @@ mod tests {
     #[tokio::test]
     async fn read_write_edit_roundtrip() {
         let root = temp_root();
-        let read = ReadFileTool { root: root.clone() };
-        let write = WriteFileTool { root: root.clone() };
-        let edit = EditFileTool { root: root.clone() };
+        let cache = ReadCache::default();
+        let read = ReadFileTool {
+            root: root.clone(),
+            cache: cache.clone(),
+        };
+        let write = WriteFileTool {
+            root: root.clone(),
+            cache: cache.clone(),
+        };
+        let edit = EditFileTool {
+            root: root.clone(),
+            cache,
+        };
         let content = read.invoke(serde_json::json!({"path": "hello.txt"})).await;
         assert!(content.output.contains("hello"));
         let written = write
@@ -411,9 +451,59 @@ mod tests {
     #[tokio::test]
     async fn jail_rejects_escape() {
         let root = temp_root();
-        let read = ReadFileTool { root };
+        let read = ReadFileTool {
+            root,
+            cache: ReadCache::default(),
+        };
         let result = read.invoke(serde_json::json!({"path": "../secret"})).await;
         assert!(result.is_error);
+    }
+
+    #[tokio::test]
+    async fn a_write_invalidates_the_cached_body() {
+        let root = temp_root();
+        let cache = ReadCache::default();
+        let read = ReadFileTool {
+            root: root.clone(),
+            cache: cache.clone(),
+        };
+        let write = WriteFileTool {
+            root: root.clone(),
+            cache,
+        };
+
+        let first = read.invoke(serde_json::json!({"path": "hello.txt"})).await;
+        assert!(first.output.contains("hello world"));
+        write
+            .invoke(serde_json::json!({"path": "hello.txt", "content": "replaced"}))
+            .await;
+        let second = read.invoke(serde_json::json!({"path": "hello.txt"})).await;
+        assert_eq!(second.output, "replaced", "the write invalidated the cache");
+    }
+
+    #[tokio::test]
+    async fn two_reads_share_one_cache() {
+        let root = temp_root();
+        let cache = ReadCache::default();
+        let read = ReadFileTool {
+            root: root.clone(),
+            cache: cache.clone(),
+        };
+        read.invoke(serde_json::json!({"path": "hello.txt"})).await;
+        assert_eq!(cache.stats(), (0, 1));
+
+        // A second agent holding the same cache hits memory, not disk.
+        let other = ReadFileTool {
+            root: root.clone(),
+            cache,
+        };
+        let again = other.invoke(serde_json::json!({"path": "hello.txt"})).await;
+        assert!(again.output.contains("hello world"));
+        assert_eq!(cache_hits(&other), 1);
+    }
+
+    fn cache_hits(tool: &ReadFileTool) -> u64 {
+        tool.cache.stats().0
     }
 
     #[test]

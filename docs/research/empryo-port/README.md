@@ -133,7 +133,8 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 - [x] Findings bus (`Findings`): ordered, bounded, cursor-based `drain_since`; subagents share the runtime's bus and their summary lands there.
 - [x] Steering (`Steering`): bounded queue drained at the next step boundary; `EngineCommand::Steer` + TUI sends `Steer` instead of a new turn while one is running.
 - [x] Subagents share the runtime's claim table and findings bus.
-- [ ] Shared read cache and fresh-context reviewer.
+- [x] Shared read cache (`titi-tools::ReadCache`): LRU-bounded, keyed on `(size, mtime)`, one instance shared by the workspace tools; `write`/`edit` invalidate the entry.
+- [ ] Fresh-context reviewer.
 
 Готовый foundation: engine protocol, provider registry, tools, session trajectory, headless JSONL, TUI tool-approval overlay, live Genome-индекс с prompt-проекцией. Следующий слой — symbol-level Genome (tree-sitter), checkpoints/RPC и background agents.
 

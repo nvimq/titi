@@ -200,7 +200,7 @@ async fn no_genome_means_prompt_only() {
 
 #[tokio::test]
 async fn touched_file_leads_the_next_projection() {
-    use titi_tools::{ApprovalMode, EchoTool, ReadFileTool, ToolRegistry};
+    use titi_tools::{ApprovalMode, EchoTool, ToolRegistry, workspace_tools};
 
     let workspace = workspace_with_hub_and_leaf();
     let transport = Arc::new(MockTransport::new(vec![
@@ -231,9 +231,9 @@ async fn touched_file_leads_the_next_projection() {
         }]),
     ]));
     let mut tools = ToolRegistry::new();
-    tools.register(Arc::new(ReadFileTool {
-        root: workspace.path().to_path_buf(),
-    }));
+    for tool in workspace_tools(workspace.path()) {
+        tools.register(Arc::from(tool));
+    }
     tools.register(Arc::new(EchoTool));
 
     let mut config = EngineConfig::new("primary");

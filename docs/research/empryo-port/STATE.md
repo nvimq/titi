@@ -50,6 +50,7 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Tool loop берёт claim на `write`/`edit` и отпускает после вызова; чужой claim → error-результат без вызова handler-а и без касания диска.
 - `EngineCommand::Steer` + `App::turn_active`: submit во время активного turn шлёт `Steer`, а не новый turn.
 - Subagent делит с runtime таблицу claims и findings bus; `AgentContext::finding/claim/release_claims`; `stop` и завершение агента освобождают его файлы.
+- `titi-tools::ReadCache` — LRU-bounded кэш содержимого файлов, ключ `(size, mtime)`; `workspace_tools` даёт один кэш на все тулы, `write`/`edit` его инвалидируют. Удалённый файл из кэша не отдаётся.
 
 ## VERIFIED
 
@@ -98,7 +99,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - E4 integration (`titi-engine/tests/claims.rs`): `a_claimed_file_is_refused_without_touching_disk`, `a_released_file_can_be_written`, `queued_steering_is_injected_before_the_prompt_answer`, `steering_sent_mid_turn_reaches_the_provider` — PASS.
 - `titi-engine/tests/agents.rs`: `a_subagent_finding_reaches_the_parent_bus`, `stopping_an_agent_releases_its_write_claims` — PASS.
 - `titi-cli`: `typing_during_a_turn_steers_instead_of_queueing_a_new_turn` — PASS.
-- `cargo test --workspace` — 802 passed, 0 failed.
+- `titi-tools` cache/fs: `a_second_read_of_an_unchanged_file_hits_the_cache`, `a_deleted_file_is_not_served_from_cache`, `a_changed_file_is_read_again`, `invalidate_forces_a_fresh_read`, `the_cache_is_bounded_and_evicts_the_least_recently_used`, `a_missing_file_reports_an_error`, `a_write_invalidates_the_cached_body`, `two_reads_share_one_cache` — PASS.
+- `cargo test --workspace` — 810 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS
@@ -124,6 +126,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Граф file-level, не symbol-level: `(→N)` считает файлы-импортёры, а не вызовы конкретного символа.
 - Claim берётся по `path` из аргументов тула, поэтому `bash` (произвольная команда) файлы не резервирует.
 - `StreamingAgentRunner` — one-shot turn без tool loop, поэтому subagent пока не пишет файлы сам; claims для него — инфраструктура на будущее.
+- Read cache принадлежит реестру тулов CLI; чтобы subagent читал через тот же кэш, нужен проброс в supervisor (пока не сделан).
+- Кэш не отдаёт содержимое удалённого файла (сначала stat) — поэтому удаление видно сразу, а изменение без смены size/mtime теоретически нет.
 
 ## NEXT
 
