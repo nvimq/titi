@@ -40,6 +40,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Personalized rank: `TouchedSink` собирает пути из `read`/`write`/`edit` tool calls, `project_with` даёт им ×3 буст.
 - CLI передаёт cwd как `genome_root`; `TITI_NO_GENOME=1` отключает.
 - `cargo run -p titi-genome --example map -- [path] [limit]` печатает карту вручную.
+- **Compaction подключена end-to-end** — до этого механика была, а `Summarizer` существовал только в тестах, так что длинный turn рос безгранично. Добавлены `StructuredSummarizer` (model-free: `SnapCompact`/`Handoff` дают структурный дайджест, `Remote`/`Soft` возвращают `StrategyFailed` и цепочка падает на следующие), `titi-engine::compaction::compact` (порог → цель → дайджест вместо префикса, хвост никогда не начинается с tool-результата), `EngineEvent::Compacted`, `EventKind::Compaction` в траектории, `EngineConfig.context_window` + `compaction`, и окно берётся из `ModelDescriptor.context_window`.
+- **Выход по двойному Ctrl+C**: одиночный нажатие теперь только вооружает выход (`EXIT_CONFIRM_WINDOW` = 2с, подсказка «press Ctrl+C again to exit»), любая другая клавиша снимает вооружение. Активный turn по-прежнему отменяется одним Ctrl+C.
 - **FIX**: `/pause` обещал «pause the agent», но только показывал модалку — агент продолжал стримить за ней. Теперь `/pause` возвращает `SubmitEffect::Pause`, main шлёт `Cancel` (движок не умеет suspend, поэтому честная остановка — отмена на текущей границе), модалка держит ввод и говорит «agent stopped, input held».
 - **Recap**: `titi-tui::recap` — панель сворачиваемых секций (Session / Turns / Tools / Files / Problems / Trajectory); `titi-cli::recap::build` собирает их из session store + trajectory (счётчики тулов, суммарные и средние длительности, падения, тронутые файлы, промпты). Открывается `/recap`, `Ctrl+O` внутри панели раскрывает/сворачивает все секции сразу, вне панели `Ctrl+O` (действие `app.details.toggleAll`) раскрывает/сворачивает все секции транскрипта — то же значение, что у `Ctrl+O` в терминале Empryo («expand or collapse all code and reasoning blocks»).
 - **FIX**: отменить turn из TUI было НЕЧЕМ — `EngineCommand::Cancel` не отправлял ни один путь, `app.interrupt` (Ctrl+C) всегда выходил из приложения. Теперь Ctrl+C при активном turn возвращает `Dispatch::Cancel` (main шлёт `Cancel`), а в покое — `Exit`, как и обещает описание действия «Interrupt / exit». DoD в README исправлен: он обещал Ctrl+X, который открывает session switcher.
@@ -142,7 +144,10 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-tui` recap: секции стартуют свёрнутыми, Enter раскрывает выбранную, Esc закрывает, `Ctrl+O` раскрывает/сворачивает все, курсор зажат на краях, длинная секция переносится и не выходит за рамку, окно следит за выбранной секцией, пустой рекап не рисует ничего — PASS.
 - `titi-cli` recap: сборка секций из реального store + trajectory (2 промпта, read ×2 = 20ms total/10ms avg, bash failed 2.4s, `src/parse.rs ×2`), пустая сессия говорит «none called», `/recap` зарезервирован, без живой сессии — alert, панель принимает `Ctrl+O` и Esc, `Ctrl+O` вне панели раскрывает/сворачивает транскрипт — PASS.
 - `titi-cli`: `pause_stops_the_agent_and_not_only_the_keyboard` — `/pause` возвращает `Pause`, Esc снимает модалку — PASS.
-- `cargo test --workspace` — 875 passed, 0 failed.
+- `titi-engine` compaction: ниже порога ничего не складывается, самый старый префикс становится одним дайджестом (цепочка падает с `Remote` на `snapcompact`), хвост не начинается с tool-результата, пустая история не трогается, оценка покрывает все сообщения — PASS.
+- `titi-engine` tools: `a_long_turn_folds_its_oldest_messages` — turn с малым окном реально складывает префикс, следующий запрос несёт дайджест — PASS.
+- `titi-cli`: `ctrl_c_stops_a_running_turn_and_asks_twice_when_idle` — первый Ctrl+C только вооружает, второй в окне выходит, просроченный просит заново, другая клавиша снимает — PASS.
+- `cargo test --workspace` — 881 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS
@@ -176,7 +181,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 
 0. **Остался один шаг до рабочего TUI с реальной моделью**: `titi --set-key opencode-go <ключ>` (конфиг провайдера уже записан, endpoint `https://opencode.ai/zen/go/v1`). Ключ пользователя я не извлекаю — он должен быть введён им. Проверено, что после этого шага путь до HTTP работает.
 1. E5: GPUI desktop workbench поверх того же `EngineCommand`/`EngineEvent`.
-1a. TUI: рекап читает только store+trajectory; агентские findings и стоимости в него пока не попадают (нужна персистентность findings).
+1a. Чего ещё нет (аудит): системного промпта из `titi-soul` (движок шлёт только genome), скиллов/hooks/MCP (E6), вкладок (в Empryo их до 5), стоимости и заполненного gauge контекста в статус-баре, git-чекпоинтов (наши чекпоинты — файл сессии, не git-тег), `--prompt` у headless, фокуса агента в Hub (возвращает bool и ничего не переключает), STT.
+1b. TUI: рекап читает только store+trajectory; агентские findings и стоимости в него пока не попадают (нужна персистентность findings).
 2. Genome: tree-sitter для остальных языков и symbol-level граф.
 3. Goal loop поверх reviewer-а (coder ⟷ reviewer rounds с oscillation-детекцией).
 

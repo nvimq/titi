@@ -6,8 +6,8 @@ use std::fmt;
 
 use serde::{Deserialize, Serialize};
 
-use crate::session::Entry;
 use crate::session::entry::{new_id, now_ms};
+use crate::session::{Entry, Role};
 
 /// Errors surfaced by compaction.
 #[derive(Debug)]
@@ -236,6 +236,73 @@ pub trait Summarizer {
 /// provider-reported usage once titi-providers lands.
 pub fn estimate_tokens(text: &str) -> u64 {
     text.len().div_ceil(4) as u64
+}
+
+/// The production summarizer: model-free, so compaction never depends on a
+/// provider being reachable.
+///
+/// `Remote` and `Soft` need a model to write prose, and report
+/// [`CompactionError::StrategyFailed`] so the chain falls through to the
+/// structural strategies. What those produce is a digest of what was dropped —
+/// enough for the model to know the prefix existed, which is the point of a
+/// handoff.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct StructuredSummarizer;
+
+/// How many dropped prompts the digest names.
+pub const DIGEST_PROMPT_LIMIT: usize = 8;
+
+impl Summarizer for StructuredSummarizer {
+    fn summarize(
+        &mut self,
+        strategy: Strategy,
+        messages: &[Entry],
+    ) -> Result<String, CompactionError> {
+        match strategy {
+            Strategy::SnapCompact | Strategy::Handoff => Ok(structured_digest(strategy, messages)),
+            Strategy::Remote | Strategy::Soft => Err(CompactionError::StrategyFailed {
+                strategy,
+                reason: "needs a provider".into(),
+            }),
+        }
+    }
+}
+
+/// A terse, structural account of the folded prefix.
+fn structured_digest(strategy: Strategy, messages: &[Entry]) -> String {
+    let user = messages.iter().filter(|m| m.role == Role::User).count();
+    let assistant = messages
+        .iter()
+        .filter(|m| m.role == Role::Assistant)
+        .count();
+    let system = messages.iter().filter(|m| m.role == Role::System).count();
+    let chars: usize = messages.iter().map(|m| m.content.chars().count()).sum();
+
+    let mut out = format!(
+        "[{}] {} earlier message(s) folded: {user} user, {assistant} assistant, {system} system, {chars} chars.\n",
+        strategy.as_str(),
+        messages.len()
+    );
+    let prompts: Vec<&Entry> = messages.iter().filter(|m| m.role == Role::User).collect();
+    if !prompts.is_empty() {
+        out.push_str("What was asked, in order:\n");
+        for entry in prompts.iter().take(DIGEST_PROMPT_LIMIT) {
+            let first = entry.content.lines().next().unwrap_or("");
+            out.push_str("· ");
+            out.push_str(first);
+            out.push('\n');
+        }
+        if prompts.len() > DIGEST_PROMPT_LIMIT {
+            out.push_str(&format!(
+                "· … and {} more\n",
+                prompts.len() - DIGEST_PROMPT_LIMIT
+            ));
+        }
+    }
+    out.push_str(
+        "The full transcript is on disk; ask for a file or a turn and it can be read back.",
+    );
+    out
 }
 
 #[cfg(test)]

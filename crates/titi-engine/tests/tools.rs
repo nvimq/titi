@@ -6,7 +6,7 @@ use titi_engine::{
     TransportResolver,
 };
 use titi_providers::{
-    BlockId, MockBody, MockTransport, StopReason, StreamEvent, ToolCallRef, Transport,
+    BlockId, MockBody, MockTransport, Role, StopReason, StreamEvent, ToolCallRef, Transport,
 };
 use titi_tools::{ApprovalMode, EchoTool, ShellProbeTool, ToolRegistry};
 
@@ -253,6 +253,76 @@ async fn cancelling_a_turn_unblocks_a_pending_approval() {
             .any(|event| matches!(event, EngineEvent::ToolFinished { .. })),
         "the un-approved tool never ran: {events:?}"
     );
+}
+
+#[tokio::test]
+async fn a_long_turn_folds_its_oldest_messages() {
+    // A tiny window makes the threshold fire on the second round, which is
+    // exactly what a long session does for real.
+    let transport = Arc::new(MockTransport::new(vec![
+        MockBody::Events(tool_call_events("echo", r#"{"text":"pong"}"#)),
+        MockBody::Events(vec![
+            StreamEvent::TextDelta {
+                id: BlockId::new("text"),
+                text: "done".into(),
+            },
+            StreamEvent::Done {
+                reason: StopReason::Stop,
+            },
+        ]),
+    ]));
+    let mut config = EngineConfig::new("primary");
+    // A one-token window arms compaction immediately; a tiny keep-recent
+    // budget leaves a prefix to fold. The defaults (80% of a real window,
+    // 20k-token tail) mean a short turn legitimately folds nothing.
+    config.context_window = 1;
+    config.compaction = titi_core::compaction::CompactionPolicy {
+        threshold_percent: 0.0,
+        keep_recent_tokens: 4,
+        ..Default::default()
+    };
+    let mut engine = EngineRuntime::start_with_tools(
+        config,
+        resolver(Arc::clone(&transport) as _),
+        echo_registry(),
+    );
+    engine
+        .send(EngineCommand::SubmitPrompt {
+            text: "say something long enough to matter".into(),
+        })
+        .await
+        .unwrap();
+    let events = collect_until_terminal(&mut engine).await;
+
+    let compacted = events
+        .iter()
+        .find_map(|event| match event {
+            EngineEvent::Compacted {
+                folded,
+                tokens_before,
+                strategy,
+                ..
+            } => Some((*folded, *tokens_before, strategy.clone())),
+            _ => None,
+        })
+        .expect("the turn reports a compaction");
+    assert!(compacted.0 >= 1, "something was folded: {compacted:?}");
+    assert_eq!(compacted.2, "snapcompact", "the model-free strategy ran");
+
+    // The request that followed carries the digest, not the folded prefix.
+    let requests = transport.requests();
+    let second = requests.last().expect("a second request");
+    assert_eq!(second.messages[0].role, Role::System);
+    assert!(
+        second.messages[0].content.contains("folded"),
+        "the digest explains what was dropped: {}",
+        second.messages[0].content
+    );
+    // And the turn still completed.
+    assert!(events.iter().any(|event| matches!(
+        event,
+        EngineEvent::StreamDelta { text, .. } if text == "done"
+    )));
 }
 
 #[tokio::test]

@@ -107,27 +107,58 @@ fn hub_r_and_x_emit_engine_commands() {
 }
 
 #[test]
-fn ctrl_c_stops_a_running_turn_and_exits_when_idle() {
-    use titi_cli::app::Dispatch;
+fn ctrl_c_stops_a_running_turn_and_asks_twice_when_idle() {
+    use std::time::{Duration, Instant};
+    use titi_cli::app::{Dispatch, EXIT_CONFIRM_WINDOW, EXIT_HINT};
 
-    let mut app = app();
     let mut input = String::new();
-    // Idle: the documented "interrupt / exit" leaves the app.
-    assert_eq!(app.handle_canonical("ctrl+c", &mut input), Dispatch::Exit);
+    let start = Instant::now();
 
-    app.ingest_engine_event(EngineEvent::TurnStarted {
+    // Idle: one press only asks, so a stray Ctrl+C does not throw the
+    // session away.
+    let mut first = app();
+    assert_eq!(
+        first.handle_canonical_at("ctrl+c", &mut input, start),
+        Dispatch::Handled(None)
+    );
+    assert!(first.exit_armed());
+    assert!(first.render().join("\n").contains(EXIT_HINT));
+
+    // A second press inside the window leaves.
+    assert_eq!(
+        first.handle_canonical_at("ctrl+c", &mut input, start + Duration::from_millis(300)),
+        Dispatch::Exit
+    );
+
+    // Too slow: the arm expired and the next press asks again.
+    let mut slow = app();
+    slow.handle_canonical_at("ctrl+c", &mut input, start);
+    assert_eq!(
+        slow.handle_canonical_at(
+            "ctrl+c",
+            &mut input,
+            start + EXIT_CONFIRM_WINDOW + Duration::from_millis(1)
+        ),
+        Dispatch::Handled(None)
+    );
+
+    // Any other key disarms it.
+    let mut other = app();
+    other.handle_canonical_at("ctrl+c", &mut input, start);
+    other.handle_canonical_at("a", &mut input, start);
+    assert!(!other.exit_armed());
+
+    // While a turn runs, Ctrl+C cancels instead — it never exits.
+    let mut busy = app();
+    busy.ingest_engine_event(EngineEvent::TurnStarted {
         turn_id: TurnId(1),
         model: "test/model".into(),
     });
-    // Running: it stops the turn instead, which nothing could do before.
-    assert_eq!(app.handle_canonical("ctrl+c", &mut input), Dispatch::Cancel);
-
-    // Once the turn ends, Ctrl+C leaves again.
-    app.ingest_engine_event(EngineEvent::TurnFinished {
-        turn_id: TurnId(1),
-        reason: StopReason::Stop,
-    });
-    assert_eq!(app.handle_canonical("ctrl+c", &mut input), Dispatch::Exit);
+    assert_eq!(
+        busy.handle_canonical_at("ctrl+c", &mut input, start),
+        Dispatch::Cancel
+    );
+    assert!(!busy.exit_armed());
 }
 
 #[test]

@@ -60,7 +60,8 @@ usage: titi [options]
   --list-keys                 list stored providers (never the keys)
   --help, -h                  this text
 
-In the TUI: Ctrl+C stops a running turn, or leaves when nothing is running.";
+In the TUI: Ctrl+C stops a running turn; press it twice to leave. Ctrl+O
+expands or collapses every block, /recap opens the session recap.";
 
 fn main() -> io::Result<()> {
     // `--mouse <preset>` (default: persisted `display.mouse_tracking`, else

@@ -115,6 +115,8 @@ pub struct App {
     /// A turn is in flight: submitting now steers it instead of queueing a
     /// whole new turn.
     turn_active: bool,
+    /// When the first exit request arrived, so a second one can confirm it.
+    exit_armed: Option<Instant>,
     /// Conversation entries the surface must persist, in order. The App never
     /// touches the session store; the binary drains this after each event
     /// batch and appends it.
@@ -158,8 +160,14 @@ impl App {
             streaming_response: String::new(),
             session_id: None,
             turn_active: false,
+            exit_armed: None,
             session_writes: Vec::new(),
         }
+    }
+
+    /// Whether the first exit request is still waiting for a second one.
+    pub fn exit_armed(&self) -> bool {
+        self.exit_armed.is_some()
     }
 
     /// Takes the conversation entries awaiting persistence, oldest first.
@@ -726,6 +734,22 @@ impl App {
                 self.push_transcript(Section::Activity, format!("model fallback: {from} → {to}"));
                 self.set_alert(format!("model: {to}"));
             }
+            EngineEvent::Compacted {
+                folded,
+                tokens_before,
+                strategy,
+                ..
+            } => {
+                // Into the tools section, which is visible by default: the user
+                // should know the agent just lost the start of the session.
+                self.push_transcript(
+                    Section::Tools,
+                    format!(
+                        "compaction · {strategy} · folded {folded} message(s) at ~{tokens_before} tokens"
+                    ),
+                );
+                self.set_alert(format!("context compacted ({strategy})"));
+            }
             EngineEvent::TurnFinished { .. } => {
                 if !self.streaming_response.is_empty() {
                     let reply = std::mem::take(&mut self.streaming_response);
@@ -1029,14 +1053,29 @@ impl App {
             return Dispatch::Handled(None);
         }
 
-        if self.keys.matches_canonical(canonical, "app.interrupt") {
+        let interrupt = self.keys.matches_canonical(canonical, "app.interrupt");
+        if !interrupt {
+            // Any other key means the user is still working, so an armed exit
+            // must not survive it.
+            self.exit_armed = None;
+        }
+        if interrupt {
             // The action is documented as "Interrupt / exit", and that is what
             // it has to be: while a turn runs there was no way at all to stop
             // it from the terminal, only to quit the app.
             if self.turn_active {
                 return Dispatch::Cancel;
             }
-            return Dispatch::Exit;
+            // Leaving on one stray Ctrl+C throws the session away; ask twice.
+            let confirmed = self
+                .exit_armed
+                .is_some_and(|armed| now.saturating_duration_since(armed) <= EXIT_CONFIRM_WINDOW);
+            if confirmed {
+                return Dispatch::Exit;
+            }
+            self.exit_armed = Some(now);
+            self.set_alert(EXIT_HINT);
+            return Dispatch::Handled(None);
         }
 
         if self
@@ -1466,6 +1505,12 @@ impl App {
 
 /// The config key that stores the mouse-tracking preset.
 pub const MOUSE_TRACKING_KEY: &str = "display.mouse_tracking";
+
+/// How long the first exit request stays armed.
+pub const EXIT_CONFIRM_WINDOW: Duration = Duration::from_secs(2);
+
+/// What the first Ctrl+C says.
+pub const EXIT_HINT: &str = "press Ctrl+C again to exit";
 
 /// Load the persisted mouse preset from the titi config.
 ///

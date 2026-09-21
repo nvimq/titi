@@ -142,6 +142,13 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 
 Готовый foundation: engine protocol, provider registry, tools, session trajectory, restore/checkpoints, версионированный headless RPC, TUI tool-approval overlay, live symbol-level Genome с prompt-проекцией, write claims / findings bus / steering / read cache / fresh-context reviewer / tool-calling subagent. Следующий слой — goal loop поверх reviewer-а, tree-sitter Genome, затем E5.
 
+### E2b — Compaction
+
+- [x] `StructuredSummarizer`: model-free. `SnapCompact`/`Handoff` produce a structural digest of the folded prefix; `Remote`/`Soft` report `StrategyFailed` so the chain falls through to a strategy that needs no provider.
+- [x] `titi-engine::compaction::compact` folds the oldest messages into one digest when the request crosses the policy threshold, and never leaves the kept tail starting with a tool result (an orphaned tool message is an invalid request).
+- [x] `EngineEvent::Compacted` + `EventKind::Compaction`; the TUI reports it in the tools section and as an alert.
+- [x] `EngineConfig.context_window` (from `ModelDescriptor.context_window`) and `EngineConfig.compaction`.
+
 ### TUI surface
 
 - [x] Transcript accordion: per-section visibility, `/details <section> <mode>`, floating alert as a status line.

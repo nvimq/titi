@@ -52,6 +52,7 @@ fn model(id: &str, provider: &str, wire_model: &str) -> ModelDescriptor {
         id: id.into(),
         provider: provider.into(),
         wire_model: wire_model.into(),
+        context_window: None,
     }
 }
 

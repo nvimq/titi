@@ -30,11 +30,13 @@ pub fn default_registry_config() -> ProviderRegistryConfig {
                 id: "openai/gpt-4.1".into(),
                 provider: "openai".into(),
                 wire_model: "gpt-4.1".into(),
+                context_window: Some(1_000_000),
             },
             ModelDescriptor {
                 id: "anthropic/claude-sonnet-4-5".into(),
                 provider: "anthropic".into(),
                 wire_model: "claude-sonnet-4-5".into(),
+                context_window: Some(200_000),
             },
         ],
     }
@@ -101,6 +103,8 @@ pub fn start_engine_with(
         .iter()
         .map(|model| model.id.to_string())
         .collect();
+    // Read the window before the config moves into the registry.
+    let context_window = config.primary_context_window();
     let registry = Arc::new(
         ProviderRegistry::new(
             config,
@@ -115,6 +119,10 @@ pub fn start_engine_with(
         .ok_or_else(|| "no models configured".to_owned())?;
     let mut engine_config = EngineConfig::new(primary.clone());
     engine_config.approval_mode = approval_mode;
+    // The model declares its window; compaction folds at a share of it.
+    if let Some(window) = context_window {
+        engine_config.context_window = window;
+    }
     engine_config.fallback_models = models.iter().skip(1).map(|id| id.clone().into()).collect();
     let workspace = std::env::current_dir().unwrap_or_else(|_| ".".into());
     if std::env::var_os("TITI_NO_GENOME").is_none() {

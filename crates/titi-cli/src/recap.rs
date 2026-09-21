@@ -210,6 +210,7 @@ fn trajectory_section(events: &[titi_core::trajectory::TrajectoryEvent], now: u6
             EventKind::ToolCall { .. } => "tool_call",
             EventKind::ToolResult { .. } => "tool_result",
             EventKind::TurnEnd => "turn_end",
+            EventKind::Compaction { .. } => "compaction",
             EventKind::GepaReview => "gepa_review",
         };
         *counts.entry(kind).or_default() += 1;

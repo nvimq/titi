@@ -70,6 +70,12 @@ pub enum EventKind {
     },
     /// Turn boundary; the recorder flushes the file here.
     TurnEnd,
+    /// The request crossed the context threshold and the oldest messages were
+    /// folded into one digest by `strategy`.
+    Compaction {
+        folded: u64,
+        strategy: String,
+    },
     /// A GEPA review window was closed over the recent trajectory.
     GepaReview,
 }
