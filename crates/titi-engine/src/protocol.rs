@@ -118,6 +118,13 @@ pub enum EngineEvent {
         summary: SmolStr,
         success: bool,
     },
+    /// The view moved to this agent. `None` returns it to the main turn.
+    ///
+    /// Focus used to answer only "does this agent exist" and change nothing,
+    /// so selecting one in the Hub had no visible effect.
+    AgentFocused {
+        agent_id: Option<SmolStr>,
+    },
     ModelSwitched {
         turn_id: TurnId,
         from: SmolStr,

@@ -129,3 +129,57 @@ pub async fn run(
     }
     Ok(0)
 }
+
+/// One prompt, no JSONL client: submit it, stream the reply to stderr, and
+/// stop when the turn ends. Events still go to stdout as JSONL.
+pub async fn run_prompt(
+    mut engine: Engine,
+    log: Option<crate::session_log::SessionLog>,
+    prompt: &str,
+) -> io::Result<i32> {
+    if let Some(log) = &log {
+        let _ = log.user(prompt);
+    }
+    if engine
+        .send(EngineCommand::SubmitPrompt {
+            text: prompt.into(),
+        })
+        .await
+        .is_err()
+    {
+        return Ok(1);
+    }
+    let mut stdout = io::stdout();
+    let mut reply = String::new();
+    let mut failed = false;
+    while let Some(event) = engine.recv().await {
+        writeln!(
+            stdout,
+            "{}",
+            serde_json::to_string(&event).unwrap_or_default()
+        )?;
+        stdout.flush()?;
+        if let EngineEvent::StreamDelta { text, .. } = &event {
+            reply.push_str(text);
+            eprint!("{text}");
+        }
+        if matches!(event, EngineEvent::Failed { .. }) {
+            failed = true;
+        }
+        if matches!(
+            event,
+            EngineEvent::TurnFinished { .. }
+                | EngineEvent::Failed { .. }
+                | EngineEvent::Cancelled { .. }
+        ) {
+            break;
+        }
+    }
+    if !reply.is_empty() {
+        eprintln!();
+        if let Some(log) = &log {
+            let _ = log.assistant(&reply);
+        }
+    }
+    Ok(if failed { 1 } else { 0 })
+}

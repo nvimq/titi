@@ -53,7 +53,8 @@ fn init_provider(ready: Arc<AtomicBool>) {
 const USAGE: &str = "\
 usage: titi [options]
 
-  --headless, -p              read EngineCommand JSONL on stdin, write EngineEvent JSONL
+  --headless, -p [prompt]     read EngineCommand JSONL on stdin, or run one prompt
+  --prompt <text>             run one prompt headless and print the reply
   --approval <mode>           always-ask | write | yolo (default: write)
   --mouse <preset>            off | on | wheel | buttons | all
   --set-key <provider> <key>  store an API key in the agent directory
@@ -69,6 +70,7 @@ fn main() -> io::Result<()> {
     // requires `buttons` or `all`).
     let mut mouse = load_mouse_preset().unwrap_or(MousePreset::Off);
     let mut headless = false;
+    let mut prompt: Option<String> = None;
     let mut set_key: Option<(String, String)> = None;
     let mut list_keys = false;
     // `--approval <mode>`: a surface with no approval prompt (headless, or a
@@ -81,6 +83,13 @@ fn main() -> io::Result<()> {
         {
             mouse = preset;
         } else if arg == "--headless" || arg == "-p" {
+            headless = true;
+        } else if arg == "--prompt" {
+            let Some(text) = args.next() else {
+                eprintln!("usage: titi --prompt <text>");
+                std::process::exit(2);
+            };
+            prompt = Some(text);
             headless = true;
         } else if arg == "--set-key" {
             match (args.next(), args.next()) {
@@ -107,6 +116,9 @@ fn main() -> io::Result<()> {
         } else if arg == "--help" || arg == "-h" {
             println!("{USAGE}");
             return Ok(());
+        } else if headless && prompt.is_none() && !arg.starts_with('-') {
+            // `titi --headless "do the thing"` — the bare word is the prompt.
+            prompt = Some(arg);
         } else if arg.starts_with('-') {
             // A typo used to be ignored silently, so `titi --hedless` launched
             // the full-screen TUI and looked like a hang.
@@ -168,7 +180,12 @@ fn main() -> io::Result<()> {
         eprintln!("session: transcript writes are off (store unavailable)");
     }
     if headless {
-        let code = runtime.block_on(titi_cli::headless::run(engine, session_log))?;
+        let code = match prompt {
+            Some(text) => {
+                runtime.block_on(titi_cli::headless::run_prompt(engine, session_log, &text))?
+            }
+            None => runtime.block_on(titi_cli::headless::run(engine, session_log))?,
+        };
         std::process::exit(code);
     }
 

@@ -22,6 +22,60 @@ impl AgentRunner for ReportingRunner {
     }
 }
 
+/// Selecting an agent moves the view; selecting one that does not exist does
+/// not pretend it did.
+#[tokio::test]
+async fn focusing_an_agent_emits_the_move() {
+    let mut engine = EngineRuntime::start_with_agents(
+        EngineConfig::new("unused"),
+        no_models(),
+        Arc::new(ReportingRunner),
+    );
+    engine
+        .send(EngineCommand::SpawnAgent {
+            name: "Worker".into(),
+            task: "look around".into(),
+            kind: AgentKind::Subagent,
+        })
+        .await
+        .unwrap();
+
+    let mut agent_id = None;
+    while let Some(event) = engine.recv().await {
+        if let EngineEvent::AgentStarted { agent_id: id, .. } = &event {
+            agent_id = Some(id.clone());
+        }
+        if matches!(event, EngineEvent::AgentFinished { .. }) {
+            break;
+        }
+    }
+    let agent_id = agent_id.expect("the agent started");
+
+    engine
+        .send(EngineCommand::FocusAgent {
+            agent_id: agent_id.clone(),
+        })
+        .await
+        .unwrap();
+    let focused = engine.recv().await;
+    assert!(
+        matches!(focused, Some(EngineEvent::AgentFocused { agent_id: Some(ref id) }) if *id == agent_id),
+        "focusing reports the move: {focused:?}"
+    );
+
+    engine
+        .send(EngineCommand::FocusAgent {
+            agent_id: "nobody".into(),
+        })
+        .await
+        .unwrap();
+    let rejected = engine.recv().await;
+    assert!(
+        matches!(rejected, Some(EngineEvent::Failed { .. })),
+        "an unknown agent is reported, not silently ignored: {rejected:?}"
+    );
+}
+
 #[tokio::test]
 async fn spawn_agent_streams_lifecycle_events() {
     let mut engine = EngineRuntime::start_with_agents(
