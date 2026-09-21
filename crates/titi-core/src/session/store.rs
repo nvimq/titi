@@ -153,6 +153,7 @@ impl SessionStore {
             entry_id: self.current_leaf(session_id)?,
             entries,
             ts: entry::now_ms(),
+            git_commit: None,
         };
         let mut file = OpenOptions::new()
             .create(true)
@@ -162,6 +163,30 @@ impl SessionStore {
         let line = serde_json::to_string(&checkpoint).map_err(SessionError::Json)?;
         writeln!(file, "{line}").map_err(SessionError::Io)?;
         Ok(checkpoint)
+    }
+
+    /// Attach a git commit to the newest checkpoint.
+    ///
+    /// The commit is made after the checkpoint is written, because making it
+    /// can fail (not a repo, nothing to commit). Rewriting the last line
+    /// keeps the sidecar append-only apart from this one correction.
+    pub fn record_git_commit(&self, session_id: &str, commit: &str) -> Result<(), SessionError> {
+        let path = self.checkpoint_file(session_id);
+        let text = std::fs::read_to_string(&path).map_err(SessionError::Io)?;
+        let mut lines: Vec<&str> = text.lines().collect();
+        let Some(last) = lines.pop() else {
+            return Ok(());
+        };
+        let mut checkpoint: Checkpoint = serde_json::from_str(last).map_err(SessionError::Json)?;
+        checkpoint.git_commit = Some(commit.to_owned());
+        let mut rewritten = lines.join("\n");
+        if !rewritten.is_empty() {
+            rewritten.push('\n');
+        }
+        let line = serde_json::to_string(&checkpoint).map_err(SessionError::Json)?;
+        rewritten.push_str(&line);
+        rewritten.push('\n');
+        std::fs::write(&path, rewritten).map_err(SessionError::Io)
     }
 
     /// Checkpoints recorded for a session, oldest first.
@@ -590,6 +615,7 @@ mod tests {
             entry_id: None,
             entries: 9,
             ts: 0,
+            git_commit: None,
         };
         assert!(matches!(
             s.rewind(&sid, &too_far),
@@ -600,6 +626,7 @@ mod tests {
             entry_id: Some("ghost".into()),
             entries: 1,
             ts: 0,
+            git_commit: None,
         };
         assert!(matches!(
             s.rewind(&sid, &wrong_leaf),

@@ -48,6 +48,82 @@ async fn collect_until_terminal(engine: &mut titi_engine::Engine) -> Vec<EngineE
     events
 }
 
+/// The request the model sees starts with the agent's identity, not only the
+/// genome map — and a memory entry rides along.
+#[tokio::test]
+async fn the_system_prompt_carries_identity_and_memory() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("SOUL.md"), "IDENTITY-MARKER").unwrap();
+    std::fs::create_dir_all(dir.path().join("memories")).unwrap();
+    std::fs::write(
+        dir.path().join("memories/MEMORY.md"),
+        "the user prefers terse answers",
+    )
+    .unwrap();
+
+    let transport = Arc::new(MockTransport::new(vec![MockBody::Events(vec![
+        StreamEvent::Done {
+            reason: StopReason::Stop,
+        },
+    ])]));
+    let captured = Arc::clone(&transport);
+    let mut config = EngineConfig::new("primary");
+    config.agent_dir = Some(dir.path().to_path_buf());
+    let mut engine = EngineRuntime::start(config, resolver(vec![("primary", transport)]));
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "hi".into() })
+        .await
+        .unwrap();
+    let _ = collect_until_terminal(&mut engine).await;
+
+    let requests = captured.requests();
+    let system = requests[0]
+        .messages
+        .iter()
+        .find(|message| message.role == Role::System)
+        .expect("a system message");
+    assert!(
+        system.content.contains("IDENTITY-MARKER"),
+        "the soul is missing: {}",
+        system.content
+    );
+    assert!(
+        system.content.contains("the user prefers terse answers"),
+        "memory is missing: {}",
+        system.content
+    );
+}
+
+/// The status bar's gauge comes from a real event, not a guess.
+#[tokio::test]
+async fn context_usage_reports_the_request_size() {
+    let transport = Arc::new(MockTransport::new(vec![MockBody::Events(vec![
+        StreamEvent::Done {
+            reason: StopReason::Stop,
+        },
+    ])]));
+    let mut config = EngineConfig::new("primary");
+    config.context_window = 1_000;
+    let mut engine = EngineRuntime::start(config, resolver(vec![("primary", transport)]));
+    engine
+        .send(EngineCommand::SubmitPrompt {
+            text: "a prompt long enough to count".into(),
+        })
+        .await
+        .unwrap();
+    let events = collect_until_terminal(&mut engine).await;
+
+    let (tokens, window) = events
+        .iter()
+        .find_map(|event| match event {
+            EngineEvent::ContextUsage { tokens, window, .. } => Some((*tokens, *window)),
+            _ => None,
+        })
+        .expect("the turn reports context usage");
+    assert!(tokens > 0, "an empty request reports nothing");
+    assert_eq!(window, 1_000);
+}
+
 #[tokio::test]
 async fn streams_prompt_to_completion() {
     let transport = Arc::new(MockTransport::new(vec![MockBody::Events(vec![

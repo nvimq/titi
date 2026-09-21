@@ -1556,8 +1556,10 @@ dependencies = [
  "titi-config",
  "titi-core",
  "titi-genome",
+ "titi-memory",
  "titi-providers",
  "titi-secrets",
+ "titi-soul",
  "titi-tools",
  "tokio",
 ]

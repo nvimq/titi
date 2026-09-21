@@ -107,6 +107,9 @@ pub struct EngineConfig {
     pub context_window: u64,
     /// When and how the oldest messages are folded away.
     pub compaction: titi_core::compaction::CompactionPolicy,
+    /// Agent directory holding `SOUL.md`, `PERSONALITY.md` and the memory
+    /// stores. `None` sends no identity — only the genome map.
+    pub agent_dir: Option<PathBuf>,
 }
 
 impl EngineConfig {
@@ -129,6 +132,7 @@ impl EngineConfig {
             restored_messages: Vec::new(),
             context_window: 128_000,
             compaction: titi_core::compaction::CompactionPolicy::default(),
+            agent_dir: None,
         }
     }
 }
@@ -346,7 +350,7 @@ impl EngineRuntime {
                             if active.is_some() {
                                 queued.push_back(text);
                             } else {
-                                let system = self.genome_system().await;
+                                let system = self.system_prompt().await;
                                   active = Some(self.spawn_turn(text, primary_model.clone(), system, done_tx.clone()));
                               }
                         }
@@ -420,7 +424,7 @@ impl EngineRuntime {
                     {
                         active = None;
                         if let Some(text) = queued.pop_front() {
-                            let system = self.genome_system().await;
+                            let system = self.system_prompt().await;
                           active = Some(self.spawn_turn(text, primary_model.clone(), system, done_tx.clone()));
                         }
                     }
@@ -438,6 +442,44 @@ impl EngineRuntime {
                 message: message.into(),
             })
             .await;
+    }
+
+    /// Identity, personality and memory first, then the genome map.
+    ///
+    /// The model used to see only the map, so it had no identity and no
+    /// memory of earlier sessions. A missing agent directory degrades to the
+    /// map alone rather than failing the turn.
+    async fn system_prompt(&self) -> Option<SmolStr> {
+        let identity = self.identity_prompt();
+        let genome = self.genome_system().await;
+        match (identity, genome) {
+            (Some(identity), Some(genome)) => Some(format!("{identity}\n\n{genome}").into()),
+            (identity, genome) => identity.or(genome),
+        }
+    }
+
+    /// Soul, personality and the two memory stores, rendered as one block.
+    fn identity_prompt(&self) -> Option<SmolStr> {
+        let agent_dir = self.config.agent_dir.clone()?;
+        let built = titi_soul::SystemPromptBuilder::build(&agent_dir, None, None).ok()?;
+        let mut text = built.render();
+        for (heading, rendered) in [
+            (
+                "Memory",
+                titi_memory::store::MemoryStore::memory(&agent_dir).load(),
+            ),
+            (
+                "User",
+                titi_memory::store::MemoryStore::user(&agent_dir).load(),
+            ),
+        ] {
+            if let Ok(store) = rendered
+                && !store.is_empty()
+            {
+                text.push_str(&format!("\n\n# {heading}\n\n{}", store.render_text()));
+            }
+        }
+        Some(text.into())
     }
 
     /// Refresh the live index off the async threads and render this turn's map.
@@ -606,6 +648,13 @@ async fn run_turn(
                     })
                     .await;
             }
+            let _ = events
+                .send(EngineEvent::ContextUsage {
+                    turn_id,
+                    tokens: crate::compaction::estimate_request(&messages),
+                    window: config.context_window,
+                })
+                .await;
             let mut last_error = None;
             let mut completed = false;
             for _attempt in 0..=config.max_transient_retries {

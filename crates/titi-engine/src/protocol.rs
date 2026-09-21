@@ -123,6 +123,15 @@ pub enum EngineEvent {
         from: SmolStr,
         to: SmolStr,
     },
+    /// How full the context window is after the request was assembled.
+    ///
+    /// `tokens` is an estimate of the request about to be sent, not a count
+    /// the provider reported — providers do not all return usage.
+    ContextUsage {
+        turn_id: TurnId,
+        tokens: u64,
+        window: u64,
+    },
     /// The request crossed the context threshold and the oldest messages were
     /// folded into one digest.
     Compacted {
