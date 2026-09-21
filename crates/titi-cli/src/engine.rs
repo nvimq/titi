@@ -103,8 +103,13 @@ pub fn start_engine_with(
         .iter()
         .map(|model| model.id.to_string())
         .collect();
-    // Read the window before the config moves into the registry.
+    // Read what the tool needs before the config moves into the registry.
     let context_window = config.primary_context_window();
+    let provider_ids: Vec<String> = config
+        .providers
+        .iter()
+        .map(|provider| provider.id.to_string())
+        .collect();
     let registry = Arc::new(
         ProviderRegistry::new(
             config,
@@ -147,9 +152,9 @@ pub fn start_engine_with(
         tools.register(Arc::from(tool));
     }
     let agent_dir = titi_config::agent_dir();
-    tools.register(std::sync::Arc::new(titi_memory::tool::MemoryTool::new(
-        agent_dir.clone(),
-    )));
+    tools.register(std::sync::Arc::new(
+        titi_memory::tool::MemoryTool::with_providers(agent_dir.clone(), provider_ids),
+    ));
     // `memory.embeddingModel` picks the vector space. Empty or "local" keeps
     // the trigram embedder; a model id is resolved through the registry.
     if let Ok(settings) = titi_config::settings::Settings::load(&agent_dir, &workspace, &[]) {

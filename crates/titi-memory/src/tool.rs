@@ -19,13 +19,20 @@ use crate::redact;
 pub struct MemoryTool {
     agent_dir: PathBuf,
     index: Mutex<Option<MemoryIndex>>,
+    /// Connected provider ids, so `models` offers only usable embedders.
+    providers: Vec<String>,
 }
 
 impl MemoryTool {
     pub fn new(agent_dir: impl Into<PathBuf>) -> Self {
+        Self::with_providers(agent_dir, Vec::new())
+    }
+
+    pub fn with_providers(agent_dir: impl Into<PathBuf>, providers: Vec<String>) -> Self {
         Self {
             agent_dir: agent_dir.into(),
             index: Mutex::new(None),
+            providers,
         }
     }
 
@@ -76,7 +83,10 @@ impl ToolHandler for MemoryTool {
             "remember" => self.remember(&args),
             "search" => self.search(&args),
             "list" => self.list(),
-            "models" => Ok(crate::embed::suggested_lines().join("\n")),
+            "models" => {
+                let ids: Vec<&str> = self.providers.iter().map(String::as_str).collect();
+                Ok(crate::embed::suggested_lines(&ids).join("\n"))
+            }
             _ => Err("action must be remember, search, list or models".into()),
         };
         match result {
