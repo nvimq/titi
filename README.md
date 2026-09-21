@@ -1,0 +1,237 @@
+# titi
+
+A terminal coding agent in Rust. It follows the [Empryo](https://empryo.com) product model — one loop, one session, one set of tools — without Electron. The same engine drives a full-screen terminal and a headless JSONL interface. A native GPUI window comes later.
+
+[English](#english) · [Русский](#русский)
+
+| Version | License | Phase | As of | Tests |
+| --- | --- | --- | --- | --- |
+| `0.1.0` | [MIT](LICENSE) | E3 · Genome, in progress | 2026-09-22 | 891 passed |
+
+---
+
+## English
+
+### Run
+
+Rust 1.85 or newer (edition 2024).
+
+```bash
+cargo run -p titi-cli
+```
+
+A provider key belongs in the agent directory, never in the repository:
+
+```bash
+titi --set-key opencode-go "$KEY"
+titi --list-keys
+```
+
+Without a key the turn fails in the open: the provider requires a credential. Settings stack from lowest to highest: built-in defaults, `~/.titi/agent`, `<project>/.titi/config.yml`, then environment variables.
+
+One turn, no screen:
+
+```bash
+titi --prompt "read Cargo.toml and tell me the version"
+titi --headless --approval yolo
+```
+
+`--headless` reads `{"v":1,"command":…}` frames from stdin and writes events to stdout. The first line is `{"ready":true,"protocol":1}`.
+
+### In the terminal
+
+| Key or command | What it does |
+| --- | --- |
+| Enter | Sends the turn. During a turn it steers, it does not start a second one |
+| Ctrl+C | Stops the running turn. When idle, press it again to quit |
+| Ctrl+O | Expand or collapse every block |
+| `/agents` | Live agent list |
+| `/pause` | Stop the agent and hold input |
+| `/checkpoint` `/rewind` | Mark a point in the session, then return to it |
+| `/recap` | Session summary: turns, tools, files |
+| Ctrl+N | A new empty session |
+
+Mouse tracking: `--mouse off|on|wheel|buttons|all`. It is off by default, so the terminal's own selection still works.
+
+Tool approval: `--approval always-ask|write|yolo`. The default is `write` — reads pass, writes and the shell ask. Headless has no approval panel, so the mode has to be set explicitly or a write waits for an answer that never comes.
+
+### How it fits
+
+A surface never calls the model itself. It sends `EngineCommand` and paints `EngineEvent`. Retries and model switches happen only before the first visible token. A `401` and an unknown model are not retried.
+
+```text
+TUI / headless
+      │  EngineCommand / EngineEvent
+      ▼
+ titi-engine          turn, tools, cancel, compaction, agents
+      │
+      ├── titi-providers     HTTP/SSE: OpenAI, Anthropic, Gemini
+      ├── titi-tools         read  write  edit  glob  grep  bash
+      ├── titi-genome        file and symbol graph → a prompt fragment
+      ├── titi-memory        what to recall on this turn
+      └── titi-soul          SOUL.md and personality
+```
+
+| Crate | Role |
+| --- | --- |
+| `titi-cli` | The `titi` binary: screen, headless, keys |
+| `titi-tui` | Frame, composer, panels, themes. It does not know the model |
+| `titi-engine` | Protocol, loop, provider registry, subagents |
+| `titi-providers` | Transport and stream decoding |
+| `titi-tools` | Tools and the `read` / `write` / `exec` tiers |
+| `titi-genome` | Walk the repo, PageRank, project into a system message |
+| `titi-core` | JSONL sessions, search, trajectory |
+| `titi-memory` | Memory index: full-text search and local embeddings |
+| `titi-soul` | Identity slot, scanned before it enters the prompt |
+| `titi-config` | Layered settings |
+| `titi-secrets` | `.env` and `auth.db` |
+
+Agent state lives in `~/.titi/agent`. A named profile uses `~/.titi/profiles/<name>/agent`. `TITI_AGENT_DIR` overrides both. Sessions, memory, and keys are not written into the repository. The only project file is `.titi/config.yml`, and it must not contain a key.
+
+Print the repository map on its own:
+
+```bash
+cargo run -p titi-genome --example map -- . 40
+```
+
+`TITI_NO_GENOME=1` leaves the map out of the prompt.
+
+### What is already here
+
+The engine, streaming, model switching, tools jailed to the current directory, approval for dangerous calls, sessions that restore and rewind, compaction of a long context, subagents that can only read unless asked otherwise, Genome across eleven languages, memory, and SOUL.
+
+### What is not
+
+A desktop window (E5). Skills, hooks, and MCP. A dollar cost. A tree-sitter parser in place of the current heuristics.
+
+### Safe to publish
+
+Keys, sessions, memory, and `SOUL.md` stay in `~/.titi/agent`, outside this tree. `.gitignore` also refuses `.env`, `*.db`, private keys, `.empryo/`, and `.tmp_*`. The working tree and the git history were scanned for API keys, GitHub tokens, AWS keys, private-key blocks, and JWTs: none are committed. Tests use placeholders such as `sk-test`.
+
+The handoff notes a public endpoint (`https://opencode.ai/zen/go/v1`) and model ids. It does not contain the key.
+
+### Continue the work
+
+Start at [`docs/research/empryo-port/STATE.md`](docs/research/empryo-port/STATE.md). When the state and the code disagree, [`docs/research/empryo-port/DECISIONS.md`](docs/research/empryo-port/DECISIONS.md) wins. The map and the rules are in [`docs/research/empryo-port/README.md`](docs/research/empryo-port/README.md).
+
+```bash
+cargo fmt --check
+cargo test -p titi-engine
+cargo clippy -p titi-engine --all-targets
+cargo test --workspace
+```
+
+---
+
+## Русский
+
+Терминальный агент на Rust. Продуктовая модель [Empryo](https://empryo.com): один цикл, одна сессия, одни инструменты — без Electron. Тот же движок обслуживает полноэкранный терминал и headless JSONL. Нативное окно на GPUI ещё впереди.
+
+### Запуск
+
+Нужен Rust 1.85+ (edition 2024).
+
+```bash
+cargo run -p titi-cli
+```
+
+Ключ провайдера кладётся в каталог агента, не в репозиторий:
+
+```bash
+titi --set-key opencode-go "$KEY"
+titi --list-keys
+```
+
+Без ключа ход падает открыто: провайдер требует credential. Настройки складываются снизу вверх: встроенные значения, `~/.titi/agent`, `<проект>/.titi/config.yml`, затем переменные окружения.
+
+Один ход без экрана:
+
+```bash
+titi --prompt "прочитай Cargo.toml и скажи версию"
+titi --headless --approval yolo
+```
+
+`--headless` читает со stdin кадры `{"v":1,"command":…}` и пишет события в stdout. Первая строка — `{"ready":true,"protocol":1}`.
+
+### В терминале
+
+| Клавиша или команда | Что делает |
+| --- | --- |
+| Enter | Отправляет ход. Во время хода это steering, а не второй ход |
+| Ctrl+C | Останавливает активный ход. В покое просит нажать ещё раз, чтобы выйти |
+| Ctrl+O | Раскрыть или свернуть все блоки |
+| `/agents` | Живой список агентов |
+| `/pause` | Остановить агента и подержать ввод |
+| `/checkpoint` `/rewind` | Точка в сессии и возврат к ней |
+| `/recap` | Сводка: ходы, инструменты, файлы |
+| Ctrl+N | Новая пустая сессия |
+
+Мышь: `--mouse off|on|wheel|buttons|all`. По умолчанию выключена, чтобы работало выделение самого терминала.
+
+Подтверждение инструментов: `--approval always-ask|write|yolo`. По умолчанию `write` — чтение проходит само, запись и shell спрашивают. У headless нет панели подтверждения, поэтому режим надо задать явно, иначе запись будет ждать ответа, которого не будет.
+
+### Как устроено
+
+Поверхность не зовёт модель сама. Она шлёт `EngineCommand` и рисует `EngineEvent`. Повторы и смена модели — только до первого видимого токена. `401` и неизвестная модель не повторяются.
+
+```text
+TUI / headless
+      │  EngineCommand / EngineEvent
+      ▼
+ titi-engine          ход, инструменты, отмена, компакция, агенты
+      │
+      ├── titi-providers     HTTP/SSE: OpenAI, Anthropic, Gemini
+      ├── titi-tools         read  write  edit  glob  grep  bash
+      ├── titi-genome        граф файлов и символов → кусок промпта
+      ├── titi-memory        что вспомнить в этот ход
+      └── titi-soul          SOUL.md и личность
+```
+
+| Крейт | Зачем |
+| --- | --- |
+| `titi-cli` | Бинарь `titi`: экран, headless, ключи |
+| `titi-tui` | Кадр, композер, панели, темы. Про модель не знает |
+| `titi-engine` | Протокол, цикл, реестр провайдеров, субагенты |
+| `titi-providers` | Транспорт и разбор потока |
+| `titi-tools` | Инструменты и уровни `read` / `write` / `exec` |
+| `titi-genome` | Обход репозитория, PageRank, проекция в системное сообщение |
+| `titi-core` | Сессии JSONL, поиск, траектория |
+| `titi-memory` | Индекс памяти: полнотекст и локальные эмбеддинги |
+| `titi-soul` | Слот идентичности, проверка до входа в промпт |
+| `titi-config` | Слои настроек |
+| `titi-secrets` | `.env` и `auth.db` |
+
+Состояние агента живёт в `~/.titi/agent`. Именованный профиль — `~/.titi/profiles/<имя>/agent`. Оба перекрывает `TITI_AGENT_DIR`. Сессии, память и ключи в репозиторий не пишутся. В проекте остаётся только `.titi/config.yml`, и ключа в нём быть не должно.
+
+Карту репозитория можно напечатать отдельно:
+
+```bash
+cargo run -p titi-genome --example map -- . 40
+```
+
+`TITI_NO_GENOME=1` убирает карту из промпта.
+
+### Что уже есть
+
+Движок, стриминг, смена модели, инструменты в пределах текущего каталога, подтверждение опасных вызовов, сессии с восстановлением и откатом, компакция длинного контекста, субагенты (по умолчанию только чтение), Genome по одиннадцати языкам, память и SOUL.
+
+### Чего ещё нет
+
+Настольного окна (E5). Скиллов, хуков и MCP. Стоимости в долларах. Парсера tree-sitter вместо текущих эвристик.
+
+### Можно публиковать
+
+Ключи, сессии, память и `SOUL.md` остаются в `~/.titi/agent`, вне этого дерева. `.gitignore` также не пускает `.env`, `*.db`, приватные ключи, `.empryo/` и `.tmp_*`. Рабочее дерево и история git проверены на API-ключи, токены GitHub, ключи AWS, блоки приватных ключей и JWT: в коммитах их нет. В тестах стоят заглушки вроде `sk-test`.
+
+В стейте записан публичный endpoint (`https://opencode.ai/zen/go/v1`) и идентификаторы моделей. Самого ключа там нет.
+
+### Продолжить работу
+
+Точка возобновления — [`docs/research/empryo-port/STATE.md`](docs/research/empryo-port/STATE.md). Если стейт и код разошлись, верен [`docs/research/empryo-port/DECISIONS.md`](docs/research/empryo-port/DECISIONS.md). Карта и правила — [`docs/research/empryo-port/README.md`](docs/research/empryo-port/README.md).
+
+```bash
+cargo fmt --check
+cargo test -p titi-engine
+cargo clippy -p titi-engine --all-targets
+cargo test --workspace
+```

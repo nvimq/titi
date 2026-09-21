@@ -5,3 +5,16 @@
 .DS_Store
 .empryo
 .tmp_*
+
+# Agent state and credentials live in ~/.titi/agent, never in the repo.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+auth.json
+**/*.db
+**/*.db-wal
+**/*.db-shm
+**/*.sqlite
+**/*.sqlite3
