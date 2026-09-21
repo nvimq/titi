@@ -49,17 +49,15 @@ async fn collect_until_terminal(engine: &mut titi_engine::Engine) -> Vec<EngineE
 }
 
 /// The request the model sees starts with the agent's identity, not only the
-/// genome map — and a memory entry rides along.
+/// genome map. Memory reaches it through the index, not through a file.
 #[tokio::test]
 async fn the_system_prompt_carries_identity_and_memory() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("SOUL.md"), "IDENTITY-MARKER").unwrap();
-    std::fs::create_dir_all(dir.path().join("memories")).unwrap();
-    std::fs::write(
-        dir.path().join("memories/MEMORY.md"),
-        "the user prefers terse answers",
-    )
-    .unwrap();
+    titi_memory::index::MemoryIndex::open(dir.path())
+        .unwrap()
+        .remember("pref", "the user prefers terse answers", "", &[])
+        .unwrap();
 
     let transport = Arc::new(MockTransport::new(vec![MockBody::Events(vec![
         StreamEvent::Done {

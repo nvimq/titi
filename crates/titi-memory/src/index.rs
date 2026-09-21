@@ -12,6 +12,8 @@
 use std::path::Path;
 
 use rusqlite::{Connection, params};
+
+use crate::embed::Embedder;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 
@@ -84,6 +86,15 @@ impl MemoryIndex {
         let conn = Connection::open(agent_dir.join("memory.db"))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")?;
         conn.execute_batch(SCHEMA)?;
+        // Columns added after the first release. CREATE IF NOT EXISTS does not
+        // alter a table that already exists.
+        for (name, ddl) in [
+            ("embedder", "TEXT NOT NULL DEFAULT 'local-trigram-v1'"),
+            ("pinned", "INTEGER NOT NULL DEFAULT 0"),
+            ("hidden", "INTEGER NOT NULL DEFAULT 0"),
+        ] {
+            ensure_column(&conn, name, ddl)?;
+        }
         Ok(Self { conn })
     }
 
@@ -107,10 +118,19 @@ impl MemoryIndex {
             self.link(id, paths)?;
             return Ok(Remembered::Duplicate(id));
         }
-        let vector = embed(&format!("{summary}\n{details}"));
+        let embedder = crate::embed::LocalEmbedder;
+        let vector = embedder.embed(&format!("{summary}\n{details}"));
         self.conn.execute(
-            "INSERT INTO memories (category, summary, details, hash, embedding) VALUES (?1, ?2, ?3, ?4, ?5)",
-            params![category, summary.trim(), details.trim(), hash, bytemuck_vec(&vector)],
+            "INSERT INTO memories (category, summary, details, hash, embedding, embedder)
+               VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                category,
+                summary.trim(),
+                details.trim(),
+                hash,
+                bytemuck_vec(&vector),
+                embedder.name(),
+            ],
         )?;
         let id = self.conn.last_insert_rowid();
         self.conn.execute(
@@ -127,9 +147,16 @@ impl MemoryIndex {
     /// touched file is boosted, because that is the one the turn is about.
     pub fn recall(&self, query: &str, touched: &[String]) -> Result<Vec<Memory>, Error> {
         let mut scored: Vec<(Memory, f32)> = Vec::new();
-        let query_vec = embed(query);
+        let embedder = crate::embed::LocalEmbedder;
+        let query_vec = embedder.embed(query);
         for memory in self.candidates(query)? {
-            let mut score = cosine(&query_vec, &self.embedding(memory.id)?);
+            // A vector from another model lives in a different space, so it
+            // scores as unrelated rather than as a false neighbour.
+            let mut score = if self.embedder_of(memory.id)? == embedder.name() {
+                crate::embed::cosine(&query_vec, &self.embedding(memory.id)?)
+            } else {
+                0.0
+            };
             if self.linked_to(memory.id, touched)? {
                 score += 0.5;
             }
@@ -146,10 +173,10 @@ impl MemoryIndex {
 
     /// A near-duplicate of `summary` already stored, if the embedding says so.
     pub fn similar(&self, summary: &str) -> Result<Option<Memory>, Error> {
-        let query_vec = embed(summary);
+        let query_vec = crate::embed::LocalEmbedder.embed(summary);
         let mut best: Option<(Memory, f32)> = None;
         for memory in self.all()? {
-            let score = cosine(&query_vec, &self.embedding(memory.id)?);
+            let score = crate::embed::cosine(&query_vec, &self.embedding(memory.id)?);
             if score >= DEDUP_COSINE && best.as_ref().is_none_or(|(_, s)| score > *s) {
                 best = Some((memory, score));
             }
@@ -190,6 +217,16 @@ impl MemoryIndex {
             .prepare("SELECT id FROM memories WHERE hash = ?1")?;
         let mut rows = stmt.query(params![hash])?;
         Ok(rows.next()?.map(|row| row.get(0)).transpose()?)
+    }
+
+    fn embedder_of(&self, id: i64) -> Result<String, Error> {
+        self.conn
+            .query_row(
+                "SELECT embedder FROM memories WHERE id = ?1",
+                params![id],
+                |row| row.get(0),
+            )
+            .map_err(Error::from)
     }
 
     fn embedding(&self, id: i64) -> Result<Vec<f32>, Error> {
@@ -236,6 +273,19 @@ fn row_to_memory(row: &rusqlite::Row<'_>) -> rusqlite::Result<Memory> {
         details: row.get(3)?,
         use_count: row.get(4)?,
     })
+}
+
+/// Adds a column the first release did not have. SQLite has no `ADD COLUMN
+/// IF NOT EXISTS`, so the existing columns are read first.
+fn ensure_column(conn: &Connection, name: &str, ddl: &str) -> Result<(), Error> {
+    let mut stmt = conn.prepare("PRAGMA table_info(memories)")?;
+    let names: Vec<String> = stmt
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<_, _>>()?;
+    if !names.iter().any(|n| n == name) {
+        conn.execute_batch(&format!("ALTER TABLE memories ADD COLUMN {name} {ddl}"))?;
+    }
+    Ok(())
 }
 
 fn content_hash(summary: &str, details: &str) -> String {
