@@ -147,7 +147,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-engine` compaction: ниже порога ничего не складывается, самый старый префикс становится одним дайджестом (цепочка падает с `Remote` на `snapcompact`), хвост не начинается с tool-результата, пустая история не трогается, оценка покрывает все сообщения — PASS.
 - `titi-engine` tools: `a_long_turn_folds_its_oldest_messages` — turn с малым окном реально складывает префикс, следующий запрос несёт дайджест — PASS.
 - `titi-cli`: `ctrl_c_stops_a_running_turn_and_asks_twice_when_idle` — первый Ctrl+C только вооружает, второй в окне выходит, просроченный просит заново, другая клавиша снимает — PASS.
-- `cargo test --workspace` — 881 passed, 0 failed.
+- `titi-engine` loop: `the_system_prompt_carries_identity_and_memory`, `context_usage_reports_the_request_size` — PASS.
+- `titi-cli` git_checkpoint: снимок ловит изменение, restore отказывается на грязном дереве, не-репозиторий сообщает — PASS.
+- `cargo test --workspace` — 886 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS
@@ -181,7 +183,10 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 
 0. **Остался один шаг до рабочего TUI с реальной моделью**: `titi --set-key opencode-go <ключ>` (конфиг провайдера уже записан, endpoint `https://opencode.ai/zen/go/v1`). Ключ пользователя я не извлекаю — он должен быть введён им. Проверено, что после этого шага путь до HTTP работает.
 1. E5: GPUI desktop workbench поверх того же `EngineCommand`/`EngineEvent`.
-1a. Чего ещё нет (аудит): системного промпта из `titi-soul` (движок шлёт только genome), скиллов/hooks/MCP (E6), вкладок (в Empryo их до 5), стоимости и заполненного gauge контекста в статус-баре, git-чекпоинтов (наши чекпоинты — файл сессии, не git-тег), `--prompt` у headless, фокуса агента в Hub (возвращает bool и ничего не переключает), STT.
+1a. **Системный промпт подключён** — `EngineRuntime::system_prompt` собирает `titi_soul::SystemPromptBuilder` (SOUL.md + personality) и оба memory-стора (`MEMORY.md`, `USER.md`), затем genome-карту. `EngineConfig.agent_dir` задаётся из `titi_config::agent_dir()`. Без каталога агента деградирует до одной карты.
+1b. **Gauge контекста** — `EngineEvent::ContextUsage { tokens, window }` перед каждым запросом (оценка `estimate_request`, провайдеры usage не отдают). `App.context_pct` кормит `StatusSnapshot.context_pct`, бар рисует `N%`.
+1c. **Git-чекпоинты** — `Checkpoint.git_commit`; `/checkpoint` делает `git add -A && commit` (`titi-cli/src/git_checkpoint.rs`, локально, `--no-verify`, автор `titi`), `/rewind` делает `git reset --hard` и **отказывается на грязном дереве**. Не-репозиторий остаётся session-only.
+1d. Чего ещё нет: скиллы/hooks/MCP (E6), вкладки (в Empryo до 5), стоимость в USD (нет цен провайдеров), `--prompt` у headless, фокус агента в Hub (возвращает bool и ничего не переключает), STT.
 1b. TUI: рекап читает только store+trajectory; агентские findings и стоимости в него пока не попадают (нужна персистентность findings).
 2. Genome: tree-sitter для остальных языков и symbol-level граф.
 3. Goal loop поверх reviewer-а (coder ⟷ reviewer rounds с oscillation-детекцией).
