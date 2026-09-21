@@ -119,6 +119,8 @@ pub struct App {
     exit_armed: Option<Instant>,
     /// Context window fill, 0–100, from the last `ContextUsage` event.
     context_pct: Option<u8>,
+    /// The agent the view is on. `None` is the main turn.
+    focused_agent: Option<String>,
     /// Conversation entries the surface must persist, in order. The App never
     /// touches the session store; the binary drains this after each event
     /// batch and appends it.
@@ -164,8 +166,14 @@ impl App {
             turn_active: false,
             exit_armed: None,
             context_pct: None,
+            focused_agent: None,
             session_writes: Vec::new(),
         }
+    }
+
+    /// The agent the view is on, when it is not the main turn.
+    pub fn focused_agent(&self) -> Option<&str> {
+        self.focused_agent.as_deref()
     }
 
     /// Whether the first exit request is still waiting for a second one.
@@ -719,6 +727,14 @@ impl App {
                     peer.status = status;
                 }
             }
+            EngineEvent::AgentFocused { agent_id } => {
+                self.focused_agent = agent_id.map(|id| id.to_string());
+                let label = self
+                    .focused_agent
+                    .clone()
+                    .unwrap_or_else(|| "main".to_owned());
+                self.set_alert(format!("focused: {label}"));
+            }
             EngineEvent::AgentFinished {
                 agent_id,
                 summary,
@@ -890,7 +906,11 @@ impl App {
             ));
         }
         transcript.extend(self.transcript.render(self.width, &self.theme));
-        let mut snap = live_snapshot(&self.model(), "session");
+        let session_label = self
+            .focused_agent
+            .clone()
+            .unwrap_or_else(|| "session".to_owned());
+        let mut snap = live_snapshot(&self.model(), &session_label);
         snap.context_pct = self.context_pct;
         if self.plan_mode {
             snap.mode = Some("plan".to_owned());

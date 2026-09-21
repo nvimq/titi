@@ -149,8 +149,21 @@ impl AgentSupervisor {
         id
     }
 
+    /// Moves the view to `agent_id`.
+    ///
+    /// Returns false when no such agent exists, so the caller can say so
+    /// instead of pretending the view moved.
     pub async fn focus(&self, agent_id: &str) -> bool {
-        self.records.lock().await.contains_key(agent_id)
+        if !self.records.lock().await.contains_key(agent_id) {
+            return false;
+        }
+        let _ = self
+            .events
+            .send(EngineEvent::AgentFocused {
+                agent_id: Some(agent_id.into()),
+            })
+            .await;
+        true
     }
 
     pub async fn stop(&self, agent_id: &str) -> bool {
