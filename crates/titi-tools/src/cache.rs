@@ -40,11 +40,31 @@ struct Inner {
     misses: u64,
 }
 
+impl std::fmt::Debug for Inner {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Inner")
+            .field("entries", &self.entries.len())
+            .finish_non_exhaustive()
+    }
+}
+
 /// A shared, bounded file-content cache. Cheap to clone.
 #[derive(Clone)]
 pub struct ReadCache {
     inner: Arc<Mutex<Inner>>,
     capacity: usize,
+}
+
+impl std::fmt::Debug for ReadCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let (hits, misses) = self.stats();
+        f.debug_struct("ReadCache")
+            .field("capacity", &self.capacity)
+            .field("entries", &self.len())
+            .field("hits", &hits)
+            .field("misses", &misses)
+            .finish()
+    }
 }
 
 impl Default for ReadCache {

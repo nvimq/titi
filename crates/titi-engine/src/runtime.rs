@@ -24,6 +24,41 @@ use crate::tool_loop::{
 /// Identity the main turn claims files under.
 const MAIN_AGENT: SmolStr = SmolStr::new_inline("Main");
 
+/// Runs blocking map-building work off the async executor.
+///
+/// The map is an optimisation, never a precondition: a refresh that errors or
+/// panics degrades to "no map this turn" instead of failing the turn. A panic
+/// inside `spawn_blocking` surfaces as a `JoinError`, which this discards the
+/// same way an `Err` is discarded.
+async fn run_off_thread(
+    work: impl FnOnce() -> Option<SmolStr> + Send + 'static,
+) -> Option<SmolStr> {
+    tokio::task::spawn_blocking(work).await.ok().flatten()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn an_off_thread_failure_degrades_to_none() {
+        assert_eq!(run_off_thread(|| None).await, None);
+    }
+
+    #[tokio::test]
+    async fn an_off_thread_panic_degrades_to_none() {
+        // The turn must survive a panicking index build.
+        let outcome = run_off_thread(|| panic!("index build exploded")).await;
+        assert_eq!(outcome, None);
+    }
+
+    #[tokio::test]
+    async fn a_successful_run_passes_the_map_through() {
+        let map = run_off_thread(|| Some(SmolStr::new_inline("<genome>\n</genome>"))).await;
+        assert_eq!(map.as_deref(), Some("<genome>\n</genome>"));
+    }
+}
+
 /// Resolves a model id to its provider transport.
 pub trait TransportResolver: Send + Sync + 'static {
     fn resolve(&self, model: &str) -> Result<ResolvedModel, RegistryError>;
@@ -51,6 +86,20 @@ pub struct EngineConfig {
     pub genome_root: Option<PathBuf>,
     /// Ranked files injected per prompt.
     pub genome_limit: usize,
+    /// Workspace a subagent's tools are jailed to. `None` keeps its registry
+    /// empty even when `agent_model` is set.
+    pub workspace_root: Option<PathBuf>,
+    /// Model a spawned subagent runs on. `None` disables spawning: without a
+    /// runner the supervisor is never built.
+    pub agent_model: Option<SmolStr>,
+    /// Whether a subagent may write and execute. Off by default: a subagent
+    /// has no approval surface, so it gets read tools only.
+    pub agent_writes: bool,
+    /// Tool rounds a subagent may spend before it is stopped.
+    pub agent_rounds: u32,
+    /// Read cache shared with the subagent's read tool, so a file the main
+    /// turn read is not read again from disk.
+    pub read_cache: titi_tools::ReadCache,
     /// Conversation replayed from a persisted session, prepended to every
     /// prompt so a resumed session keeps its history.
     pub restored_messages: Vec<ChatMessage>,
@@ -68,6 +117,11 @@ impl EngineConfig {
             approval_mode: ApprovalMode::Write,
             genome_root: None,
             genome_limit: 24,
+            workspace_root: None,
+            agent_model: None,
+            agent_writes: false,
+            agent_rounds: crate::tool_agent::DEFAULT_AGENT_ROUNDS,
+            read_cache: titi_tools::ReadCache::default(),
             restored_messages: Vec::new(),
         }
     }
@@ -211,9 +265,34 @@ impl EngineRuntime {
         let (event_tx, event_rx) = mpsc::channel(config.event_capacity);
         let claims = Claims::new();
         let findings = Findings::default();
-        // Subagents share the runtime's claim table and findings bus, so a
-        // child cannot write a file its parent holds and the parent can read
-        // what the child learned.
+        let touched: TouchedSink = TouchedSink::default();
+        // A subagent shares the runtime's claim table, touched-file set, read
+        // cache and findings bus, so it cannot write a file the parent holds,
+        // its reads warm the parent's cache, and the parent can read what it
+        // learned.
+        let runner = runner.or_else(|| {
+            let model = config.agent_model.clone()?;
+            let root = config.workspace_root.clone()?;
+            let mut tools = ToolRegistry::new();
+            for tool in titi_tools::workspace_tools_with_cache(&root, config.read_cache.clone()) {
+                tools.register(Arc::from(tool));
+            }
+            if !config.agent_writes {
+                // Nothing exec- or write-tier is registered, so no call can
+                // wait for an approval this surface cannot show.
+                tools.retain_tiers(&[titi_tools::ApprovalTier::Read]);
+            }
+            Some(Arc::new(
+                crate::tool_agent::ToolAgentRunner::new(
+                    Arc::clone(&resolver),
+                    model,
+                    tools,
+                    claims.clone(),
+                    Arc::clone(&touched),
+                )
+                .with_max_rounds(config.agent_rounds),
+            ) as Arc<dyn crate::agents::AgentRunner>)
+        });
         let agents = runner.map(|runner| {
             crate::agents::AgentSupervisor::with_state(
                 runner,
@@ -233,7 +312,7 @@ impl EngineRuntime {
             approval_waiters: ApprovalWaiters::default(),
             trajectory,
             genome: Arc::new(tokio::sync::Mutex::new(None)),
-            touched: TouchedSink::default(),
+            touched,
             claims: claims.clone(),
             steering: Steering::default(),
         };
@@ -358,7 +437,7 @@ impl EngineRuntime {
         let genome = Arc::clone(&self.genome);
         let touched = Arc::clone(&self.touched);
         let limit = self.config.genome_limit;
-        tokio::task::spawn_blocking(move || {
+        run_off_thread(move || {
             let mut guard = genome.blocking_lock();
             let index = guard.get_or_insert_with(Genome::default);
             index.refresh(&root).ok()?;
@@ -366,8 +445,6 @@ impl EngineRuntime {
             Some(SmolStr::from(index.project_with(limit, &touched)))
         })
         .await
-        .ok()
-        .flatten()
     }
 
     fn spawn_turn(
