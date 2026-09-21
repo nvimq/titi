@@ -58,8 +58,48 @@ impl ToolCallCollector {
 pub(crate) type ApprovalWaiters = Arc<Mutex<HashMap<SmolStr, oneshot::Sender<bool>>>>;
 pub type TrajectorySink = Arc<Mutex<Option<titi_core::trajectory::TrajectoryRecorder>>>;
 
+/// How many touched files the Genome boost tracks. Past this every file in a
+/// long session is "touched" and the boost stops discriminating.
+pub const TOUCHED_CAPACITY: usize = 64;
+
+/// The files this session read or edited, most recent last, deduplicated.
+///
+/// Bounded on purpose: an unbounded set turns the ×3 rank boost into a
+/// constant once a session has touched everything.
+#[derive(Debug, Default)]
+pub struct TouchedSet {
+    order: Vec<String>,
+}
+
+impl TouchedSet {
+    /// Records a path, refreshing its recency. Already-known paths move to the
+    /// front of the queue rather than duplicating.
+    pub fn insert(&mut self, path: String) {
+        if let Some(at) = self.order.iter().position(|known| *known == path) {
+            self.order.remove(at);
+        }
+        self.order.push(path);
+        if self.order.len() > TOUCHED_CAPACITY {
+            self.order.remove(0);
+        }
+    }
+
+    /// The tracked paths, least recently touched first.
+    pub fn snapshot(&self) -> Vec<String> {
+        self.order.clone()
+    }
+
+    pub fn len(&self) -> usize {
+        self.order.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.order.is_empty()
+    }
+}
+
 /// Workspace paths the session read or edited; the Genome boosts them.
-pub type TouchedSink = Arc<Mutex<std::collections::HashSet<String>>>;
+pub type TouchedSink = Arc<Mutex<TouchedSet>>;
 
 /// Tools whose `path` argument counts as "touched by this session".
 pub const TOUCHING_TOOLS: &[&str] = &["read", "write", "edit"];
@@ -110,6 +150,7 @@ pub(crate) async fn execute_tools(
             && let Some(path) = args.get("path").and_then(|value| value.as_str())
         {
             touched.lock().await.insert(path.to_owned());
+            let _ = TOUCHING_TOOLS;
         }
         if let Some(recorder) = trajectory.lock().await.as_mut() {
             let _ = recorder.record(titi_core::trajectory::EventKind::ToolCall {
@@ -242,5 +283,40 @@ async fn invoke_one(
 async fn wait_aborted(aborted: &AtomicBool) {
     while !aborted.load(Ordering::SeqCst) {
         tokio::task::yield_now().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn touched_set_keeps_recency_without_duplicates() {
+        let mut set = TouchedSet::default();
+        set.insert("a.rs".into());
+        set.insert("b.rs".into());
+        // Re-touching moves a path to the recent end instead of duplicating it.
+        set.insert("a.rs".into());
+        assert_eq!(set.snapshot(), vec!["b.rs".to_owned(), "a.rs".to_owned()]);
+        assert_eq!(set.len(), 2);
+    }
+
+    #[test]
+    fn touched_set_is_bounded_and_drops_the_oldest() {
+        let mut set = TouchedSet::default();
+        for index in 0..TOUCHED_CAPACITY + 5 {
+            set.insert(format!("file{index}.rs"));
+        }
+        assert_eq!(set.len(), TOUCHED_CAPACITY);
+        let snapshot = set.snapshot();
+        assert!(!snapshot.contains(&"file0.rs".to_owned()), "oldest dropped");
+        assert!(snapshot.contains(&format!("file{}.rs", TOUCHED_CAPACITY + 4)));
+    }
+
+    #[test]
+    fn an_empty_touched_set_is_empty() {
+        let set = TouchedSet::default();
+        assert!(set.is_empty());
+        assert!(set.snapshot().is_empty());
     }
 }

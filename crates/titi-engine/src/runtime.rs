@@ -441,7 +441,7 @@ impl EngineRuntime {
             let mut guard = genome.blocking_lock();
             let index = guard.get_or_insert_with(Genome::default);
             index.refresh(&root).ok()?;
-            let touched: Vec<String> = touched.blocking_lock().iter().cloned().collect();
+            let touched: Vec<String> = touched.blocking_lock().snapshot();
             Some(SmolStr::from(index.project_with(limit, &touched)))
         })
         .await
