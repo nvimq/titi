@@ -214,6 +214,15 @@ fn main() -> io::Result<()> {
     let resize = Renderer::<io::Stdout>::resize_mode_from_env(ResizeScrollbackMode::Rebuild);
     let mut renderer = Renderer::new(stdout, w, h, true, resize);
     let mut input = String::new();
+    // Herdr sees this pane as an agent only if we tell it. Outside a Herdr
+    // pane the reporter is absent and nothing is sent.
+    let mut herdr = titi_cli::herdr::Reporter::from_env();
+    if let Some(reporter) = &mut herdr {
+        reporter.set_session(app.session_id().unwrap_or(""));
+        let (state, message) = app.herdr_state();
+        reporter.report(state, message.as_deref());
+    }
+    let mut herdr_state = app.herdr_state();
     paint(&mut renderer, &mut app, &input)?;
 
     loop {
@@ -321,6 +330,14 @@ fn main() -> io::Result<()> {
         }
         if events {
             paint(&mut renderer, &mut app, &input)?;
+        }
+        // Report only on a change: a report per frame would flood the socket.
+        let current = app.herdr_state();
+        if current != herdr_state {
+            if let Some(reporter) = &herdr {
+                reporter.report(current.0, current.1.as_deref());
+            }
+            herdr_state = current;
         }
         persist_session(&mut app, session_log.as_ref());
     }

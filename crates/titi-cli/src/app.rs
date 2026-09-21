@@ -171,6 +171,30 @@ impl App {
         }
     }
 
+    /// What Herdr should be told.
+    ///
+    /// A turn in flight is `working`. Waiting on the user — a tool approval or
+    /// the exit confirmation — is `blocked`, because that is when another agent
+    /// should stop and look. Everything else is `idle`.
+    pub fn herdr_state(&self) -> (crate::herdr::AgentState, Option<String>) {
+        if self.overlay_open() && self.pending_tool_approval.is_some() {
+            return (
+                crate::herdr::AgentState::Blocked,
+                Some("waiting for approval".to_owned()),
+            );
+        }
+        if self.exit_armed() {
+            return (
+                crate::herdr::AgentState::Blocked,
+                Some("confirm exit".to_owned()),
+            );
+        }
+        if self.turn_active {
+            return (crate::herdr::AgentState::Working, None);
+        }
+        (crate::herdr::AgentState::Idle, None)
+    }
+
     /// The agent the view is on, when it is not the main turn.
     pub fn focused_agent(&self) -> Option<&str> {
         self.focused_agent.as_deref()

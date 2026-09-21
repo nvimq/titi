@@ -150,7 +150,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-engine` loop: `the_system_prompt_carries_identity_and_memory`, `context_usage_reports_the_request_size` — PASS.
 - `titi-cli` git_checkpoint: снимок ловит изменение, restore отказывается на грязном дереве, не-репозиторий сообщает — PASS.
 - `titi-engine` agents: `focusing_an_agent_emits_the_move` — фокус шлёт `AgentFocused`, неизвестный агент даёт `Failed` — PASS.
-- `cargo test --workspace` — 887 passed, 0 failed.
+- `titi-cli`: `herdr_state_follows_the_turn` — idle → working на `TurnStarted`, blocked с «waiting for approval» на `ToolApprovalNeeded` — PASS.
+- `cargo test --workspace` — 891 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS
@@ -189,7 +190,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 1c. **Git-чекпоинты** — `Checkpoint.git_commit`; `/checkpoint` делает `git add -A && commit` (`titi-cli/src/git_checkpoint.rs`, локально, `--no-verify`, автор `titi`), `/rewind` делает `git reset --hard` и **отказывается на грязном дереве**. Не-репозиторий остаётся session-only.
 1d. **Фокус агента** — `AgentSupervisor::focus` шлёт `EngineEvent::AgentFocused`; `App.focused_agent` показывает его в статус-баре. Несуществующий агент даёт `Failed`.
 1e. **`--prompt`** — `titi --headless "текст"` и `titi --prompt "текст"` запускают один turn (`headless::run_prompt`): события на stdout, ответ на stderr, код 1 при `Failed`.
-1f. Чего ещё нет: скиллы/hooks/MCP (E6), вкладки (в Empryo до 5), стоимость в USD (нет цен провайдеров), STT.
+1f. **Herdr** — `titi-cli/src/herdr.rs` репортит `pane.report_agent` на `HERDR_SOCKET_PATH` (`source: "herdr:titi"`, состояния `working`/`blocked`/`idle`), тот же контракт, что `herdr-agent-state.ts` у OMP. Вне pane (`HERDR_ENV` не задан) — no-op. Спека: `docs/research/empryo-port/herdr.md`. Orca — провайдер, не протокол состояния: подключается записью в registry.
+1g. Чего ещё нет: скиллы/hooks/MCP (E6), вкладки (в Empryo до 5), стоимость в USD (нет цен провайдеров), STT.
 1b. TUI: рекап читает только store+trajectory; агентские findings и стоимости в него пока не попадают (нужна персистентность findings).
 2. Genome: tree-sitter для остальных языков и symbol-level граф.
 3. Goal loop поверх reviewer-а (coder ⟷ reviewer rounds с oscillation-детекцией).

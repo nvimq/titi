@@ -3,6 +3,7 @@ pub mod engine;
 pub mod first_frame;
 pub mod git_checkpoint;
 pub mod headless;
+pub mod herdr;
 pub mod keys;
 pub mod recap;
 pub mod secrets;

@@ -13,6 +13,32 @@ fn app() -> App {
     )
 }
 
+/// Herdr classifies a pane from what we report, so the classification has to
+/// match what the user is actually waiting on.
+#[test]
+fn herdr_state_follows_the_turn() {
+    use titi_cli::herdr::AgentState;
+
+    let mut app = app();
+    assert_eq!(app.herdr_state().0, AgentState::Idle);
+
+    app.ingest_engine_event(EngineEvent::TurnStarted {
+        turn_id: TurnId(1),
+        model: "test/model".into(),
+    });
+    assert_eq!(app.herdr_state().0, AgentState::Working);
+
+    // An approval is the moment another agent should stop and look.
+    app.ingest_engine_event(EngineEvent::ToolApprovalNeeded {
+        turn_id: TurnId(1),
+        call_id: "call-1".into(),
+        name: "shell".into(),
+    });
+    let (state, message) = app.herdr_state();
+    assert_eq!(state, AgentState::Blocked);
+    assert_eq!(message.as_deref(), Some("waiting for approval"));
+}
+
 #[test]
 fn engine_events_render_stream_thinking_tools_and_agents() {
     let mut app = app();
