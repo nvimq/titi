@@ -985,6 +985,12 @@ impl App {
         now: Instant,
     ) -> Dispatch {
         if self.keys.matches_canonical(canonical, "app.interrupt") {
+            // The action is documented as "Interrupt / exit", and that is what
+            // it has to be: while a turn runs there was no way at all to stop
+            // it from the terminal, only to quit the app.
+            if self.turn_active {
+                return Dispatch::Cancel;
+            }
             return Dispatch::Exit;
         }
 
@@ -1760,6 +1766,8 @@ pub enum Dispatch {
     Handled(Option<SubmitEffect>),
     /// Ctrl+C / app.interrupt — leave the TUI.
     Exit,
+    /// Ctrl+C while a turn runs: stop the turn, stay in the TUI.
+    Cancel,
     /// Key not bound and not printable.
     Unhandled,
 }
