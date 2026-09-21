@@ -131,9 +131,21 @@ pub const SUGGESTED_EMBEDDERS: &[EmbeddingSuggestion] = &[
     },
 ];
 
-/// The suggestion lines, one per model, for a settings screen or `/memory models`.
-pub fn suggested_lines() -> Vec<String> {
+/// The suggestions a user can actually use.
+///
+/// `local` is always offered. A hosted model is offered only when its provider
+/// is connected, because suggesting a model with no key is a dead end. An
+/// empty `connected` means nothing is configured, so only `local` shows.
+pub fn available<'a>(connected: &[&str]) -> Vec<&'a EmbeddingSuggestion> {
     SUGGESTED_EMBEDDERS
+        .iter()
+        .filter(|s| s.provider == "built-in" || connected.contains(&s.provider))
+        .collect()
+}
+
+/// The suggestion lines, one per usable model.
+pub fn suggested_lines(connected: &[&str]) -> Vec<String> {
+    available(connected)
         .iter()
         .map(|s| format!("{}  {} — {}", s.id, s.provider, s.note))
         .collect()
@@ -200,6 +212,24 @@ mod tests {
     }
 
     #[test]
+    #[test]
+    fn only_connected_providers_are_offered() {
+        let none = suggested_lines(&[]);
+        assert_eq!(
+            none.len(),
+            1,
+            "nothing connected offers only local: {none:?}"
+        );
+        assert!(none[0].starts_with("local"));
+
+        let openai = suggested_lines(&["openai"]);
+        assert!(openai.iter().any(|l| l.contains("text-embedding-3-small")));
+        assert!(
+            openai.iter().all(|l| !l.contains("voyage")),
+            "an unconnected provider is not offered: {openai:?}"
+        );
+    }
+
     fn a_named_model_is_kept_verbatim() {
         assert_eq!(
             configured_model(Some("openai/text-embedding-3-small")),
