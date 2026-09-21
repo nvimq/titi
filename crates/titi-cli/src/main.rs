@@ -30,7 +30,6 @@ use titi_cli::app::{
     App, Dispatch, OverlayOutcome, SubmitEffect, default_theme, delete_session, load_mouse_preset,
     save_mouse_preset,
 };
-use titi_cli::engine::start_engine;
 use titi_cli::keys::{canonical_from_key_event, overlay_key_data};
 use titi_engine::EngineCommand;
 use titi_tui::caps::{MODE_2031_DISABLE, MODE_2031_ENABLE, MousePreset, OSC11_QUERY, osc52_copy};
@@ -59,6 +58,9 @@ fn main() -> io::Result<()> {
     let mut headless = false;
     let mut set_key: Option<(String, String)> = None;
     let mut list_keys = false;
+    // `--approval <mode>`: a surface with no approval prompt (headless, or a
+    // script) must say so, or a write-tier call waits forever.
+    let mut approval = titi_tools::ApprovalMode::Write;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
         if arg == "--mouse"
@@ -77,6 +79,18 @@ fn main() -> io::Result<()> {
             }
         } else if arg == "--list-keys" {
             list_keys = true;
+        } else if arg == "--approval" {
+            let Some(raw) = args.next() else {
+                eprintln!("usage: titi --approval <always-ask|write|yolo>");
+                std::process::exit(2);
+            };
+            match titi_cli::engine::parse_approval(&raw) {
+                Ok(mode) => approval = mode,
+                Err(reason) => {
+                    eprintln!("{reason}");
+                    std::process::exit(2);
+                }
+            }
         }
     }
 
@@ -123,7 +137,8 @@ fn main() -> io::Result<()> {
         let ready = Arc::clone(&ready);
         std::thread::spawn(move || init_provider(ready));
     }
-    let (mut engine, models, session_id) = start_engine().map_err(io::Error::other)?;
+    let (mut engine, models, session_id) =
+        titi_cli::engine::start_engine_with(approval).map_err(io::Error::other)?;
     // The transcript lives in the session store; without this the session file
     // stays empty and a resume replays nothing. Both surfaces share it.
     let session_log =

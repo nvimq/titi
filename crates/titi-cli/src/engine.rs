@@ -5,7 +5,7 @@ use titi_engine::{
     ModelDescriptor, ProviderDescriptor, ProviderRegistry, ProviderRegistryConfig, TrajectorySink,
 };
 use titi_providers::ApiKind;
-use titi_tools::{ToolRegistry, workspace_tools_with_cache};
+use titi_tools::{ApprovalMode, ToolRegistry, workspace_tools_with_cache};
 
 pub fn default_registry_config() -> ProviderRegistryConfig {
     ProviderRegistryConfig {
@@ -68,7 +68,33 @@ fn tail(
     messages
 }
 
+/// Parses `--approval <always-ask|write|yolo>`.
+pub fn parse_approval(raw: &str) -> Result<ApprovalMode, String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "always-ask" | "ask" => Ok(ApprovalMode::AlwaysAsk),
+        "write" => Ok(ApprovalMode::Write),
+        "yolo" | "auto" => Ok(ApprovalMode::Yolo),
+        other => Err(format!(
+            "unknown approval mode {other:?}; expected always-ask, write or yolo"
+        )),
+    }
+}
+
+/// Starts the engine with the default approval policy.
 pub fn start_engine() -> Result<(Engine, Vec<String>, String), String> {
+    start_engine_with(ApprovalMode::Write)
+}
+
+/// Starts the engine with an explicit approval policy.
+///
+/// A surface that cannot show an approval prompt must not leave a write-tier
+/// call waiting for one: under `always-ask` and `write` the engine emits
+/// `ToolApprovalNeeded` and blocks until an `ApproveTool` arrives. Headless
+/// scripts that never answer hang there forever, which is why the policy is a
+/// flag rather than a constant.
+pub fn start_engine_with(
+    approval_mode: ApprovalMode,
+) -> Result<(Engine, Vec<String>, String), String> {
     let config = load_registry_config();
     let models: Vec<String> = config
         .models
@@ -88,6 +114,7 @@ pub fn start_engine() -> Result<(Engine, Vec<String>, String), String> {
         .cloned()
         .ok_or_else(|| "no models configured".to_owned())?;
     let mut engine_config = EngineConfig::new(primary.clone());
+    engine_config.approval_mode = approval_mode;
     engine_config.fallback_models = models.iter().skip(1).map(|id| id.clone().into()).collect();
     let workspace = std::env::current_dir().unwrap_or_else(|_| ".".into());
     if std::env::var_os("TITI_NO_GENOME").is_none() {

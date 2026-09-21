@@ -1,5 +1,21 @@
-use titi_cli::engine::default_registry_config;
+use titi_cli::engine::{default_registry_config, parse_approval};
 use titi_engine::ProviderRegistryConfig;
+use titi_tools::ApprovalMode;
+
+#[test]
+fn approval_modes_parse_and_reject_typos() {
+    assert_eq!(parse_approval("write"), Ok(ApprovalMode::Write));
+    assert_eq!(parse_approval("always-ask"), Ok(ApprovalMode::AlwaysAsk));
+    assert_eq!(parse_approval("ask"), Ok(ApprovalMode::AlwaysAsk));
+    assert_eq!(parse_approval("yolo"), Ok(ApprovalMode::Yolo));
+    // Case and surrounding space are tolerated; a typo is not.
+    assert_eq!(parse_approval("  YOLO "), Ok(ApprovalMode::Yolo));
+    let reason = parse_approval("yes").unwrap_err();
+    assert!(
+        reason.contains("always-ask") && reason.contains("yolo"),
+        "the error lists the valid modes: {reason}"
+    );
+}
 
 #[test]
 fn default_registry_has_openai_and_anthropic() {
