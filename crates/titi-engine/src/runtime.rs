@@ -103,6 +103,10 @@ pub struct EngineConfig {
     /// Conversation replayed from a persisted session, prepended to every
     /// prompt so a resumed session keeps its history.
     pub restored_messages: Vec<ChatMessage>,
+    /// Context window the model reports, used to decide when to fold.
+    pub context_window: u64,
+    /// When and how the oldest messages are folded away.
+    pub compaction: titi_core::compaction::CompactionPolicy,
 }
 
 impl EngineConfig {
@@ -123,6 +127,8 @@ impl EngineConfig {
             agent_rounds: crate::tool_agent::DEFAULT_AGENT_ROUNDS,
             read_cache: titi_tools::ReadCache::default(),
             restored_messages: Vec::new(),
+            context_window: 128_000,
+            compaction: titi_core::compaction::CompactionPolicy::default(),
         }
     }
 }
@@ -579,6 +585,26 @@ async fn run_turn(
                     content: text,
                     tool_calls: Vec::new(),
                 });
+            }
+            // A turn accumulates tool results without bound; fold the oldest
+            // away before the provider refuses the request.
+            if let Some(folded) =
+                crate::compaction::compact(&mut messages, &config.compaction, config.context_window)
+            {
+                if let Some(recorder) = trajectory.lock().await.as_mut() {
+                    let _ = recorder.record(titi_core::trajectory::EventKind::Compaction {
+                        folded: folded.folded as u64,
+                        strategy: folded.strategy.to_string(),
+                    });
+                }
+                let _ = events
+                    .send(EngineEvent::Compacted {
+                        turn_id,
+                        folded: folded.folded as u32,
+                        tokens_before: folded.tokens_before,
+                        strategy: folded.strategy.clone(),
+                    })
+                    .await;
             }
             let mut last_error = None;
             let mut completed = false;

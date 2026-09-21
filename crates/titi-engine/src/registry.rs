@@ -26,6 +26,10 @@ pub struct ModelDescriptor {
     pub id: SmolStr,
     pub provider: SmolStr,
     pub wire_model: SmolStr,
+    /// Context window the model reports, used to decide when to compact.
+    /// `None` leaves the engine's default in place.
+    #[serde(default)]
+    pub context_window: Option<u64>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -35,6 +39,11 @@ pub struct ProviderRegistryConfig {
 }
 
 impl ProviderRegistryConfig {
+    /// Context window of the first configured model, if it declares one.
+    pub fn primary_context_window(&self) -> Option<u64> {
+        self.models.first().and_then(|model| model.context_window)
+    }
+
     pub fn from_settings_value(value: &serde_json::Value) -> Option<Self> {
         let parsed: Self = serde_json::from_value(value.clone()).ok()?;
         if parsed.providers.is_empty() || parsed.models.is_empty() {

@@ -2,6 +2,7 @@
 
 pub mod agents;
 pub mod claims;
+pub mod compaction;
 pub mod findings;
 pub mod protocol;
 pub mod registry;

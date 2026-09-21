@@ -123,6 +123,14 @@ pub enum EngineEvent {
         from: SmolStr,
         to: SmolStr,
     },
+    /// The request crossed the context threshold and the oldest messages were
+    /// folded into one digest.
+    Compacted {
+        turn_id: TurnId,
+        folded: u32,
+        tokens_before: u64,
+        strategy: SmolStr,
+    },
     TurnFinished {
         turn_id: TurnId,
         reason: StopReason,
