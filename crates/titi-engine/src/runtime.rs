@@ -344,6 +344,9 @@ impl EngineRuntime {
                                   active = Some(self.spawn_turn(text, primary_model.clone(), system, done_tx.clone()));
                               }
                         }
+                        EngineCommand::RestoreHistory { messages } => {
+                            self.config.restored_messages = messages;
+                        }
                         EngineCommand::Steer { text } => {
                             // Queued, not applied here: the running turn drains it at
                             // its next step boundary, so steering never aborts work.

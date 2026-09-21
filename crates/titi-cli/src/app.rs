@@ -1346,7 +1346,13 @@ impl App {
                     (Some(_), Err(reason)) => self.set_alert(format!("rewind: {reason}")),
                     (Some(id), Ok(index)) => {
                         match rewind_session(&titi_config::agent_dir(), id, index) {
-                            Ok(summary) => self.set_alert(summary),
+                            Ok(summary) => {
+                                self.set_alert(summary);
+                                // The engine still holds the pre-rewind history;
+                                // the surface must replace it, or the model
+                                // keeps reading what the user just cut away.
+                                return Some(SubmitEffect::Rewind);
+                            }
                             Err(reason) => self.set_alert(format!("rewind: {reason}")),
                         }
                     }
@@ -1658,6 +1664,20 @@ pub fn delete_session(id: &str) -> Result<(), String> {
     delete_session_from(&titi_config::agent_dir(), id)
 }
 
+/// The conversation a resumed session replays: the path to its current leaf,
+/// tail-capped so an old transcript cannot crowd out the workspace map.
+pub fn session_history(
+    agent_dir: &std::path::Path,
+    session_id: &str,
+) -> Result<Vec<titi_providers::ChatMessage>, String> {
+    let store = titi_core::session::SessionStore::new(agent_dir).map_err(|e| e.to_string())?;
+    let entries = store.walk(session_id, None).map_err(|e| e.to_string())?;
+    Ok(crate::engine::tail(
+        titi_core::session::entries_to_messages(&entries),
+        crate::engine::MAX_RESTORED_MESSAGES,
+    ))
+}
+
 /// Record a rewind point on a session; returns a human summary.
 pub fn checkpoint_session(agent_dir: &std::path::Path, session_id: &str) -> Result<String, String> {
     let store = titi_core::session::SessionStore::new(agent_dir).map_err(|e| e.to_string())?;
@@ -1730,6 +1750,8 @@ pub enum SubmitEffect {
     Delivered(String),
     /// A turn is running: redirect it instead of starting a new one.
     Steer(String),
+    /// The session was rewound: replace the engine's replayed history.
+    Rewind,
     /// OSC 52 copy of the given text.
     Copy(String),
     /// ED3 + re-offer history (`app.display.reset`).

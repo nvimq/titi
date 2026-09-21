@@ -401,6 +401,15 @@ fn apply_effect(
             let mut provider = AppFrame { app, input };
             renderer.reset_display(&mut provider)?;
         }
+        SubmitEffect::Rewind => {
+            // The session file was cut; the engine's replayed history must be
+            // cut with it, or the model keeps reading the removed turns.
+            let history = app
+                .session_id()
+                .and_then(|id| titi_cli::app::session_history(&titi_config::agent_dir(), id).ok())
+                .unwrap_or_default();
+            let _ = engine.try_send(EngineCommand::RestoreHistory { messages: history });
+        }
         SubmitEffect::ExternalEditor => {
             let stdout = renderer.out_mut();
             execute!(stdout, Show, LeaveAlternateScreen)?;
@@ -452,6 +461,9 @@ fn apply_submit_effect(
                 text: prompt.into(),
             });
         }
+        // Handled by `apply_effect`, which is the only caller holding the App
+        // and therefore the session id.
+        SubmitEffect::Rewind => {}
         SubmitEffect::Copy(text) => {
             write!(stdout, "{}", osc52_copy(&text))?;
             stdout.flush()?;

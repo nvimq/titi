@@ -177,6 +177,74 @@ async fn genome_refreshes_between_turns() {
 }
 
 #[tokio::test]
+async fn restore_history_replaces_what_the_model_sees() {
+    let transport = Arc::new(MockTransport::new(vec![
+        MockBody::Events(vec![StreamEvent::Done {
+            reason: StopReason::Stop,
+        }]),
+        MockBody::Events(vec![StreamEvent::Done {
+            reason: StopReason::Stop,
+        }]),
+    ]));
+    let mut config = EngineConfig::new("primary");
+    config.restored_messages = vec![ChatMessage {
+        role: Role::User,
+        content: "the turn we later rewound".into(),
+        tool_calls: Vec::new(),
+    }];
+    let mut engine = EngineRuntime::start(
+        config,
+        resolver(vec![("primary", Arc::clone(&transport) as _)]),
+    );
+
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "one".into() })
+        .await
+        .unwrap();
+    let _ = collect_until_terminal(&mut engine).await;
+
+    // A rewind cut the session; the engine must drop the old history too.
+    engine
+        .send(EngineCommand::RestoreHistory {
+            messages: vec![ChatMessage {
+                role: Role::User,
+                content: "what survived the rewind".into(),
+                tool_calls: Vec::new(),
+            }],
+        })
+        .await
+        .unwrap();
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "two".into() })
+        .await
+        .unwrap();
+    let _ = collect_until_terminal(&mut engine).await;
+
+    let requests = transport.requests();
+    assert_eq!(requests.len(), 2);
+    let first: Vec<String> = requests[0]
+        .messages
+        .iter()
+        .map(|message| message.content.to_string())
+        .collect();
+    assert!(first.contains(&"the turn we later rewound".to_owned()));
+
+    let second: Vec<String> = requests[1]
+        .messages
+        .iter()
+        .map(|message| message.content.to_string())
+        .collect();
+    assert!(
+        second.contains(&"what survived the rewind".to_owned()),
+        "the replacement history is sent: {second:?}"
+    );
+    assert!(
+        !second.contains(&"the turn we later rewound".to_owned()),
+        "the rewound turn is gone: {second:?}"
+    );
+}
+
+#[tokio::test]
 async fn no_genome_means_prompt_only() {
     let transport = Arc::new(MockTransport::new(vec![MockBody::Events(vec![
         StreamEvent::Done {

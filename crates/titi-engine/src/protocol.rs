@@ -1,6 +1,6 @@
 use serde::{Deserialize, Serialize};
 use smol_str::SmolStr;
-use titi_providers::{ErrorReason, StopReason};
+use titi_providers::{ChatMessage, ErrorReason, StopReason};
 
 /// Stable identifier correlating commands and events for one agent turn.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -36,6 +36,12 @@ pub enum EngineCommand {
     /// Redirect the running turn at its next step boundary, without aborting.
     Steer {
         text: SmolStr,
+    },
+    /// Replace the replayed conversation for every following turn. A surface
+    /// sends this after rewinding a session, so the model stops seeing the
+    /// history the user just cut away.
+    RestoreHistory {
+        messages: Vec<ChatMessage>,
     },
     Cancel,
     SwitchModel {
