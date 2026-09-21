@@ -40,6 +40,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Personalized rank: `TouchedSink` собирает пути из `read`/`write`/`edit` tool calls, `project_with` даёт им ×3 буст.
 - CLI передаёт cwd как `genome_root`; `TITI_NO_GENOME=1` отключает.
 - `cargo run -p titi-genome --example map -- [path] [limit]` печатает карту вручную.
+- **FIX (critical)**: транскрипт вообще не попадал в session store — файл сессии оставался 0 байт, `restore_latest` всегда возвращал пустой разговор, `/checkpoint` фиксировал 0 записей, `/rewind` нечего было обрезать. Разговор уходил только в trajectory (другой файл). Теперь `App` ставит в очередь `(Role, text)` (prompt при отправке, ответ на `TurnFinished`), поверхность дренирует очередь в `SessionLog`: TUI — после каждого батча событий, headless — в цикле `run`. Подтверждено вживую: run 1 → `msgs=1 roles=user`, файл 276 байт; run 2 → `msgs=3 roles=user,assistant,user`, 598 байт.
+- `MAX_RESTORED_MESSAGES = 40`: восстанавливается только хвост разговора, чтобы старая история не вытесняла карту workspace.
 - `SessionStore::restore_latest` → id + разговор по пути к текущему leaf (брошенные fork-ветки не попадают).
 - `entries_to_messages` конвертирует `Entry` → `titi_providers::ChatMessage`; `EngineConfig.restored_messages` подставляется перед user-prompt.
 - CLI при старте восстанавливает последнюю сессию, иначе создаёт новую.
@@ -116,7 +118,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Сквозной прогон: `read` через фрагментированные аргументы вернул реальный `Cargo.toml`; genome как system-message дошёл до провайдера (`system=yes`).
 - `titi-engine/tests/tool_agent.rs`: сабагент читает файл своим tool loop-ом, греет общий кэш, не может писать по умолчанию, уважает чужой claim при `agent_writes`, останавливается на round cap — PASS.
 - `runtime::tests`: `an_off_thread_panic_degrades_to_none`, `an_off_thread_failure_degrades_to_none`, `a_successful_run_passes_the_map_through` — PASS.
-- Сквозная проверка сабагента через реальный бинарь и реальный HTTP: `AgentProgress { tools: read }` → `read` вернул 1056 байт `Cargo.toml` → `AgentFinished { success: true }`.\n- `cargo test --workspace` — 842 passed, 0 failed.
+- Сквозная проверка сабагента через реальный бинарь и реальный HTTP: `AgentProgress { tools: read }` → `read` вернул 1056 байт `Cargo.toml` → `AgentFinished { success: true }`.\n- `titi-cli` session_log: очередь `(User, prompt)` → `(Assistant, reply)`, пустой ответ не пишется, steered-сообщение попадает в транскрипт, agent-события — нет, стамп в несуществующую сессию возвращает ошибку, а не панику — PASS.
+- Сквозная проверка резюма через реальный бинарь (два запуска подряд против локального сервера) — PASS.
+- `cargo test --workspace` — 849 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS

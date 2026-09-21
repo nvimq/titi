@@ -114,6 +114,10 @@ pub struct App {
     /// A turn is in flight: submitting now steers it instead of queueing a
     /// whole new turn.
     turn_active: bool,
+    /// Conversation entries the surface must persist, in order. The App never
+    /// touches the session store; the binary drains this after each event
+    /// batch and appends it.
+    session_writes: Vec<(titi_core::session::Role, String)>,
 }
 
 impl App {
@@ -153,7 +157,13 @@ impl App {
             streaming_response: String::new(),
             session_id: None,
             turn_active: false,
+            session_writes: Vec::new(),
         }
+    }
+
+    /// Takes the conversation entries awaiting persistence, oldest first.
+    pub fn drain_session_writes(&mut self) -> Vec<(titi_core::session::Role, String)> {
+        std::mem::take(&mut self.session_writes)
     }
 
     /// Whether a turn is currently in flight.
@@ -668,8 +678,10 @@ impl App {
             }
             EngineEvent::TurnFinished { .. } => {
                 if !self.streaming_response.is_empty() {
-                    self.assistant_messages
-                        .push(std::mem::take(&mut self.streaming_response));
+                    let reply = std::mem::take(&mut self.streaming_response);
+                    self.session_writes
+                        .push((titi_core::session::Role::Assistant, reply.clone()));
+                    self.assistant_messages.push(reply);
                 }
                 self.turn_active = false;
                 self.transcript.clear_alert();
@@ -1358,6 +1370,9 @@ impl App {
     fn deliver_prompt(&mut self, text: String) -> Option<SubmitEffect> {
         self.prompt_history.push(text.clone());
         self.last_prompt = Some(text.clone());
+        // Whatever the outcome, the user's message is part of the transcript.
+        self.session_writes
+            .push((titi_core::session::Role::User, text.clone()));
         // A turn in flight is steered, not restarted: the message is injected at
         // its next step boundary.
         if self.turn_active {

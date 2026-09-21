@@ -124,8 +124,15 @@ fn main() -> io::Result<()> {
         std::thread::spawn(move || init_provider(ready));
     }
     let (mut engine, models, session_id) = start_engine().map_err(io::Error::other)?;
+    // The transcript lives in the session store; without this the session file
+    // stays empty and a resume replays nothing. Both surfaces share it.
+    let session_log =
+        titi_cli::session_log::SessionLog::open(&titi_config::agent_dir(), &session_id);
+    if session_log.is_none() {
+        eprintln!("session: transcript writes are off (store unavailable)");
+    }
     if headless {
-        let code = runtime.block_on(titi_cli::headless::run(engine))?;
+        let code = runtime.block_on(titi_cli::headless::run(engine, session_log))?;
         std::process::exit(code);
     }
 
@@ -252,6 +259,7 @@ fn main() -> io::Result<()> {
         if events {
             paint(&mut renderer, &mut app, &input)?;
         }
+        persist_session(&mut app, session_log.as_ref());
     }
 
     let stdout = renderer.out_mut();
@@ -266,6 +274,29 @@ fn main() -> io::Result<()> {
     write!(stdout, "{}", mouse.disable())?;
     disable_raw_mode()?;
     Ok(())
+}
+
+/// Appends everything the App has queued for the transcript. A failed append
+/// is reported once per batch and never stops the CLI: losing a line of
+/// history is better than dropping the session.
+fn persist_session(app: &mut App, log: Option<&titi_cli::session_log::SessionLog>) {
+    let writes = app.drain_session_writes();
+    if writes.is_empty() {
+        return;
+    }
+    let Some(log) = log else {
+        return;
+    };
+    for (role, text) in writes {
+        let result = match role {
+            titi_core::session::Role::User => log.user(&text),
+            titi_core::session::Role::Assistant => log.assistant(&text),
+            titi_core::session::Role::System => log.system(&text),
+        };
+        if let Err(reason) = result {
+            eprintln!("session: not saved ({reason})");
+        }
+    }
 }
 
 /// Route a mouse event into the app's selection model.
