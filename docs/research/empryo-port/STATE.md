@@ -192,7 +192,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 1e. **`--prompt`** — `titi --headless "текст"` и `titi --prompt "текст"` запускают один turn (`headless::run_prompt`): события на stdout, ответ на stderr, код 1 при `Failed`.
 1f. **Herdr** — `titi-cli/src/herdr.rs` репортит `pane.report_agent` на `HERDR_SOCKET_PATH` (`source: "herdr:titi"`, состояния `working`/`blocked`/`idle`), тот же контракт, что `herdr-agent-state.ts` у OMP. Вне pane (`HERDR_ENV` не задан) — no-op. Спека: `docs/research/empryo-port/herdr.md`. Orca — провайдер, не протокол состояния: подключается записью в registry.
 1g. **Корень агента** — всё состояние в `~/.titi/agent` (профиль: `~/.titi/profiles/<name>/agent`), как у OMP (`~/.omp/agent`) и pi (`~/.pi`). Репозиторий не хранит сессии, память и секреты; `<project>/.titi/` остаётся только для `config.yml`. Слой `<project>/.titi/.env` убран. Спека: `docs/research/empryo-port/agent-home.md`.
-1h. Чего ещё нет: скиллы/hooks/MCP (E6), вкладки (в Empryo до 5), стоимость в USD (нет цен провайдеров), STT.
+1h. **Хранилище остаётся как есть** — JSONL на сессию, один `state.db` (SQLite, WAL, FTS5) как производный индекс, память в `MEMORY.md`/`USER.md`. Turso не берём: репликации нет, индекс локальный и пересобирается из JSONL. БД на сессию ломает поиск по всем сессиям и всё равно требует общий каталог. Спека: `docs/research/empryo-port/storage.md`.
+1i. Чего ещё нет: скиллы/hooks/MCP (E6), вкладки (в Empryo до 5), стоимость в USD (нет цен провайдеров), STT.
 1b. TUI: рекап читает только store+trajectory; агентские findings и стоимости в него пока не попадают (нужна персистентность findings).
 2. Genome: tree-sitter для остальных языков и symbol-level граф.
 3. Goal loop поверх reviewer-а (coder ⟷ reviewer rounds с oscillation-детекцией).
