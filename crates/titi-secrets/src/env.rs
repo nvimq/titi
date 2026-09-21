@@ -1,7 +1,7 @@
 //! Layered dotenv resolution.
 //!
 //! Priority (highest wins): process env → `<project>/.env` →
-//! `<project>/.titi/.env` → `<agent_dir>/.env`. A later layer fills only
+//! `<agent_dir>/.env`. A later layer fills only
 //! keys that are still unset; the process environment is never mutated by
 //! resolution — injection happens only through [`load_into`]'s mutator.
 //!
@@ -34,12 +34,8 @@ impl LayeredEnv {
         Self::new(project_dir, titi_config::agent_dir())
     }
 
-    fn layer_files(&self) -> [PathBuf; 3] {
-        [
-            self.project_dir.join(".env"),
-            self.project_dir.join(".titi").join(".env"),
-            self.agent_dir.join(".env"),
-        ]
+    fn layer_files(&self) -> [PathBuf; 2] {
+        [self.project_dir.join(".env"), self.agent_dir.join(".env")]
     }
 
     /// Resolve `key` without mutating the process environment.
@@ -53,7 +49,7 @@ impl LayeredEnv {
     }
 
     /// Inject every key that is absent from the process environment, in layer
-    /// order (project → project/.titi → agent); the first file that defines a
+    /// order (project → agent); the first file that defines a
     /// key wins. Values reach the process only through `inject` (e.g.
     /// `|k, v| std::env::set_var(k, v)` in a controlled entry point).
     pub fn load_into(&self, mut inject: impl FnMut(String, String)) {
@@ -233,14 +229,13 @@ mod tests {
     }
 
     #[test]
-    fn priority_layers_project_titi_agent() {
+    fn priority_layers_project_then_agent() {
         let dir = tmpdir();
         write_file(dir.path(), ".env", "SHARED=project\nONLY_PROJECT=p\n");
-        write_file(dir.path(), ".titi/.env", "SHARED=titi\nONLY_TITI=t\n");
         write_file(dir.path(), "agent/.env", "SHARED=agent\nONLY_AGENT=a\n");
         let env = LayeredEnv::new(dir.path(), dir.path().join("agent"));
         assert_eq!(env.resolve("SHARED").as_deref(), Some("project"));
-        assert_eq!(env.resolve("ONLY_TITI").as_deref(), Some("t"));
+        assert_eq!(env.resolve("ONLY_PROJECT").as_deref(), Some("p"));
         assert_eq!(env.resolve("ONLY_AGENT").as_deref(), Some("a"));
         assert_eq!(env.resolve("MISSING"), None);
     }
@@ -249,7 +244,7 @@ mod tests {
     fn load_into_injects_only_missing_keys_once_with_winner_value() {
         let dir = tmpdir();
         write_file(dir.path(), ".env", "SHARED=project\nPATH=from_file\n");
-        write_file(dir.path(), ".titi/.env", "SHARED=titi\nTI_ONLY=1\n");
+        write_file(dir.path(), "agent/.env", "SHARED=agent\nAGENT_ONLY=1\n");
         let env = LayeredEnv::new(dir.path(), dir.path().join("agent"));
         let mut injected = BTreeMap::new();
         env.load_into(|k, v| {
@@ -257,10 +252,10 @@ mod tests {
         });
         // Process-env `PATH` is never injected; file keys are.
         assert_eq!(injected.get("SHARED").map(String::as_str), Some("project"));
-        assert_eq!(injected.get("TI_ONLY").map(String::as_str), Some("1"));
+        assert_eq!(injected.get("AGENT_ONLY").map(String::as_str), Some("1"));
         assert!(!injected.contains_key("PATH"));
         assert_eq!(std::env::var_os("SHARED"), None);
-        assert_eq!(std::env::var_os("TI_ONLY"), None);
+        assert_eq!(std::env::var_os("AGENT_ONLY"), None);
     }
 
     #[test]
