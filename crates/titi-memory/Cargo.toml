@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 async-trait = "0.1"
+regex = "1"
 rusqlite = { version = "0.37", features = ["bundled"] }
 titi-providers = { workspace = true }
 titi-tools = { workspace = true }

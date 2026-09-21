@@ -171,6 +171,11 @@ impl MemoryIndex {
             .collect())
     }
 
+    /// Every memory, newest use first. The browse view.
+    pub fn list(&self) -> Result<Vec<Memory>, Error> {
+        self.all()
+    }
+
     /// A near-duplicate of `summary` already stored, if the embedding says so.
     pub fn similar(&self, summary: &str) -> Result<Option<Memory>, Error> {
         let query_vec = crate::embed::LocalEmbedder.embed(summary);
