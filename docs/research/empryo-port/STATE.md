@@ -135,8 +135,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-cli` interface: `a_failed_turn_says_so_instead_of_nothing`, `switching_sessions_drops_the_rendered_conversation` — PASS.
 - `titi-cli`: `a_new_session_starts_empty_and_becomes_the_latest` — новая сессия пустая, становится latest, старая не тронута — PASS.
 - `titi-cli`: `ctrl_c_stops_a_running_turn_and_exits_when_idle` — Cancel при активном turn, Exit в покое — PASS.
+- `titi-engine`: `cancelling_a_turn_unblocks_a_pending_approval` — cancel при ожидании approve разблокирует turn и не запускает тул — PASS.
 - `titi --help` печатает usage, `titi --hedless` печатает usage и выходит с кодом 2 — проверено вручную.
-- `cargo test --workspace` — 860 passed, 0 failed.
+- `cargo test --workspace` — 861 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS

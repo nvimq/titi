@@ -210,6 +210,52 @@ async fn exec_tool_waits_for_approval() {
 }
 
 #[tokio::test]
+async fn cancelling_a_turn_unblocks_a_pending_approval() {
+    // The moment a user most wants Ctrl+C is while an approval prompt sits
+    // there. The tool loop waits on a oneshot nobody will fill, so a cancel
+    // that does not also break that wait hangs the turn forever.
+    let transport = Arc::new(MockTransport::new(vec![MockBody::Events(
+        tool_call_events("shell_probe", r#"{"command":"ls"}"#),
+    )]));
+    let mut config = EngineConfig::new("primary");
+    config.approval_mode = ApprovalMode::Write;
+    let mut engine = EngineRuntime::start_with_tools(config, resolver(transport), echo_registry());
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "hi".into() })
+        .await
+        .unwrap();
+    assert!(matches!(
+        engine.recv().await,
+        Some(EngineEvent::TurnStarted { .. })
+    ));
+    assert!(matches!(
+        engine.recv().await,
+        Some(EngineEvent::ToolStarted { .. })
+    ));
+    assert!(matches!(
+        engine.recv().await,
+        Some(EngineEvent::ToolApprovalNeeded { .. })
+    ));
+
+    engine.send(EngineCommand::Cancel).await.unwrap();
+
+    // The turn must end, and it must end as cancelled.
+    let events = collect_until_terminal(&mut engine).await;
+    assert!(
+        events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::Cancelled { .. })),
+        "a cancelled turn reports cancellation: {events:?}"
+    );
+    assert!(
+        !events
+            .iter()
+            .any(|event| matches!(event, EngineEvent::ToolFinished { .. })),
+        "the un-approved tool never ran: {events:?}"
+    );
+}
+
+#[tokio::test]
 async fn tool_round_cap_stops_the_turn() {
     let transport = Arc::new(MockTransport::new(vec![
         MockBody::Events(tool_call_events("echo", r#"{"text":"one"}"#)),
