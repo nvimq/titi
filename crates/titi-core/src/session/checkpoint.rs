@@ -15,4 +15,10 @@ pub struct Checkpoint {
     pub entries: usize,
     /// Milliseconds since the Unix epoch.
     pub ts: u64,
+    /// Git commit the workspace was at when the checkpoint was taken.
+    ///
+    /// `None` for a session-only checkpoint, or when the workspace is not a git
+    /// repository. Restoring it is what makes a rewind undo code, not only text.
+    #[serde(default)]
+    pub git_commit: Option<String>,
 }

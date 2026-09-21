@@ -117,6 +117,8 @@ pub struct App {
     turn_active: bool,
     /// When the first exit request arrived, so a second one can confirm it.
     exit_armed: Option<Instant>,
+    /// Context window fill, 0–100, from the last `ContextUsage` event.
+    context_pct: Option<u8>,
     /// Conversation entries the surface must persist, in order. The App never
     /// touches the session store; the binary drains this after each event
     /// batch and appends it.
@@ -161,6 +163,7 @@ impl App {
             session_id: None,
             turn_active: false,
             exit_armed: None,
+            context_pct: None,
             session_writes: Vec::new(),
         }
     }
@@ -734,6 +737,13 @@ impl App {
                 self.push_transcript(Section::Activity, format!("model fallback: {from} → {to}"));
                 self.set_alert(format!("model: {to}"));
             }
+            EngineEvent::ContextUsage { tokens, window, .. } => {
+                self.context_pct = Some(if window == 0 {
+                    0
+                } else {
+                    ((tokens.saturating_mul(100)) / window).min(100) as u8
+                });
+            }
             EngineEvent::Compacted {
                 folded,
                 tokens_before,
@@ -881,6 +891,7 @@ impl App {
         }
         transcript.extend(self.transcript.render(self.width, &self.theme));
         let mut snap = live_snapshot(&self.model(), "session");
+        snap.context_pct = self.context_pct;
         if self.plan_mode {
             snap.mode = Some("plan".to_owned());
         }
@@ -1817,8 +1828,26 @@ pub fn session_history(
 /// Record a rewind point on a session; returns a human summary.
 pub fn checkpoint_session(agent_dir: &std::path::Path, session_id: &str) -> Result<String, String> {
     let store = titi_core::session::SessionStore::new(agent_dir).map_err(|e| e.to_string())?;
-    let checkpoint = store.checkpoint(session_id).map_err(|e| e.to_string())?;
-    Ok(format!("checkpoint: {} entries", checkpoint.entries))
+    let mut checkpoint = store.checkpoint(session_id).map_err(|e| e.to_string())?;
+    // Also pin the workspace, so a later rewind can undo code and not only
+    // the transcript. A directory that is not a repo stays session-only.
+    let workspace = std::env::current_dir().unwrap_or_else(|_| ".".into());
+    let git = crate::git_checkpoint::snapshot(
+        &workspace,
+        &format!("{session_id} · {} entries", checkpoint.entries),
+    );
+    if let Ok(commit) = &git {
+        checkpoint.git_commit = Some(commit.clone());
+        let _ = store.record_git_commit(session_id, commit);
+    }
+    let suffix = match &git {
+        Ok(commit) => format!(" · git {}", &commit[..7.min(commit.len())]),
+        Err(_) => String::new(),
+    };
+    Ok(format!(
+        "checkpoint: {} entries{suffix}",
+        checkpoint.entries
+    ))
 }
 
 /// List a session's rewind points, oldest first.
@@ -1857,8 +1886,20 @@ pub fn rewind_session(
     store
         .rewind(session_id, &target)
         .map_err(|e| e.to_string())?;
+    // Put the files back too, when the checkpoint pinned a commit and the
+    // tree is clean. A dirty tree is reported rather than overwritten.
+    let git = match &target.git_commit {
+        Some(commit) => {
+            let workspace = std::env::current_dir().unwrap_or_else(|_| ".".into());
+            match crate::git_checkpoint::restore(&workspace, commit) {
+                Ok(()) => format!(" · git {}", &commit[..7.min(commit.len())]),
+                Err(reason) => format!(" · git not restored: {reason}"),
+            }
+        }
+        None => String::new(),
+    };
     Ok(format!(
-        "rewound to checkpoint #{} ({} entries)",
+        "rewound to checkpoint #{} ({} entries){git}",
         position + 1,
         target.entries
     ))

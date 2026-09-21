@@ -95,6 +95,24 @@ impl SystemPromptBuilder {
     }
 }
 
+impl SystemPrompt {
+    /// The slots flattened into one system message, in slot order.
+    ///
+    /// The provider layer sends one system message, so the engine needs the
+    /// slots joined; keeping them separate above is what lets a caller drop
+    /// or replace one without rebuilding the rest.
+    pub fn render(&self) -> String {
+        let mut parts = vec![self.soul.clone()];
+        if let Some(personality) = &self.personality {
+            parts.push(personality.clone());
+        }
+        if let Some(append) = &self.append {
+            parts.push(append.clone());
+        }
+        parts.join("\n\n")
+    }
+}
+
 fn push_patterns(dst: &mut Vec<Pattern>, src: Vec<Pattern>) {
     for pattern in src {
         if !dst.contains(&pattern) {

@@ -133,6 +133,8 @@ pub fn start_engine_with(
     // turn, which has an approval surface.
     engine_config.workspace_root = Some(workspace.clone());
     engine_config.agent_model = Some(primary.clone().into());
+    // Identity, personality and memory live in the agent directory.
+    engine_config.agent_dir = Some(titi_config::agent_dir());
     // No runner is passed: with agent_model and workspace_root set, the runtime
     // builds a ToolAgentRunner and hands it its own claims, touched set and
     // read cache. Passing a StreamingAgentRunner here would take its place and

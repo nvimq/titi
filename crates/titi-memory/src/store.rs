@@ -139,6 +139,16 @@ impl Store {
         Self::default()
     }
 
+    /// Whether the store holds anything.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// The entries joined for injection into a system prompt.
+    pub fn render_text(&self) -> String {
+        self.entries.join("\n\n")
+    }
+
     /// Build a store from entries, recomputing `usage_chars`.
     pub fn from_entries(entries: Vec<String>) -> Self {
         let usage_chars = entries.iter().map(|e| e.chars().count()).sum();
