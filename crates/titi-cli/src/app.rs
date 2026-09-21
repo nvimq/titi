@@ -184,7 +184,7 @@ impl App {
             "Set mouse tracking: off|on|wheel|buttons|all|toggle",
         );
         registry.register_builtin("details", "Toggle transcript section visibility");
-        registry.register_builtin("pause", "Pause the agent at the next safe boundary");
+        registry.register_builtin("pause", "Stop the agent and hold input until you resume");
         registry.register_builtin("hotkeys", "Show active keybinding chords");
         registry.register_builtin("switch", "Open the session switcher");
         registry.register_builtin("checkpoint", "Record a rewind point for this session");
@@ -1371,7 +1371,10 @@ impl App {
             }
             "pause" => {
                 self.overlay = Some(ActiveOverlay::Pause { closed: false });
-                None
+                // The overlay only holds input. Stopping the agent is the
+                // other half, and without it the label was a promise the UI
+                // did not keep: the turn kept streaming behind the modal.
+                Some(SubmitEffect::Pause)
             }
             "details" => {
                 let _ = self.details(args);
@@ -1840,6 +1843,8 @@ pub enum SubmitEffect {
     Delivered(String),
     /// A turn is running: redirect it instead of starting a new one.
     Steer(String),
+    /// `/pause`: stop the running turn and hold input behind the modal.
+    Pause,
     /// The session was rewound: replace the engine's replayed history.
     Rewind,
     /// OSC 52 copy of the given text.
@@ -1884,7 +1889,10 @@ fn compact_item_budget(term_rows: usize, margin_bottom: usize) -> usize {
 }
 
 fn pause_rows(width: u16) -> Vec<String> {
-    let labels = vec!["press Esc / Enter / Space / Ctrl+C to resume".to_owned()];
+    let labels = vec![
+        "agent stopped, input held".to_owned(),
+        "press Esc / Enter / Space / Ctrl+C to resume".to_owned(),
+    ];
     let mut panel = SelectionPanel::new("paused", vec!["resume".to_owned()], labels);
     panel.render(width)
 }
