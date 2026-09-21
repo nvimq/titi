@@ -53,6 +53,21 @@ pub fn load_registry_config() -> ProviderRegistryConfig {
 
 /// Starts the engine, returning it with the model catalog and the session id
 /// it resumed or created.
+/// Messages replayed from a resumed session. Older turns are dropped: past a
+/// point they crowd the request without informing the next one.
+pub const MAX_RESTORED_MESSAGES: usize = 40;
+
+/// Keeps the newest `limit` messages, in order.
+fn tail(
+    mut messages: Vec<titi_providers::ChatMessage>,
+    limit: usize,
+) -> Vec<titi_providers::ChatMessage> {
+    if messages.len() > limit {
+        messages.drain(..messages.len() - limit);
+    }
+    messages
+}
+
 pub fn start_engine() -> Result<(Engine, Vec<String>, String), String> {
     let config = load_registry_config();
     let models: Vec<String> = config
@@ -101,7 +116,10 @@ pub fn start_engine() -> Result<(Engine, Vec<String>, String), String> {
     let session_id = match titi_core::session::store::SessionStore::new(&agent_dir) {
         Ok(store) => match store.restore_latest() {
             Ok(Some((id, entries))) => {
-                restored = titi_core::session::entries_to_messages(&entries);
+                restored = tail(
+                    titi_core::session::entries_to_messages(&entries),
+                    MAX_RESTORED_MESSAGES,
+                );
                 id
             }
             _ => store

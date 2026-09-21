@@ -53,7 +53,12 @@ pub fn decode(line: &str) -> Result<HeadlessFrame, FrameError> {
     Ok(frame)
 }
 
-pub async fn run(mut engine: Engine) -> io::Result<i32> {
+/// Runs the JSONL surface. `log` receives the same transcript the TUI would
+/// write, so a headless run is resumable too.
+pub async fn run(
+    mut engine: Engine,
+    log: Option<crate::session_log::SessionLog>,
+) -> io::Result<i32> {
     let stdin = io::stdin();
     let mut stdout = io::stdout();
     // The handshake: a client can pin the version before sending anything.
@@ -81,9 +86,16 @@ pub async fn run(mut engine: Engine) -> io::Result<i32> {
             }
         };
         let shutdown = matches!(frame.command, EngineCommand::Shutdown);
+        // A submitted prompt is part of the conversation; a bare command is not.
+        if let (Some(log), EngineCommand::SubmitPrompt { text } | EngineCommand::Steer { text }) =
+            (&log, &frame.command)
+        {
+            let _ = log.user(text);
+        }
         if engine.send(frame.command).await.is_err() {
             return Ok(1);
         }
+        let mut reply = String::new();
         while let Some(event) = engine.recv().await {
             writeln!(
                 stdout,
@@ -91,6 +103,15 @@ pub async fn run(mut engine: Engine) -> io::Result<i32> {
                 serde_json::to_string(&event).unwrap_or_default()
             )?;
             stdout.flush()?;
+            if let EngineEvent::StreamDelta { text, .. } = &event {
+                reply.push_str(text);
+            }
+            if matches!(event, EngineEvent::TurnFinished { .. })
+                && let Some(log) = &log
+            {
+                let _ = log.assistant(&reply);
+                reply.clear();
+            }
             let terminal = matches!(
                 event,
                 EngineEvent::TurnFinished { .. }
