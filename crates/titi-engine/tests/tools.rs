@@ -35,6 +35,16 @@ fn echo_registry() -> ToolRegistry {
     tools
 }
 
+/// The next event that is not a context-usage report.
+async fn next_tool_event(engine: &mut titi_engine::Engine) -> Option<EngineEvent> {
+    loop {
+        match engine.recv().await {
+            Some(EngineEvent::ContextUsage { .. }) => {}
+            other => return other,
+        }
+    }
+}
+
 async fn collect_until_terminal(engine: &mut titi_engine::Engine) -> Vec<EngineEvent> {
     let mut events = Vec::new();
     while let Some(event) = engine.recv().await {
@@ -184,7 +194,9 @@ async fn exec_tool_waits_for_approval() {
         .unwrap();
     let started = engine.recv().await;
     assert!(matches!(started, Some(EngineEvent::TurnStarted { .. })));
-    let tool_started = engine.recv().await;
+    // ContextUsage is reported before the request is sent, so it lands
+    // between the turn starting and the first tool.
+    let tool_started = next_tool_event(&mut engine).await;
     assert!(matches!(
         tool_started,
         Some(EngineEvent::ToolStarted { name, .. }) if name == "shell_probe"
@@ -229,7 +241,7 @@ async fn cancelling_a_turn_unblocks_a_pending_approval() {
         Some(EngineEvent::TurnStarted { .. })
     ));
     assert!(matches!(
-        engine.recv().await,
+        next_tool_event(&mut engine).await,
         Some(EngineEvent::ToolStarted { .. })
     ));
     assert!(matches!(
