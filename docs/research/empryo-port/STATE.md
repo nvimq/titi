@@ -1,6 +1,6 @@
 # STATE — Empryo port
 
-Updated: 2026-09-20
+Updated: 2026-09-22
 Phase: E3 — Genome (index + prompt projection)
 Status: in-progress
 Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
@@ -180,6 +180,11 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Сабагент read-only по умолчанию: включение write — сознательное решение вызывающего, а не следствие конфигурации.
 - Бounded `mpsc` с живым, но непрочитанным receiver — гарантированный deadlock: первый `send` занимает слот, второй блокируется навсегда. Такой канал надо `drop(receiver)`, а не бросать в `_receiver`.
 - Кэш не отдаёт содержимое удалённого файла (сначала stat) — поэтому удаление видно сразу, а изменение без смены size/mtime теоретически нет.
+
+## DECISIONS
+
+Dated log, newest first, in `docs/research/empryo-port/DECISIONS.md`. Read that
+when an entry below describes an earlier shape.
 
 ## NEXT
 
