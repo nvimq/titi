@@ -2,8 +2,7 @@ use std::sync::Arc;
 
 use titi_engine::{
     Engine, EngineConfig, EngineRuntime, HttpTransportFactory, LayeredCredentialSource,
-    ModelDescriptor, ProviderDescriptor, ProviderRegistry, ProviderRegistryConfig,
-    StreamingAgentRunner, TrajectorySink,
+    ModelDescriptor, ProviderDescriptor, ProviderRegistry, ProviderRegistryConfig, TrajectorySink,
 };
 use titi_providers::ApiKind;
 use titi_tools::{ToolRegistry, workspace_tools_with_cache};
@@ -84,10 +83,10 @@ pub fn start_engine() -> Result<(Engine, Vec<String>, String), String> {
     // turn, which has an approval surface.
     engine_config.workspace_root = Some(workspace.clone());
     engine_config.agent_model = Some(primary.clone().into());
-    let runner = Arc::new(StreamingAgentRunner::new(
-        Arc::clone(&registry) as _,
-        primary.clone(),
-    ));
+    // No runner is passed: with agent_model and workspace_root set, the runtime
+    // builds a ToolAgentRunner and hands it its own claims, touched set and
+    // read cache. Passing a StreamingAgentRunner here would take its place and
+    // leave the subagent unable to call a single tool.
     let mut tools = ToolRegistry::new();
     // One cache for the main turn and every subagent it spawns.
     let read_cache = titi_tools::ReadCache::default();
@@ -119,7 +118,7 @@ pub fn start_engine() -> Result<(Engine, Vec<String>, String), String> {
     let recorder = titi_core::trajectory::TrajectoryRecorder::open(&agent_dir, &session_id).ok();
     let trajectory: TrajectorySink = std::sync::Arc::new(tokio::sync::Mutex::new(recorder));
     Ok((
-        EngineRuntime::start_with_session(engine_config, registry, Some(runner), tools, trajectory),
+        EngineRuntime::start_with_session(engine_config, registry, None, tools, trajectory),
         models,
         session_id,
     ))
