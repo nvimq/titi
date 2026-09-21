@@ -108,8 +108,11 @@ pub struct EngineConfig {
     /// When and how the oldest messages are folded away.
     pub compaction: titi_core::compaction::CompactionPolicy,
     /// Agent directory holding `SOUL.md`, `PERSONALITY.md` and the memory
-    /// stores. `None` sends no identity — only the genome map.
+    /// index. `None` sends no identity — only the genome map.
     pub agent_dir: Option<PathBuf>,
+    /// Embeddings model from `memory.embeddingModel`. `None` uses the local
+    /// trigram embedder, which needs no network.
+    pub embedding_model: Option<String>,
 }
 
 impl EngineConfig {
@@ -133,6 +136,7 @@ impl EngineConfig {
             context_window: 128_000,
             compaction: titi_core::compaction::CompactionPolicy::default(),
             agent_dir: None,
+            embedding_model: None,
         }
     }
 }
@@ -491,28 +495,12 @@ impl EngineRuntime {
         .await
     }
 
-    /// Soul, personality and the two memory stores, rendered as one block.
+    /// Soul and personality. Memory is no longer pasted in whole: the index
+    /// recalls the rows this turn needs, which is the only copy the model sees.
     fn identity_prompt(&self) -> Option<SmolStr> {
         let agent_dir = self.config.agent_dir.clone()?;
         let built = titi_soul::SystemPromptBuilder::build(&agent_dir, None, None).ok()?;
-        let mut text = built.render();
-        for (heading, rendered) in [
-            (
-                "Memory",
-                titi_memory::store::MemoryStore::memory(&agent_dir).load(),
-            ),
-            (
-                "User",
-                titi_memory::store::MemoryStore::user(&agent_dir).load(),
-            ),
-        ] {
-            if let Ok(store) = rendered
-                && !store.is_empty()
-            {
-                text.push_str(&format!("\n\n# {heading}\n\n{}", store.render_text()));
-            }
-        }
-        Some(text.into())
+        Some(built.render().into())
     }
 
     /// Refresh the live index off the async threads and render this turn's map.

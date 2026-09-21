@@ -4,6 +4,7 @@
 /// Crate version, mirrors the workspace release.
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+pub mod embed;
 pub mod index;
 pub mod sanitize;
 pub mod store;

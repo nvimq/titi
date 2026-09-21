@@ -150,6 +150,14 @@ pub fn start_engine_with(
     tools.register(std::sync::Arc::new(titi_memory::tool::MemoryTool::new(
         agent_dir.clone(),
     )));
+    // `memory.embeddingModel` picks the vector space. Empty or "local" keeps
+    // the trigram embedder; a model id is resolved through the registry.
+    if let Ok(settings) = titi_config::settings::Settings::load(&agent_dir, &workspace, &[]) {
+        engine_config.embedding_model = settings
+            .get("memory.embeddingModel")
+            .and_then(|v| v.as_str().map(str::to_owned))
+            .filter(|s| !s.is_empty() && s != "local");
+    }
     // Resume the newest session and replay its history into the engine;
     // otherwise start a fresh one.
     let mut restored = Vec::new();
