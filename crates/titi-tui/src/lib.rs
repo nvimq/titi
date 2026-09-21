@@ -16,6 +16,7 @@ pub mod keys;
 pub mod markdown;
 pub mod overlay;
 pub mod panels;
+pub mod recap;
 pub mod renderer;
 pub mod selection;
 pub mod slash;
