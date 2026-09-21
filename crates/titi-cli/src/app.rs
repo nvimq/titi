@@ -205,6 +205,19 @@ impl App {
         self.session_id.as_deref()
     }
 
+    /// Moves the surface to another session: the rendered conversation belongs
+    /// to the old one and is dropped. The caller owns the engine and the
+    /// session store, so it must replace the replayed history and re-point the
+    /// log itself.
+    pub fn switch_to_session(&mut self, id: &str) {
+        self.session_id = Some(id.to_owned());
+        self.transcript.clear();
+        self.assistant_messages.clear();
+        self.streaming_response.clear();
+        self.turn_active = false;
+        self.set_alert(format!("session: {id}"));
+    }
+
     /// Whether a modal overlay panel is currently shown.
     pub fn overlay_open(&self) -> bool {
         self.overlay.is_some()
