@@ -13,11 +13,6 @@ const PRUNE_DIRS: &[&str] = &[
     ".git",
 ];
 
-const SOURCE_EXTS: &[&str] = &[
-    "rs", "ts", "tsx", "js", "jsx", "mjs", "cjs", "py", "go", "java", "kt", "rb", "c", "h", "cpp",
-    "hpp", "cc", "cs", "swift",
-];
-
 const MAX_FILE_BYTES: u64 = 1_000_000;
 
 #[derive(Debug, Clone)]
@@ -134,8 +129,8 @@ fn should_prune_dir(name: &str) -> bool {
 }
 
 fn is_source(name: &str) -> bool {
-    name.rsplit_once('.')
-        .is_some_and(|(_, ext)| SOURCE_EXTS.contains(&ext))
+    // One source of truth: the language table in `parse` owns the extensions.
+    crate::parse::is_source_file(name)
 }
 
 fn is_ignored(rel: &str, is_dir: bool, rules: &[Rule]) -> bool {

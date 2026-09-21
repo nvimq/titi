@@ -1,4 +1,10 @@
-//! Ranked workspace map: files, exports, import edges, PageRank, prompt projection.
+//! Ranked workspace map: files, symbols, dependency edges, PageRank, prompt
+//! projection.
+//!
+//! The graph has two kinds of edge: a file imports another file, and a file
+//! references a symbol another file defines. Both feed the same ranking and
+//! the same `(→N)` dependent count, so "what depends on this" answers in
+//! symbol terms instead of only file terms.
 //!
 //! Spec: `docs/research/reference-product-port/README.md` (E3).
 
@@ -25,8 +31,31 @@ pub struct FileRecord {
     pub language: Language,
     pub exports: Vec<String>,
     pub imports: Vec<String>,
+    /// Exported symbols defined elsewhere that this file mentions — the
+    /// symbol-level half of the dependency graph.
+    pub used_symbols: Vec<String>,
     pub size: u64,
     pub mtime: SystemTime,
+}
+
+/// A name exported by more than this many files is ambiguous under name-only
+/// resolution, so it carries neither edges nor a user count. One definition
+/// site means a mention can only mean that file.
+pub const MAX_DEFINERS: usize = 1;
+
+/// One symbol the workspace defines, and who leans on it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SymbolRecord {
+    /// Files that define (export) the symbol, sorted.
+    pub files: Vec<String>,
+    /// Distinct files that reference it, excluding the definers.
+    pub users: usize,
+}
+
+impl SymbolRecord {
+    pub fn is_public(&self) -> bool {
+        !self.files.is_empty()
+    }
 }
 
 /// What one [`Genome::refresh`] actually did.
@@ -45,6 +74,8 @@ pub struct Genome {
     pub files: HashMap<String, FileRecord>,
     pub ranks: HashMap<String, f64>,
     pub dependents: HashMap<String, usize>,
+    /// Symbol name → defining files and how many files reference it.
+    pub symbols: HashMap<String, SymbolRecord>,
 }
 
 impl Genome {
@@ -80,6 +111,9 @@ impl Genome {
                     path: file.path.clone(),
                     exports: result.exports,
                     imports: result.imports,
+                    // Resolved against the whole repo below, once every file
+                    // has been parsed.
+                    used_symbols: result.refs,
                     size: file.size,
                     mtime: file.mtime,
                 },
@@ -91,7 +125,8 @@ impl Genome {
         self.files.retain(|path, _| known.contains(path));
         let removed = before - self.files.len();
 
-        let (ranks, dependents) = graph::rank(&self.files);
+        self.index_symbols();
+        let (ranks, dependents) = graph::rank(&self.files, &self.symbols);
         self.ranks = ranks;
         self.dependents = dependents;
         Ok(RefreshStats {
@@ -99,6 +134,70 @@ impl Genome {
             removed,
             total: self.files.len(),
         })
+    }
+
+    /// Resolves each file's candidate identifiers against the symbols the
+    /// workspace actually exports, then counts who uses what.
+    ///
+    /// Resolution is by name alone, so a name several files export — `is_empty`,
+    /// `new`, `len` — cannot say which definition a mention refers to. Those
+    /// names are ambiguous and carry no edges or user counts: counting them
+    /// would make every file depend on every other file that happens to share
+    /// a method name.
+    fn index_symbols(&mut self) {
+        let mut symbols: HashMap<String, SymbolRecord> = HashMap::new();
+        for (path, record) in &self.files {
+            for symbol in &record.exports {
+                let entry = symbols.entry(symbol.clone()).or_insert(SymbolRecord {
+                    files: Vec::new(),
+                    users: 0,
+                });
+                entry.files.push(path.clone());
+            }
+        }
+        let definers: HashSet<String> = symbols
+            .iter()
+            .filter(|(_, record)| record.files.len() <= MAX_DEFINERS)
+            .map(|(name, _)| name.clone())
+            .collect();
+        if definers.is_empty() {
+            self.symbols = symbols;
+            for record in self.files.values_mut() {
+                record.used_symbols.clear();
+            }
+            return;
+        }
+
+        // A file's own exports are definitions, not uses of itself. Resolved
+        // into a side list so the pass over `self.files` stays immutable.
+        let mut usage: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut resolved: Vec<(String, Vec<String>)> = Vec::with_capacity(self.files.len());
+        for (path, record) in &self.files {
+            let own: HashSet<&str> = record.exports.iter().map(String::as_str).collect();
+            let used: Vec<String> = record
+                .used_symbols
+                .iter()
+                .filter(|name| definers.contains(*name) && !own.contains(name.as_str()))
+                .cloned()
+                .collect();
+            for name in &used {
+                usage.entry(name.clone()).or_default().insert(path.clone());
+            }
+            resolved.push((path.clone(), used));
+        }
+        for (path, used) in resolved {
+            if let Some(record) = self.files.get_mut(&path) {
+                record.used_symbols = used;
+            }
+        }
+        for (name, record) in &mut symbols {
+            record.files.sort();
+            record.files.dedup();
+            if let Some(users) = usage.get(name) {
+                record.users = users.len();
+            }
+        }
+        self.symbols = symbols;
     }
 
     pub fn project(&self, limit: usize) -> String {

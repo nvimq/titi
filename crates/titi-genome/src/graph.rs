@@ -1,11 +1,14 @@
 use std::collections::{HashMap, HashSet};
 
-use crate::FileRecord;
+use crate::{FileRecord, SymbolRecord};
 
 const DAMPING: f64 = 0.85;
 const ITERATIONS: usize = 20;
 
-pub fn rank(files: &HashMap<String, FileRecord>) -> (HashMap<String, f64>, HashMap<String, usize>) {
+pub fn rank(
+    files: &HashMap<String, FileRecord>,
+    symbols: &HashMap<String, SymbolRecord>,
+) -> (HashMap<String, f64>, HashMap<String, usize>) {
     let nodes: Vec<String> = files.keys().cloned().collect();
     let n = nodes.len();
     let mut dependents: HashMap<String, usize> = nodes.iter().map(|k| (k.clone(), 0)).collect();
@@ -13,9 +16,20 @@ pub fn rank(files: &HashMap<String, FileRecord>) -> (HashMap<String, f64>, HashM
     let mut outbound: HashMap<String, usize> = HashMap::new();
 
     for (from, record) in files {
-        let unique: HashSet<&String> = record.imports.iter().collect();
-        outbound.insert(from.clone(), unique.len().max(1));
-        for to in unique {
+        // Two edge kinds, one graph: a file imports another, or it mentions a
+        // symbol that other file defines. Either way it depends on it.
+        let mut targets: HashSet<&String> = record.imports.iter().collect();
+        for name in &record.used_symbols {
+            if let Some(symbol) = symbols.get(name) {
+                for definer in &symbol.files {
+                    if definer != from && files.contains_key(definer) {
+                        targets.insert(definer);
+                    }
+                }
+            }
+        }
+        outbound.insert(from.clone(), targets.len().max(1));
+        for to in targets {
             if files.contains_key(to) {
                 inbound.entry(to.clone()).or_default().push(from.clone());
                 *dependents.entry(to.clone()).or_default() += 1;
