@@ -19,12 +19,12 @@ fn box_top(inner_w: usize) -> String {
 fn box_mid(inner_w: usize) -> String {
     format!("├{}┤", "─".repeat(inner_w))
 }
-fn box_bot(inner_w: usize) -> String {
+pub(crate) fn box_bot(inner_w: usize) -> String {
     format!("╰{}╯", "─".repeat(inner_w))
 }
 
 /// OMP `topBorder`: title inset into the top rule (`╭─ Title ────╮`).
-fn box_top_title(inner_w: usize, title: &str) -> String {
+pub(crate) fn box_top_title(inner_w: usize, title: &str) -> String {
     if title.is_empty() {
         return box_top(inner_w);
     }

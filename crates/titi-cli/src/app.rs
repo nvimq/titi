@@ -21,6 +21,7 @@ use titi_tui::overlay::{Anchor, composite_rows_inset};
 use titi_tui::panels::{
     ApprovalPanel, CompletionPanel, SelectionPanel, SessionAction, SessionSwitcher,
 };
+use titi_tui::recap::{Recap, RecapSection};
 use titi_tui::renderer::FramePlan;
 use titi_tui::selection::Selection;
 use titi_tui::slash::{Route, SlashRegistry};
@@ -192,6 +193,7 @@ impl App {
             "rewind",
             "Rewind the session to a checkpoint (newest by default)",
         );
+        registry.register_builtin("recap", "Session recap: turns, tools, files, problems");
         registry
     }
 
@@ -352,6 +354,41 @@ impl App {
             let prompt = format!("Run tool {name}?");
             self.open_approval(&prompt);
         }
+    }
+
+    /// Show the session recap over explicit sections (tests, embedded
+    /// callers). `Ctrl+O` inside the panel expands or collapses every block.
+    pub fn open_recap(&mut self, sections: Vec<RecapSection>) {
+        self.overlay = Some(ActiveOverlay::Recap(Recap::new(sections)));
+    }
+
+    /// Show the recap of the live session, reading the store and trajectory.
+    pub fn open_session_recap(&mut self) -> Result<(), String> {
+        let Some(id) = self.session_id.clone() else {
+            return Err("no live session".into());
+        };
+        let sections = crate::recap::build(&titi_config::agent_dir(), &id)?;
+        self.open_recap(sections);
+        Ok(())
+    }
+
+    /// `Ctrl+O`: open every transcript section, or close them all when they
+    /// already are. Returns whether anything changed.
+    pub fn toggle_all_details(&mut self) -> bool {
+        let sections = [
+            Section::Thinking,
+            Section::Tools,
+            Section::Subagents,
+            Section::Activity,
+        ];
+        let all_expanded = sections
+            .iter()
+            .all(|section| self.transcript.mode(*section) == SectionMode::Expanded);
+        self.details(if all_expanded {
+            "collapsed"
+        } else {
+            "expanded"
+        })
     }
 
     /// Agent Hub overlay (`app.agents.hub` / `app.session.observe`).
@@ -984,6 +1021,14 @@ impl App {
         input: &mut String,
         now: Instant,
     ) -> Dispatch {
+        if self
+            .keys
+            .matches_canonical(canonical, "app.details.toggleAll")
+        {
+            let _ = self.toggle_all_details();
+            return Dispatch::Handled(None);
+        }
+
         if self.keys.matches_canonical(canonical, "app.interrupt") {
             // The action is documented as "Interrupt / exit", and that is what
             // it has to be: while a turn runs there was no way at all to stop
@@ -1332,6 +1377,12 @@ impl App {
                 let _ = self.details(args);
                 None
             }
+            "recap" => {
+                if let Err(reason) = self.open_session_recap() {
+                    self.set_alert(format!("recap: {reason}"));
+                }
+                None
+            }
             "checkpoint" => {
                 match self.session_id.as_deref() {
                     Some(id) => match checkpoint_session(&titi_config::agent_dir(), id) {
@@ -1487,6 +1538,7 @@ pub fn default_theme() -> Result<Arc<Theme>, String> {
 /// always cancel-without-delete).
 pub enum ActiveOverlay {
     ModelPicker(SelectionPanel<String>),
+    Recap(Recap),
     SessionSwitcher(SessionSwitcher),
     Approval(ApprovalPanel),
     Help(SelectionPanel<String>),
@@ -1504,6 +1556,7 @@ impl ActiveOverlay {
             | ActiveOverlay::Hotkeys(p)
             | ActiveOverlay::HistorySearch(p) => p.set_max_visible(rows),
             ActiveOverlay::Hub(h) => h.set_max_visible(rows),
+            ActiveOverlay::Recap(r) => r.set_max_visible(rows),
             ActiveOverlay::Approval(p) => p.set_max_visible(rows),
             ActiveOverlay::SessionSwitcher(s) => s.set_max_visible(rows),
             ActiveOverlay::Pause { .. } => {}
@@ -1513,6 +1566,7 @@ impl ActiveOverlay {
     fn render(&mut self, width: u16) -> Vec<String> {
         match self {
             ActiveOverlay::ModelPicker(p) => p.render(width),
+            ActiveOverlay::Recap(r) => r.render(width),
             ActiveOverlay::SessionSwitcher(s) => s.render(width),
             ActiveOverlay::Approval(a) => a.render(width),
             ActiveOverlay::Help(p)
@@ -1532,6 +1586,7 @@ impl ActiveOverlay {
     fn handle_input(&mut self, data: &str) {
         match self {
             ActiveOverlay::ModelPicker(p) => p.handle_input(data),
+            ActiveOverlay::Recap(r) => r.handle_input(data),
             ActiveOverlay::SessionSwitcher(s) => s.handle_input(data),
             ActiveOverlay::Approval(a) => a.handle_input(data),
             ActiveOverlay::Help(p)
@@ -1549,6 +1604,7 @@ impl ActiveOverlay {
     fn is_closed(&self) -> bool {
         match self {
             ActiveOverlay::ModelPicker(p) => p.is_closed(),
+            ActiveOverlay::Recap(r) => r.is_closed(),
             ActiveOverlay::SessionSwitcher(s) => s.is_closed(),
             ActiveOverlay::Approval(a) => a.is_closed(),
             ActiveOverlay::Help(p)
@@ -1592,9 +1648,10 @@ impl ActiveOverlay {
                     h.into_selected().map(OverlayOutcome::HubSelected)
                 }
             }
-            ActiveOverlay::Help(_) | ActiveOverlay::Hotkeys(_) | ActiveOverlay::Pause { .. } => {
-                Some(OverlayOutcome::Dismissed)
-            }
+            ActiveOverlay::Help(_)
+            | ActiveOverlay::Hotkeys(_)
+            | ActiveOverlay::Recap(_)
+            | ActiveOverlay::Pause { .. } => Some(OverlayOutcome::Dismissed),
         }
     }
 }

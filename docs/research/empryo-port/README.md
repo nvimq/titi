@@ -142,6 +142,13 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 
 Готовый foundation: engine protocol, provider registry, tools, session trajectory, restore/checkpoints, версионированный headless RPC, TUI tool-approval overlay, live symbol-level Genome с prompt-проекцией, write claims / findings bus / steering / read cache / fresh-context reviewer / tool-calling subagent. Следующий слой — goal loop поверх reviewer-а, tree-sitter Genome, затем E5.
 
+### TUI surface
+
+- [x] Transcript accordion: per-section visibility, `/details <section> <mode>`, floating alert as a status line.
+- [x] Recap panel (`/recap`): Session / Turns / Tools / Files / Problems / Trajectory, each collapsible; `Ctrl+O` opens or closes every section at once, inside the panel and in the transcript (`app.details.toggleAll`), matching the reference TUI's "expand or collapse all blocks".
+- [x] Ctrl+C stops a running turn; exits when nothing is running.
+- [ ] Agent findings and cost are not in the recap yet — they are not persisted per session.
+
 ### E5 — GPUI desktop
 
 Workbench destinations: Work, Files, Changes, Genome, My tools, Costs, Settings, Help. GPUI читает только engine/storage APIs.

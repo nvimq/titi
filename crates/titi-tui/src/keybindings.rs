@@ -437,6 +437,15 @@ pub const APP_KEYBINDINGS: &[(&str, KeybindingDefinition)] = &[
             description: "Open the session switcher",
         },
     ),
+    (
+        "app.details.toggleAll",
+        KeybindingDefinition {
+            // The reference TUI's "expand or collapse all code and reasoning
+            // blocks", and inside the recap it opens every section.
+            default_keys: &["ctrl+o"],
+            description: "Expand or collapse every block",
+        },
+    ),
 ];
 
 /// Build a manager with TUI editor bindings plus OMP `app.*` defaults.
