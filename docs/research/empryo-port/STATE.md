@@ -116,7 +116,7 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Сквозной прогон: `read` через фрагментированные аргументы вернул реальный `Cargo.toml`; genome как system-message дошёл до провайдера (`system=yes`).
 - `titi-engine/tests/tool_agent.rs`: сабагент читает файл своим tool loop-ом, греет общий кэш, не может писать по умолчанию, уважает чужой claim при `agent_writes`, останавливается на round cap — PASS.
 - `runtime::tests`: `an_off_thread_panic_degrades_to_none`, `an_off_thread_failure_degrades_to_none`, `a_successful_run_passes_the_map_through` — PASS.
-- `cargo test --workspace` — 842 passed, 0 failed.
+- Сквозная проверка сабагента через реальный бинарь и реальный HTTP: `AgentProgress { tools: read }` → `read` вернул 1056 байт `Cargo.toml` → `AgentFinished { success: true }`.\n- `cargo test --workspace` — 842 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS
