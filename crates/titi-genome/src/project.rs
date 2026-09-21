@@ -49,9 +49,23 @@ pub fn render(genome: &Genome, limit: usize, touched: &HashSet<String>) -> Strin
             out.push_str(" [NEW]");
         }
         out.push('\n');
-        for name in file.exports.iter().take(8) {
+        // `+Name (users)` — how many files lean on that symbol. That is the
+        // symbol-level blast radius, next to the file-level `(→N)`.
+        let mut exports: Vec<&String> = file.exports.iter().collect();
+        exports.sort_by(|a, b| {
+            let ua = genome.symbols.get(*a).map_or(0, |s| s.users);
+            let ub = genome.symbols.get(*b).map_or(0, |s| s.users);
+            ub.cmp(&ua).then_with(|| a.cmp(b))
+        });
+        for name in exports.into_iter().take(8) {
+            let users = genome.symbols.get(name).map_or(0, |s| s.users);
             out.push_str("  +");
             out.push_str(name);
+            if users > 0 {
+                out.push_str(" (");
+                out.push_str(&users.to_string());
+                out.push(')');
+            }
             out.push('\n');
         }
     }

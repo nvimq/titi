@@ -125,7 +125,10 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 - [x] Rust (`crate::`/`super::`/`self::`/`mod`), TypeScript (relative), Python (relative) resolution.
 - [x] `EngineConfig.genome_root` → отдельный `Role::System` message в каждом request, индекс обновляется per turn.
 - [x] Incremental re-index по size/mtime + personalized rank (файлы, которые сессия читала/правила, получают буст).
-- [ ] Tree-sitter для остальных языков и symbol-level (не file-level) граф.
+- [x] Symbol-level граф: ребро = импорт **или** упоминание символа, который определяет другой файл; `(→N)` — blast radius в терминах символов, в проекции `+Name (users)`.
+- [x] Языки: Rust, TS/JS, Python, Go, Java, Kotlin, C/C++, C#, Ruby, Swift, PHP. Единый источник правды по расширениям — таблица `parse::EXTENSIONS`.
+- [x] Точность name-only резолва: собираются только места использования (вызов, `::path`, Тип), а имя, экспортируемое больше чем одним файлом, рёбер не даёт.
+- [ ] Tree-sitter (недоступен: crates.io закрыт) — замена regex-эвристик на настоящий AST.
 
 ### E4 — Agents
 
