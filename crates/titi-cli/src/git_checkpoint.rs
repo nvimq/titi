@@ -9,33 +9,34 @@ use std::path::Path;
 use std::process::Command;
 
 /// A commit that captures the workspace, or why one could not be made.
+///
+/// Commits only what is already staged. `git add -A` here would sweep up
+/// whatever else was dirty — a checkpoint taken from a test once committed
+/// the session's own uncommitted work — and it would clobber an index the
+/// user was in the middle of building.
 pub fn snapshot(workspace: &Path, label: &str) -> Result<String, String> {
     if !is_repo(workspace) {
         return Err("not a git repository".into());
     }
-    run(workspace, &["add", "-A"])?;
-    // Nothing to commit is not a failure: the tree already matches HEAD, and
-    // that commit is the snapshot.
-    let status = Command::new("git")
-        .args(["diff", "--cached", "--quiet"])
-        .current_dir(workspace)
-        .status()
-        .map_err(|error| error.to_string())?;
-    if !status.success() {
-        run(
-            workspace,
-            &[
-                "-c",
-                "user.name=titi",
-                "-c",
-                "user.email=titi@localhost",
-                "commit",
-                "--no-verify",
-                "-m",
-                &format!("titi checkpoint: {label}"),
-            ],
-        )?;
+    let staged = run(workspace, &["diff", "--cached", "--name-only"])?;
+    if staged.is_empty() {
+        // Nothing staged: the tree already matches the index, so HEAD is the
+        // snapshot. Unstaged work is left untouched on purpose.
+        return run(workspace, &["rev-parse", "HEAD"]);
     }
+    run(
+        workspace,
+        &[
+            "-c",
+            "user.name=titi",
+            "-c",
+            "user.email=titi@localhost",
+            "commit",
+            "--no-verify",
+            "-m",
+            &format!("titi checkpoint: {label}"),
+        ],
+    )?;
     run(workspace, &["rev-parse", "HEAD"])
 }
 
@@ -99,13 +100,26 @@ mod tests {
         dir
     }
 
+    fn stage(dir: &std::path::Path, file: &str) {
+        assert!(
+            Command::new("git")
+                .args(["add", file])
+                .current_dir(dir)
+                .status()
+                .unwrap()
+                .success()
+        );
+    }
+
     #[test]
     fn a_snapshot_captures_a_later_change() {
         let dir = repo();
         std::fs::write(dir.path().join("a.txt"), "one").unwrap();
+        stage(dir.path(), "a.txt");
         let first = snapshot(dir.path(), "before").unwrap();
 
         std::fs::write(dir.path().join("a.txt"), "two").unwrap();
+        stage(dir.path(), "a.txt");
         let _second = snapshot(dir.path(), "after").unwrap();
 
         restore(dir.path(), &first).unwrap();
@@ -119,6 +133,7 @@ mod tests {
     fn restoring_refuses_a_dirty_tree() {
         let dir = repo();
         std::fs::write(dir.path().join("a.txt"), "one").unwrap();
+        stage(dir.path(), "a.txt");
         let first = snapshot(dir.path(), "before").unwrap();
         std::fs::write(dir.path().join("a.txt"), "uncommitted").unwrap();
 

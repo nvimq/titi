@@ -44,10 +44,10 @@ fn checkpoint_rewind_roundtrip_through_the_helpers() {
     let sid = store.create(SessionMeta::default()).unwrap();
     store.append(&sid, Role::User, "first").unwrap();
 
-    assert_eq!(
-        checkpoint_session(agent_dir, &sid).unwrap(),
-        "checkpoint: 1 entries"
-    );
+    // The summary starts with the entry count. Inside a git checkout it also
+    // names the commit the workspace was pinned to, which this run is.
+    let summary = checkpoint_session(agent_dir, &sid).unwrap();
+    assert!(summary.starts_with("checkpoint: 1 entries"), "{summary}");
     store.append(&sid, Role::Assistant, "second").unwrap();
     assert_eq!(store.open(&sid).unwrap().len(), 2);
 
