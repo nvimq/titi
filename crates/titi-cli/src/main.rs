@@ -364,7 +364,20 @@ fn handle_outcome(
             *log = titi_cli::session_log::SessionLog::open(&agent_dir, &id);
             app.switch_to_session(&id);
         }
-        OverlayOutcome::SessionNew => app.set_alert("session: new session needed"),
+        OverlayOutcome::SessionNew => {
+            // Same three moves as a switch, starting from an empty history.
+            let agent_dir = titi_config::agent_dir();
+            match titi_cli::app::new_session(&agent_dir) {
+                Ok(id) => {
+                    let _ = engine.try_send(EngineCommand::RestoreHistory {
+                        messages: Vec::new(),
+                    });
+                    *log = titi_cli::session_log::SessionLog::open(&agent_dir, &id);
+                    app.switch_to_session(&id);
+                }
+                Err(reason) => app.set_alert(format!("session: not created ({reason})")),
+            }
+        }
         OverlayOutcome::SessionCancelled => {
             eprintln!("session switcher: cancelled (nothing deleted)");
         }

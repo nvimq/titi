@@ -146,6 +146,29 @@ fn the_restored_history_is_capped() {
 }
 
 #[test]
+fn a_new_session_starts_empty_and_becomes_the_latest() {
+    use titi_cli::app::new_session;
+
+    let dir = tempfile::tempdir().unwrap();
+    let agent_dir = dir.path();
+    let store = SessionStore::new(agent_dir).unwrap();
+    let first = store.create(SessionMeta::default()).unwrap();
+    store.append(&first, Role::User, "old work").unwrap();
+
+    let second = new_session(agent_dir).unwrap();
+    assert_ne!(first, second, "a new session, not the old one");
+
+    // Empty, so switching to it really starts blank...
+    assert!(store.open(&second).unwrap().is_empty());
+    // ...and it is the one a later resume picks up.
+    let (latest, entries) = store.restore_latest().unwrap().unwrap();
+    assert_eq!(latest, second);
+    assert!(entries.is_empty());
+    // The old work is still there, untouched.
+    assert_eq!(store.open(&first).unwrap().len(), 1);
+}
+
+#[test]
 fn session_history_matches_what_the_log_wrote() {
     use titi_cli::app::session_history;
 
