@@ -1677,6 +1677,18 @@ pub fn delete_session(id: &str) -> Result<(), String> {
     delete_session_from(&titi_config::agent_dir(), id)
 }
 
+/// Creates an empty session and returns its id.
+pub fn new_session(agent_dir: &std::path::Path) -> Result<String, String> {
+    let store = titi_core::session::SessionStore::new(agent_dir).map_err(|e| e.to_string())?;
+    store
+        .create(titi_core::session::SessionMeta {
+            title: Some("titi".into()),
+            source: Some("cli".into()),
+            ..Default::default()
+        })
+        .map_err(|e| e.to_string())
+}
+
 /// The conversation a resumed session replays: the path to its current leaf,
 /// tail-capped so an old transcript cannot crowd out the workspace map.
 pub fn session_history(
