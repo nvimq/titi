@@ -518,6 +518,12 @@ fn apply_submit_effect(
                 text: prompt.into(),
             });
         }
+        // The modal holds input; this is the half that stops the agent. The
+        // engine has no suspend, so the honest "stop at this boundary" is a
+        // cancel: the turn ends where it is and the conversation keeps it.
+        SubmitEffect::Pause => {
+            let _ = engine.try_send(EngineCommand::Cancel);
+        }
         // Handled by `apply_effect`, which is the only caller holding the App
         // and therefore the session id.
         SubmitEffect::Rewind => {}

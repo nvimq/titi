@@ -131,6 +131,29 @@ fn ctrl_c_stops_a_running_turn_and_exits_when_idle() {
 }
 
 #[test]
+fn pause_stops_the_agent_and_not_only_the_keyboard() {
+    use titi_cli::app::SubmitEffect;
+
+    let mut app = app();
+    let mut input = "/pause".to_owned();
+    assert_eq!(
+        app.handle_canonical("enter", &mut input),
+        titi_cli::app::Dispatch::Handled(Some(SubmitEffect::Pause)),
+        "the modal alone would leave the agent streaming behind it"
+    );
+    assert!(app.is_paused());
+
+    // Resuming closes the modal. Esc reaches the panel through the overlay
+    // path; the binary's loop also short-circuits Esc/Enter/Space/Ctrl+C.
+    assert_eq!(
+        app.overlay_input("\x1b"),
+        Some(titi_cli::app::OverlayOutcome::Dismissed)
+    );
+    assert!(!app.is_paused());
+    assert!(!app.overlay_open());
+}
+
+#[test]
 fn a_failed_turn_says_so_instead_of_nothing() {
     // The alert is the only channel a failure has. It used to paint only when
     // every transcript section was hidden, so with the defaults on a rejected
