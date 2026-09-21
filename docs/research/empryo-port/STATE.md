@@ -40,6 +40,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Personalized rank: `TouchedSink` собирает пути из `read`/`write`/`edit` tool calls, `project_with` даёт им ×3 буст.
 - CLI передаёт cwd как `genome_root`; `TITI_NO_GENOME=1` отключает.
 - `cargo run -p titi-genome --example map -- [path] [limit]` печатает карту вручную.
+- **FIX**: `set_alert` рисовался только когда скрыты ВСЕ секции, а по умолчанию thinking/tools развёрнуты — значит `error: …` от `Failed`, `cancelled`, `session: …`, `checkpoint: …`, `rewound …` не были видны вообще. Отказ провайдера выглядел как «ничего не произошло». Alert теперь рисуется всегда: последней строкой над композером, а при полностью скрытом транскрипте — как и раньше, единственным содержимым.
+- **FIX**: переключение сессии было фикцией — `SessionSwitched` только делал `eprintln!` (в alternate screen его не видно), движок и лог оставались на прежней сессии. Теперь переключение — три действия: `RestoreHistory` в движок, переоткрытие `SessionLog` на новый файл, `App::switch_to_session` очищает отрисованный разговор и меняет id.
 - **FIX**: `/rewind` обрезал файл сессии, но движок продолжал слать провайдеру прежнюю историю — откат был видимостью. Добавлены `EngineCommand::RestoreHistory { messages }` (движок заменяет `restored_messages`) и `SubmitEffect::Rewind`: TUI после успешного отката пересобирает историю через `app::session_history` и отправляет её в движок. Старт и откат теперь строят историю одной функцией, так что расходиться нечему.
 - **FIX**: `titi --headless` без явного `--approval` вис навсегда: write-тул ждал `ApproveTool`, которого скрипт не шлёт. Теперь `--approval <always-ask|write|yolo>` (и `parse_approval` с явной ошибкой на опечатку); по умолчанию `write`, поверхность без approve-панели должна сказать это сама. Подтверждено: `--approval yolo` записал файл без approve-события.
 - **FIX**: `TouchedSet` теперь bounded (`TOUCHED_CAPACITY = 64`, порядок + дедуп, самое старое вытесняется) — раньше множество росло безгранично, и буст ×3 переставал что-либо значить после ~сотни файлов.
@@ -127,7 +129,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-cli`: `approval_modes_parse_and_reject_typos` — PASS.
 - `titi-engine`: `restore_history_replaces_what_the_model_sees` — откат реально меняет то, что уходит провайдеру — PASS.
 - `titi-cli`: `session_history_matches_what_the_log_wrote`, `session_history_stops_at_the_tail_cap` — PASS.
-- `cargo test --workspace` — 856 passed, 0 failed.
+- `titi-cli` interface: `a_failed_turn_says_so_instead_of_nothing`, `switching_sessions_drops_the_rendered_conversation` — PASS.
+- `cargo test --workspace` — 858 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS

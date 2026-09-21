@@ -70,6 +70,12 @@ impl Transcript {
         self.entries.push(entry);
     }
 
+    /// Drop every entry, keeping per-section visibility. Used when the surface
+    /// moves to a different conversation and must stop showing the old one.
+    pub fn clear(&mut self) {
+        self.entries.clear();
+    }
+
     /// Set the floating alert (replaces any previous).
     pub fn set_alert(&mut self, alert: Alert) {
         self.alert = Some(alert);
@@ -139,8 +145,11 @@ impl Transcript {
         let w = width as usize;
         let mut rows = Vec::new();
 
-        // Floating alert backstop: when every section is hidden, surface the
-        // alert instead of rendering nothing.
+        // The alert is a status line, and the only channel a turn has for
+        // "error: …", "cancelled", "session: …". It used to render only when
+        // every section was hidden, so with the defaults on (thinking and tools
+        // expanded) a failed turn said nothing at all. When nothing else is
+        // visible it is still the whole screen.
         if self.all_hidden() {
             if let Some(alert) = &self.alert {
                 rows.push(theme.fg(ThemeColor::Error, &truncate_to_width(&alert.text, w)));
@@ -178,6 +187,10 @@ impl Transcript {
                     }
                 }
             }
+        }
+        // Above the composer, so it reads as a status line rather than content.
+        if let Some(alert) = &self.alert {
+            rows.push(theme.fg(ThemeColor::Error, &truncate_to_width(&alert.text, w)));
         }
         rows
     }

@@ -141,7 +141,7 @@ fn main() -> io::Result<()> {
         titi_cli::engine::start_engine_with(approval).map_err(io::Error::other)?;
     // The transcript lives in the session store; without this the session file
     // stays empty and a resume replays nothing. Both surfaces share it.
-    let session_log =
+    let mut session_log =
         titi_cli::session_log::SessionLog::open(&titi_config::agent_dir(), &session_id);
     if session_log.is_none() {
         eprintln!("session: transcript writes are off (store unavailable)");
@@ -196,7 +196,13 @@ fn main() -> io::Result<()> {
                     if app.overlay_open() {
                         if let Some(data) = overlay_key_data(&key) {
                             if let Some(outcome) = app.overlay_input(&data) {
-                                handle_outcome(&mut engine, &mut app, &mut input, outcome);
+                                handle_outcome(
+                                    &mut engine,
+                                    &mut app,
+                                    &mut input,
+                                    &mut session_log,
+                                    outcome,
+                                );
                             }
                             paint(&mut renderer, &mut app, &input)?;
                         }
@@ -331,6 +337,7 @@ fn handle_outcome(
     engine: &mut titi_engine::Engine,
     app: &mut App,
     input: &mut String,
+    log: &mut Option<titi_cli::session_log::SessionLog>,
     outcome: OverlayOutcome,
 ) {
     match outcome {
@@ -343,8 +350,21 @@ fn handle_outcome(
         OverlayOutcome::HistoryPicked(text) => {
             *input = text;
         }
-        OverlayOutcome::SessionSwitched(id) => eprintln!("session: switched to {id}"),
-        OverlayOutcome::SessionNew => eprintln!("session: new"),
+        OverlayOutcome::SessionSwitched(id) => {
+            if app.session_id() == Some(id.as_str()) {
+                app.set_alert(format!("session: {id} is already live"));
+                return;
+            }
+            // A switch is three moves, not one: the engine replays the other
+            // session's history, the view drops the old conversation, and the
+            // log starts writing to the new file.
+            let agent_dir = titi_config::agent_dir();
+            let history = titi_cli::app::session_history(&agent_dir, &id).unwrap_or_default();
+            let _ = engine.try_send(EngineCommand::RestoreHistory { messages: history });
+            *log = titi_cli::session_log::SessionLog::open(&agent_dir, &id);
+            app.switch_to_session(&id);
+        }
+        OverlayOutcome::SessionNew => app.set_alert("session: new session needed"),
         OverlayOutcome::SessionCancelled => {
             eprintln!("session switcher: cancelled (nothing deleted)");
         }

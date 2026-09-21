@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 
 use titi_cli::app::{App, default_theme};
 use titi_engine::{AgentKind, AgentStatus, EngineEvent, TurnId};
-use titi_providers::StopReason;
+use titi_providers::{ErrorReason, StopReason};
 
 fn app() -> App {
     App::new(
@@ -104,6 +104,53 @@ fn hub_r_and_x_emit_engine_commands() {
         app.overlay_input("x"),
         Some(titi_cli::app::OverlayOutcome::HubStop("agent-1".into()))
     );
+}
+
+#[test]
+fn a_failed_turn_says_so_instead_of_nothing() {
+    // The alert is the only channel a failure has. It used to paint only when
+    // every transcript section was hidden, so with the defaults on a rejected
+    // turn looked like nothing happening.
+    let mut app = app();
+    app.ingest_engine_event(EngineEvent::Failed {
+        turn_id: Some(TurnId(1)),
+        reason: ErrorReason::Rejected,
+        message: "provider said no".into(),
+    });
+    let rendered = app.render().join("\n");
+    assert!(
+        rendered.contains("provider said no"),
+        "a failure must reach the screen: {rendered}"
+    );
+}
+
+#[test]
+fn switching_sessions_drops_the_rendered_conversation() {
+    let mut app = app();
+    app.set_session_id("old");
+    app.ingest_engine_event(EngineEvent::TurnStarted {
+        turn_id: TurnId(1),
+        model: "test/model".into(),
+    });
+    app.ingest_engine_event(EngineEvent::StreamDelta {
+        turn_id: TurnId(1),
+        text: "old-session-marker".into(),
+    });
+    app.ingest_engine_event(EngineEvent::TurnFinished {
+        turn_id: TurnId(1),
+        reason: StopReason::Stop,
+    });
+    assert!(app.render().join("\n").contains("old-session-marker"));
+
+    app.switch_to_session("new");
+    assert_eq!(app.session_id(), Some("new"));
+    assert!(!app.turn_active());
+    let rendered = app.render().join("\n");
+    assert!(
+        !rendered.contains("old-session-marker"),
+        "the old conversation must not linger: {rendered}"
+    );
+    assert!(rendered.contains("session: new"), "{rendered}");
 }
 
 #[test]
