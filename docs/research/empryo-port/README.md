@@ -136,7 +136,7 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 - [x] Shared read cache (`titi-tools::ReadCache`): LRU-bounded, keyed on `(size, mtime)`, one instance shared by the workspace tools; `write`/`edit` invalidate the entry.
 - [x] Fresh-context reviewer (`titi-engine::review`): `Verdict::{Pass,Fail,Partial}`, `ReviewRequest` (goal + evidence only), `Reviewer` trait, `AgentReviewer` over an `AgentRunner`. Verdict читается только с первой непустой строки: эхо/отговорка/поздний токен — `PARTIAL`, потому что молчание не согласие. Exit-коды 0/3 (PASS/FAIL) и 1 (PARTIAL).
 
-Готовый foundation: engine protocol, provider registry, tools, session trajectory, headless JSONL, TUI tool-approval overlay, live Genome-индекс с prompt-проекцией. Следующий слой — symbol-level Genome (tree-sitter), checkpoints/RPC и background agents.
+Готовый foundation: engine protocol, provider registry, tools, session trajectory, restore/checkpoints, версионированный headless RPC, TUI tool-approval overlay, live Genome-индекс с prompt-проекцией, write claims / findings bus / steering / read cache / fresh-context reviewer. Следующий слой — symbol-level Genome (tree-sitter), goal loop поверх reviewer-а, затем E5.
 
 ### E5 — GPUI desktop
 
