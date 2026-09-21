@@ -40,6 +40,7 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Personalized rank: `TouchedSink` собирает пути из `read`/`write`/`edit` tool calls, `project_with` даёт им ×3 буст.
 - CLI передаёт cwd как `genome_root`; `TITI_NO_GENOME=1` отключает.
 - `cargo run -p titi-genome --example map -- [path] [limit]` печатает карту вручную.
+- **FIX**: `/rewind` обрезал файл сессии, но движок продолжал слать провайдеру прежнюю историю — откат был видимостью. Добавлены `EngineCommand::RestoreHistory { messages }` (движок заменяет `restored_messages`) и `SubmitEffect::Rewind`: TUI после успешного отката пересобирает историю через `app::session_history` и отправляет её в движок. Старт и откат теперь строят историю одной функцией, так что расходиться нечему.
 - **FIX**: `titi --headless` без явного `--approval` вис навсегда: write-тул ждал `ApproveTool`, которого скрипт не шлёт. Теперь `--approval <always-ask|write|yolo>` (и `parse_approval` с явной ошибкой на опечатку); по умолчанию `write`, поверхность без approve-панели должна сказать это сама. Подтверждено: `--approval yolo` записал файл без approve-события.
 - **FIX**: `TouchedSet` теперь bounded (`TOUCHED_CAPACITY = 64`, порядок + дедуп, самое старое вытесняется) — раньше множество росло безгранично, и буст ×3 переставал что-либо значить после ~сотни файлов.
 - **FIX (critical)**: транскрипт вообще не попадал в session store — файл сессии оставался 0 байт, `restore_latest` всегда возвращал пустой разговор, `/checkpoint` фиксировал 0 записей, `/rewind` нечего было обрезать. Разговор уходил только в trajectory (другой файл). Теперь `App` ставит в очередь `(Role, text)` (prompt при отправке, ответ на `TurnFinished`), поверхность дренирует очередь в `SessionLog`: TUI — после каждого батча событий, headless — в цикле `run`. Подтверждено вживую: run 1 → `msgs=1 roles=user`, файл 276 байт; run 2 → `msgs=3 roles=user,assistant,user`, 598 байт.
@@ -124,7 +125,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Сквозная проверка резюма через реальный бинарь (два запуска подряд против локального сервера) — PASS.
 - `titi-engine` `TouchedSet`: ресенси без дублей, вытеснение самого старого на пределе, пустое множество — PASS.
 - `titi-cli`: `approval_modes_parse_and_reject_typos` — PASS.
-- `cargo test --workspace` — 853 passed, 0 failed.
+- `titi-engine`: `restore_history_replaces_what_the_model_sees` — откат реально меняет то, что уходит провайдеру — PASS.
+- `titi-cli`: `session_history_matches_what_the_log_wrote`, `session_history_stops_at_the_tail_cap` — PASS.
+- `cargo test --workspace` — 856 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS

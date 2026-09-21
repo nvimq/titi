@@ -144,3 +144,51 @@ fn agent_events_do_not_enter_the_transcript() {
 fn the_restored_history_is_capped() {
     assert_eq!(MAX_RESTORED_MESSAGES, 40);
 }
+
+#[test]
+fn session_history_matches_what_the_log_wrote() {
+    use titi_cli::app::session_history;
+
+    let dir = tempfile::tempdir().unwrap();
+    let agent_dir = dir.path();
+    let store = SessionStore::new(agent_dir).unwrap();
+    let session_id = store.create(SessionMeta::default()).unwrap();
+    let log = SessionLog::open(agent_dir, &session_id).unwrap();
+    log.user("question").unwrap();
+    log.assistant("answer").unwrap();
+
+    let history = session_history(agent_dir, &session_id).unwrap();
+    let pairs: Vec<(titi_providers::Role, String)> = history
+        .into_iter()
+        .map(|message| (message.role, message.content.to_string()))
+        .collect();
+    assert_eq!(
+        pairs,
+        vec![
+            (titi_providers::Role::User, "question".to_owned()),
+            (titi_providers::Role::Assistant, "answer".to_owned()),
+        ]
+    );
+}
+
+#[test]
+fn session_history_stops_at_the_tail_cap() {
+    use titi_cli::app::session_history;
+
+    let dir = tempfile::tempdir().unwrap();
+    let agent_dir = dir.path();
+    let store = SessionStore::new(agent_dir).unwrap();
+    let session_id = store.create(SessionMeta::default()).unwrap();
+    for index in 0..MAX_RESTORED_MESSAGES + 10 {
+        store
+            .append(&session_id, Role::User, &format!("turn {index}"))
+            .unwrap();
+    }
+
+    let history = session_history(agent_dir, &session_id).unwrap();
+    assert_eq!(history.len(), MAX_RESTORED_MESSAGES);
+    assert_eq!(
+        history.last().unwrap().content,
+        format!("turn {}", MAX_RESTORED_MESSAGES + 9)
+    );
+}

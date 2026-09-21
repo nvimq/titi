@@ -58,7 +58,7 @@ pub fn load_registry_config() -> ProviderRegistryConfig {
 pub const MAX_RESTORED_MESSAGES: usize = 40;
 
 /// Keeps the newest `limit` messages, in order.
-fn tail(
+pub fn tail(
     mut messages: Vec<titi_providers::ChatMessage>,
     limit: usize,
 ) -> Vec<titi_providers::ChatMessage> {
@@ -142,11 +142,10 @@ pub fn start_engine_with(
     let mut restored = Vec::new();
     let session_id = match titi_core::session::store::SessionStore::new(&agent_dir) {
         Ok(store) => match store.restore_latest() {
-            Ok(Some((id, entries))) => {
-                restored = tail(
-                    titi_core::session::entries_to_messages(&entries),
-                    MAX_RESTORED_MESSAGES,
-                );
+            Ok(Some((id, _))) => {
+                // One place builds the replayed history, so `/rewind` and
+                // startup cannot disagree about what the model sees.
+                restored = crate::app::session_history(&agent_dir, &id).unwrap_or_default();
                 id
             }
             _ => store
