@@ -8,6 +8,7 @@ pub mod registry;
 pub mod review;
 pub mod runtime;
 pub mod steering;
+pub mod tool_agent;
 pub mod tool_loop;
 
 pub use agents::{AgentContext, AgentRequest, AgentRunner, AgentSupervisor, StreamingAgentRunner};
@@ -22,6 +23,7 @@ pub use registry::{
 pub use review::{AgentReviewer, REVIEWER_BRIEF, Review, ReviewRequest, Reviewer, Verdict};
 pub use runtime::{Engine, EngineConfig, EngineError, EngineRuntime, TransportResolver};
 pub use steering::{STEERING_CAPACITY, Steering};
+pub use tool_agent::{DEFAULT_AGENT_ROUNDS, ToolAgentRunner};
 pub use tool_loop::{TOUCHING_TOOLS, TouchedSink, TrajectorySink};
 
 /// Crate version, mirrors the workspace release.

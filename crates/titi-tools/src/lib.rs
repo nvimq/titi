@@ -104,6 +104,29 @@ impl ToolRegistry {
             .map(|handler| handler.definition().approval)
             .unwrap_or(ApprovalTier::Exec)
     }
+
+    /// Keeps only tools whose tier is in `tiers`. Used to hand a subagent a
+    /// registry it cannot escalate out of: with nothing exec-tier registered,
+    /// no call can ever wait for an approval no one will give.
+    pub fn retain_tiers(&mut self, tiers: &[ApprovalTier]) {
+        self.tools
+            .retain(|_, handler| tiers.contains(&handler.definition().approval));
+    }
+
+    /// Names of the registered tools, sorted.
+    pub fn names(&self) -> Vec<SmolStr> {
+        let mut names: Vec<SmolStr> = self.tools.keys().cloned().collect();
+        names.sort();
+        names
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.tools.is_empty()
+    }
+
+    pub fn len(&self) -> usize {
+        self.tools.len()
+    }
 }
 
 /// Echoes `{"text": ...}` back. Read-tier, for tests and smoke.

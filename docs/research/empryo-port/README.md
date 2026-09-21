@@ -138,8 +138,9 @@ DoD: реальный prompt проходит TUI → engine → configured prov
 - [x] Subagents share the runtime's claim table and findings bus.
 - [x] Shared read cache (`titi-tools::ReadCache`): LRU-bounded, keyed on `(size, mtime)`, one instance shared by the workspace tools; `write`/`edit` invalidate the entry.
 - [x] Fresh-context reviewer (`titi-engine::review`): `Verdict::{Pass,Fail,Partial}`, `ReviewRequest` (goal + evidence only), `Reviewer` trait, `AgentReviewer` over an `AgentRunner`. Verdict читается только с первой непустой строки: эхо/отговорка/поздний токен — `PARTIAL`, потому что молчание не согласие. Exit-коды 0/3 (PASS/FAIL) и 1 (PARTIAL).
+- [x] Working subagent: `ToolAgentRunner` runs its own bounded tool loop, sharing the runtime's claims, touched set and read cache. Read-only unless the caller asks for writes — its registry *is* the policy, so no call can wait for an approval this surface cannot show.
 
-Готовый foundation: engine protocol, provider registry, tools, session trajectory, restore/checkpoints, версионированный headless RPC, TUI tool-approval overlay, live Genome-индекс с prompt-проекцией, write claims / findings bus / steering / read cache / fresh-context reviewer. Следующий слой — symbol-level Genome (tree-sitter), goal loop поверх reviewer-а, затем E5.
+Готовый foundation: engine protocol, provider registry, tools, session trajectory, restore/checkpoints, версионированный headless RPC, TUI tool-approval overlay, live symbol-level Genome с prompt-проекцией, write claims / findings bus / steering / read cache / fresh-context reviewer / tool-calling subagent. Следующий слой — goal loop поверх reviewer-а, tree-sitter Genome, затем E5.
 
 ### E5 — GPUI desktop
 

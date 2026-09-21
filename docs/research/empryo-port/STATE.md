@@ -56,7 +56,10 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi --set-key <provider> <key>` пишет в `<agent_dir>/auth.db` — ту самую ступень credential ladder, которая была недостижима без env/.env; `--list-keys` показывает провайдеров без токенов.
 - Сквозная проверка ключа: без ключа turn падает с `requires a credential`; после `--set-key` запрос уходит с `Authorization: Bearer <key>` и turn стримится до конца.
 - Записан `~/.titi/agent/config.yml` с реальным провайдером пользователя: `opencode-go` → `https://opencode.ai/zen/go/v1`, модели `glm-5.3-flash`, `deepseek-v4-flash`, `grok-4.6`, `grok-4.5`.
-- E3 углублён: symbol-level граф. Ребро = импорт **или** упоминание символа, определённого в другом файле; один и тот же rank и `(→N)` для обоих типов. Проекция печатает `+Name (users)` — сколько файлов опирается на символ.\n- Языков стало 11: Rust, TS/JS, Python, Go, Java, Kotlin, C/C++, C#, Ruby, Swift, PHP. Список расширений один (`parse::EXTENSIONS`), `scan::is_source` спрашивает его — расхождение двух списков больше невозможно (именно оно однажды молча выключило PHP).\n- Точность name-only резолва: refs собираются только с мест использования (вызов `name(`, `::name`, `TypeName`), а имя, экспортируемое более чем одним файлом, рёбер не даёт. На titi это 3023 → 681 ребро при 122 файлах: `path (33)` и `is_empty (64)` перестали быть «зависимостями».\n- `titi-engine::review` — fresh-context reviewer:"}] `Verdict` (PASS/FAIL/PARTIAL, exit 0/3/1), `ReviewRequest::prompt` собирает brief + goal + evidence, `AgentReviewer` гоняет один turn через `AgentRunner` с `AgentContext::detached()`.
+- E3 углублён: symbol-level граф. Ребро = импорт **или** упоминание символа, определённого в другом файле; один и тот же rank и `(→N)` для обоих типов. Проекция печатает `+Name (users)` — сколько файлов опирается на символ.\n- Языков стало 11: Rust, TS/JS, Python, Go, Java, Kotlin, C/C++, C#, Ruby, Swift, PHP. Список расширений один (`parse::EXTENSIONS`), `scan::is_source` спрашивает его — расхождение двух списков больше невозможно (именно оно однажды молча выключило PHP).\n- Точность name-only резолва: refs собираются только с мест использования (вызов `name(`, `::name`, `TypeName`), а имя, экспортируемое более чем одним файлом, рёбер не даёт. На titi это 3023 → 681 ребро при 122 файлах: `path (33)` и `is_empty (64)` перестали быть «зависимостями».\n- Дыры закрыты: `ToolAgentRunner` даёт сабагенту свой bounded tool loop; он делит с runtime claims, touched-множество и read cache (`EngineConfig.workspace_root`, `agent_model`, `agent_writes`, `agent_rounds`, `read_cache`).
+- Безопасность сабагента: его реестр сам и есть политика. По умолчанию `tools.retain_tiers(&[Read])` — ничег​о write/exec не зарегистрировано, поэтому ни один вызов не может ждать approve, которого нет на этой поверхности. `agent_writes = true` включает write, но claim-конфликт всё равно отказывает.
+- Паника или ошибка в построении карты деградирует в «нет карты в этом turn» через `run_off_thread` (JoinError и Err обрабатываются одинаково) — покрыто тестом с реальной паникой.
+- `titi-engine::review` — fresh-context reviewer:"}] `Verdict` (PASS/FAIL/PARTIAL, exit 0/3/1), `ReviewRequest::prompt` собирает brief + goal + evidence, `AgentReviewer` гоняет один turn через `AgentRunner` с `AgentContext::detached()`.
 - Verdict читается только с первой непустой строки: эхо brief-а, отговорка или токен на второй строке дают `PARTIAL`.
 
 ## VERIFIED
@@ -111,7 +114,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-providers`: `completions_tool_call_with_partial_args` (фрагменты, не буфер), `completions_tool_arguments_concatenate_to_valid_json` — PASS.
 - `titi-engine/tests/tools.rs`: `fragmented_tool_arguments_reach_the_handler_joined` — регресс на исправленный баг — PASS.
 - Сквозной прогон: `read` через фрагментированные аргументы вернул реальный `Cargo.toml`; genome как system-message дошёл до провайдера (`system=yes`).
-- `cargo test --workspace` — 821 passed, 0 failed.
+- `titi-engine/tests/tool_agent.rs`: сабагент читает файл своим tool loop-ом, греет общий кэш, не может писать по умолчанию, уважает чужой claim при `agent_writes`, останавливается на round cap — PASS.
+- `runtime::tests`: `an_off_thread_panic_degrades_to_none`, `an_off_thread_failure_degrades_to_none`, `a_successful_run_passes_the_map_through` — PASS.
+- `cargo test --workspace` — 842 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS
@@ -136,8 +141,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Параллельные turn-ы делят один `Genome` под mutex: два `SubmitPrompt` подряд дают два `refresh` на одном индексе (покрыто тестом на форму фрейма, но не на гонку данных).
 - Граф file-level, не symbol-level: `(→N)` считает файлы-импортёры, а не вызовы конкретного символа.
 - Claim берётся по `path` из аргументов тула, поэтому `bash` (произвольная команда) файлы не резервирует.
-- `StreamingAgentRunner` — one-shot turn без tool loop, поэтому subagent пока не пишет файлы сам; claims для него — инфраструктура на будущее.
-- Read cache принадлежит реестру тулов CLI; чтобы subagent читал через тот же кэш, нужен проброс в supervisor (пока не сделан).
+- `StreamingAgentRunner` остаётся для surfaces без тулов; рабочий путь сабагента — `ToolAgentRunner`, который runtime строит сам, когда заданы `agent_model` и `workspace_root`.
+- Сабагент read-only по умолчанию: включение write — сознательное решение вызывающего, а не следствие конфигурации.
+- Бounded `mpsc` с живым, но непрочитанным receiver — гарантированный deadlock: первый `send` занимает слот, второй блокируется навсегда. Такой канал надо `drop(receiver)`, а не бросать в `_receiver`.
 - Кэш не отдаёт содержимое удалённого файла (сначала stat) — поэтому удаление видно сразу, а изменение без смены size/mtime теоретически нет.
 
 ## NEXT
