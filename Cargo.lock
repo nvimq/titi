@@ -1637,6 +1637,7 @@ name = "titi-memory"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "regex",
  "rusqlite",
  "serde_json",
  "sha2",

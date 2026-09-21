@@ -13,6 +13,7 @@ use titi_providers::ToolSpec;
 use titi_tools::{ApprovalTier, ToolDefinition, ToolHandler, ToolResult};
 
 use crate::index::{MemoryIndex, Remembered, parse_remember, render_recall};
+use crate::redact;
 
 /// Remembers and recalls. The index lives in the agent directory.
 pub struct MemoryTool {
@@ -56,7 +57,7 @@ impl ToolHandler for MemoryTool {
                 parameters: json!({
                     "type": "object",
                     "properties": {
-                        "action": { "type": "string", "enum": ["remember", "search"] },
+                        "action": { "type": "string", "enum": ["remember", "search", "list", "models"] },
                         "summary": { "type": "string", "description": "The fact, one line." },
                         "details": { "type": "string" },
                         "category": { "type": "string", "enum": ["pref", "decision", "gotcha", "context"] },
@@ -74,7 +75,9 @@ impl ToolHandler for MemoryTool {
         let result = match action {
             "remember" => self.remember(&args),
             "search" => self.search(&args),
-            _ => Err("action must be remember or search".into()),
+            "list" => self.list(),
+            "models" => Ok(crate::embed::suggested_lines().join("\n")),
+            _ => Err("action must be remember, search, list or models".into()),
         };
         match result {
             Ok(output) => ToolResult {
@@ -96,16 +99,37 @@ impl MemoryTool {
         if summary.trim().is_empty() {
             return Err("remember needs a summary".into());
         }
-        if let Some(existing) = self.with_index(|idx| idx.similar(summary))? {
+        // A key stored once is shown on every later turn. Mask it first.
+        let summary = redact::redact(summary);
+        let details = redact::redact(details);
+        let masked = summary.removed + details.removed;
+        let (summary, details) = (summary.text, details.text);
+        if let Some(existing) = self.with_index(|idx| idx.similar(&summary))? {
             return Ok(format!(
                 "not stored: too close to #{} \"{}\" — refine that one instead",
                 existing.id, existing.summary
             ));
         }
-        match self.with_index(|idx| idx.remember(category, summary, details, &[]))? {
-            Remembered::Added(id) => Ok(format!("remembered #{id}")),
-            Remembered::Duplicate(id) => Ok(format!("already remembered as #{id}; counted again")),
+        let note = if masked > 0 {
+            format!(" ({masked} secret(s) masked)")
+        } else {
+            String::new()
+        };
+        match self.with_index(|idx| idx.remember(category, &summary, &details, &[]))? {
+            Remembered::Added(id) => Ok(format!("remembered #{id}{note}")),
+            Remembered::Duplicate(id) => {
+                Ok(format!("already remembered as #{id}; counted again{note}"))
+            }
         }
+    }
+
+    fn list(&self) -> Result<String, String> {
+        let all = self.with_index(|idx| idx.list())?;
+        Ok(if all.is_empty() {
+            "nothing remembered yet".into()
+        } else {
+            render_recall(&all)
+        })
     }
 
     fn search(&self, args: &Value) -> Result<String, String> {

@@ -85,6 +85,60 @@ pub fn configured_model(settings_value: Option<&str>) -> EmbeddingChoice {
     }
 }
 
+/// A model the settings UI can offer.
+///
+/// `local` is always right: it needs nothing. The rest are the embeddings
+/// models a provider actually ships, named the way the registry names them,
+/// so a choice copies straight into `memory.embeddingModel`.
+pub struct EmbeddingSuggestion {
+    pub id: &'static str,
+    pub provider: &'static str,
+    pub note: &'static str,
+}
+
+/// What to suggest. Ordered: the offline default first, then the cheapest
+/// hosted model per provider.
+pub const SUGGESTED_EMBEDDERS: &[EmbeddingSuggestion] = &[
+    EmbeddingSuggestion {
+        id: "local",
+        provider: "built-in",
+        note: "offline, no key, trigram vectors",
+    },
+    EmbeddingSuggestion {
+        id: "openai/text-embedding-3-small",
+        provider: "openai",
+        note: "cheap, 1536d",
+    },
+    EmbeddingSuggestion {
+        id: "openai/text-embedding-3-large",
+        provider: "openai",
+        note: "best quality, 3072d",
+    },
+    EmbeddingSuggestion {
+        id: "voyage/voyage-3-lite",
+        provider: "voyage",
+        note: "cheap, retrieval tuned",
+    },
+    EmbeddingSuggestion {
+        id: "voyage/voyage-3",
+        provider: "voyage",
+        note: "best retrieval quality",
+    },
+    EmbeddingSuggestion {
+        id: "cohere/embed-v4",
+        provider: "cohere",
+        note: "multilingual",
+    },
+];
+
+/// The suggestion lines, one per model, for a settings screen or `/memory models`.
+pub fn suggested_lines() -> Vec<String> {
+    SUGGESTED_EMBEDDERS
+        .iter()
+        .map(|s| format!("{}  {} — {}", s.id, s.provider, s.note))
+        .collect()
+}
+
 /// Which embedder the config asked for.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum EmbeddingChoice {
