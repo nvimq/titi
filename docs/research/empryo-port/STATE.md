@@ -149,7 +149,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-cli`: `ctrl_c_stops_a_running_turn_and_asks_twice_when_idle` — первый Ctrl+C только вооружает, второй в окне выходит, просроченный просит заново, другая клавиша снимает — PASS.
 - `titi-engine` loop: `the_system_prompt_carries_identity_and_memory`, `context_usage_reports_the_request_size` — PASS.
 - `titi-cli` git_checkpoint: снимок ловит изменение, restore отказывается на грязном дереве, не-репозиторий сообщает — PASS.
-- `cargo test --workspace` — 886 passed, 0 failed.
+- `titi-engine` agents: `focusing_an_agent_emits_the_move` — фокус шлёт `AgentFocused`, неизвестный агент даёт `Failed` — PASS.
+- `cargo test --workspace` — 887 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS
@@ -186,7 +187,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 1a. **Системный промпт подключён** — `EngineRuntime::system_prompt` собирает `titi_soul::SystemPromptBuilder` (SOUL.md + personality) и оба memory-стора (`MEMORY.md`, `USER.md`), затем genome-карту. `EngineConfig.agent_dir` задаётся из `titi_config::agent_dir()`. Без каталога агента деградирует до одной карты.
 1b. **Gauge контекста** — `EngineEvent::ContextUsage { tokens, window }` перед каждым запросом (оценка `estimate_request`, провайдеры usage не отдают). `App.context_pct` кормит `StatusSnapshot.context_pct`, бар рисует `N%`.
 1c. **Git-чекпоинты** — `Checkpoint.git_commit`; `/checkpoint` делает `git add -A && commit` (`titi-cli/src/git_checkpoint.rs`, локально, `--no-verify`, автор `titi`), `/rewind` делает `git reset --hard` и **отказывается на грязном дереве**. Не-репозиторий остаётся session-only.
-1d. Чего ещё нет: скиллы/hooks/MCP (E6), вкладки (в Empryo до 5), стоимость в USD (нет цен провайдеров), `--prompt` у headless, фокус агента в Hub (возвращает bool и ничего не переключает), STT.
+1d. **Фокус агента** — `AgentSupervisor::focus` шлёт `EngineEvent::AgentFocused`; `App.focused_agent` показывает его в статус-баре. Несуществующий агент даёт `Failed`.
+1e. **`--prompt`** — `titi --headless "текст"` и `titi --prompt "текст"` запускают один turn (`headless::run_prompt`): события на stdout, ответ на stderr, код 1 при `Failed`.
+1f. Чего ещё нет: скиллы/hooks/MCP (E6), вкладки (в Empryo до 5), стоимость в USD (нет цен провайдеров), STT.
 1b. TUI: рекап читает только store+trajectory; агентские findings и стоимости в него пока не попадают (нужна персистентность findings).
 2. Genome: tree-sitter для остальных языков и symbol-level граф.
 3. Goal loop поверх reviewer-а (coder ⟷ reviewer rounds с oscillation-детекцией).
