@@ -1,7 +1,9 @@
 //! Layered settings: defaults <- global <- project <- overlays <- runtime.
 //!
 //! - Global: first present of `<agent_dir>/config.yml` / `config.yaml`; canonical write target.
-//! - Project: `<project>/.titi/config.yml` (read-only through this API).
+//! - Project: `<project>/.titi/config.yml` (read-only through this API). A
+//!   project may override settings, but the agent keeps its own state — sessions,
+//!   memory, secrets — under `agent_dir`, never in the repository.
 //! - Overlays: `$TITI_CONFIG_FILES` (path-list) then explicit paths; strict (missing/invalid = hard error).
 //! - Runtime: in-memory overrides, never persisted.
 //!
