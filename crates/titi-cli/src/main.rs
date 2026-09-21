@@ -50,6 +50,18 @@ fn init_provider(ready: Arc<AtomicBool>) {
     ready.store(true, Ordering::SeqCst);
 }
 
+const USAGE: &str = "\
+usage: titi [options]
+
+  --headless, -p              read EngineCommand JSONL on stdin, write EngineEvent JSONL
+  --approval <mode>           always-ask | write | yolo (default: write)
+  --mouse <preset>            off | on | wheel | buttons | all
+  --set-key <provider> <key>  store an API key in the agent directory
+  --list-keys                 list stored providers (never the keys)
+  --help, -h                  this text
+
+In the TUI: Ctrl+C stops a running turn, or leaves when nothing is running.";
+
 fn main() -> io::Result<()> {
     // `--mouse <preset>` (default: persisted `display.mouse_tracking`, else
     // off — no tracking, terminal-native selection works; drag-select
@@ -91,6 +103,14 @@ fn main() -> io::Result<()> {
                     std::process::exit(2);
                 }
             }
+        } else if arg == "--help" || arg == "-h" {
+            println!("{USAGE}");
+            return Ok(());
+        } else if arg.starts_with('-') {
+            // A typo used to be ignored silently, so `titi --hedless` launched
+            // the full-screen TUI and looked like a hang.
+            eprintln!("unknown option {arg}\n\n{USAGE}");
+            std::process::exit(2);
         }
     }
 
@@ -212,6 +232,10 @@ fn main() -> io::Result<()> {
                         Dispatch::Exit => {
                             let _ = engine.try_send(EngineCommand::Shutdown);
                             break;
+                        }
+                        Dispatch::Cancel => {
+                            let _ = engine.try_send(EngineCommand::Cancel);
+                            paint(&mut renderer, &mut app, &input)?;
                         }
                         Dispatch::Unhandled => {}
                         Dispatch::Handled(effect) => {

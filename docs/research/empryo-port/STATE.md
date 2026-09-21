@@ -40,6 +40,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Personalized rank: `TouchedSink` собирает пути из `read`/`write`/`edit` tool calls, `project_with` даёт им ×3 буст.
 - CLI передаёт cwd как `genome_root`; `TITI_NO_GENOME=1` отключает.
 - `cargo run -p titi-genome --example map -- [path] [limit]` печатает карту вручную.
+- **FIX**: отменить turn из TUI было НЕЧЕМ — `EngineCommand::Cancel` не отправлял ни один путь, `app.interrupt` (Ctrl+C) всегда выходил из приложения. Теперь Ctrl+C при активном turn возвращает `Dispatch::Cancel` (main шлёт `Cancel`), а в покое — `Exit`, как и обещает описание действия «Interrupt / exit». DoD в README исправлен: он обещал Ctrl+X, который открывает session switcher.
+- **FIX**: неизвестный флаг молча игнорировался — `titi --hedless` запускал полноэкранный TUI и выглядел как зависание. Добавлены `--help`/`-h` и отказ с usage на `-*`; exit code 2.
 - **FIX**: Ctrl+N («новая сессия») только писал в stderr — новая сессия не создавалась, движок и лог оставались на прежней. Теперь `app::new_session` создаёт пустую сессию в store, движок получает пустую историю, лог и view переключаются (тот же ход из трёх шагов, что и у switch).
 - **FIX**: `set_alert` рисовался только когда скрыты ВСЕ секции, а по умолчанию thinking/tools развёрнуты — значит `error: …` от `Failed`, `cancelled`, `session: …`, `checkpoint: …`, `rewound …` не были видны вообще. Отказ провайдера выглядел как «ничего не произошло». Alert теперь рисуется всегда: последней строкой над композером, а при полностью скрытом транскрипте — как и раньше, единственным содержимым.
 - **FIX**: переключение сессии было фикцией — `SessionSwitched` только делал `eprintln!` (в alternate screen его не видно), движок и лог оставались на прежней сессии. Теперь переключение — три действия: `RestoreHistory` в движок, переоткрытие `SessionLog` на новый файл, `App::switch_to_session` очищает отрисованный разговор и меняет id.
@@ -132,7 +134,9 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-cli`: `session_history_matches_what_the_log_wrote`, `session_history_stops_at_the_tail_cap` — PASS.
 - `titi-cli` interface: `a_failed_turn_says_so_instead_of_nothing`, `switching_sessions_drops_the_rendered_conversation` — PASS.
 - `titi-cli`: `a_new_session_starts_empty_and_becomes_the_latest` — новая сессия пустая, становится latest, старая не тронута — PASS.
-- `cargo test --workspace` — 859 passed, 0 failed.
+- `titi-cli`: `ctrl_c_stops_a_running_turn_and_exits_when_idle` — Cancel при активном turn, Exit в покое — PASS.
+- `titi --help` печатает usage, `titi --hedless` печатает usage и выходит с кодом 2 — проверено вручную.
+- `cargo test --workspace` — 860 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
 
 ## DECISIONS

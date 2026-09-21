@@ -98,7 +98,7 @@ Empryo используется как внешний supervisor разрабо�
 - [x] CLI переводит submit и stream rendering на engine.
 - [x] Cancellation и queued-follow-up имеют отдельные concurrency tests.
 
-DoD: реальный prompt проходит TUI → engine → configured provider → streaming transcript; Ctrl+X отменяет turn; mock `429` переключает модель; `401` не переключает.
+DoD: реальный prompt проходит TUI → engine → configured provider → streaming transcript; **Ctrl+C отменяет активный turn** (и выходит из приложения, когда turn-а нет); mock `429` переключает модель; `401` не переключает.
 
 ### E1 — Tool loop
 

@@ -107,6 +107,30 @@ fn hub_r_and_x_emit_engine_commands() {
 }
 
 #[test]
+fn ctrl_c_stops_a_running_turn_and_exits_when_idle() {
+    use titi_cli::app::Dispatch;
+
+    let mut app = app();
+    let mut input = String::new();
+    // Idle: the documented "interrupt / exit" leaves the app.
+    assert_eq!(app.handle_canonical("ctrl+c", &mut input), Dispatch::Exit);
+
+    app.ingest_engine_event(EngineEvent::TurnStarted {
+        turn_id: TurnId(1),
+        model: "test/model".into(),
+    });
+    // Running: it stops the turn instead, which nothing could do before.
+    assert_eq!(app.handle_canonical("ctrl+c", &mut input), Dispatch::Cancel);
+
+    // Once the turn ends, Ctrl+C leaves again.
+    app.ingest_engine_event(EngineEvent::TurnFinished {
+        turn_id: TurnId(1),
+        reason: StopReason::Stop,
+    });
+    assert_eq!(app.handle_canonical("ctrl+c", &mut input), Dispatch::Exit);
+}
+
+#[test]
 fn a_failed_turn_says_so_instead_of_nothing() {
     // The alert is the only channel a failure has. It used to paint only when
     // every transcript section was hidden, so with the defaults on a rejected
