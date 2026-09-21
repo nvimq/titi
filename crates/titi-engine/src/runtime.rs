@@ -451,11 +451,44 @@ impl EngineRuntime {
     /// map alone rather than failing the turn.
     async fn system_prompt(&self) -> Option<SmolStr> {
         let identity = self.identity_prompt();
+        let recalled = self.recalled_memory().await;
         let genome = self.genome_system().await;
-        match (identity, genome) {
-            (Some(identity), Some(genome)) => Some(format!("{identity}\n\n{genome}").into()),
-            (identity, genome) => identity.or(genome),
+        let mut parts = Vec::new();
+        if let Some(identity) = identity {
+            parts.push(identity.to_string());
         }
+        if let Some(recalled) = recalled {
+            parts.push(recalled.to_string());
+        }
+        if let Some(genome) = genome {
+            parts.push(genome.to_string());
+        }
+        let joined = parts.join("\n\n");
+        if joined.is_empty() {
+            None
+        } else {
+            Some(joined.into())
+        }
+    }
+
+    /// The memories relevant to this turn, ranked against the files it has
+    /// already touched. Off the runtime thread: the index is synchronous
+    /// SQLite, and blocking the runtime thread panics.
+    async fn recalled_memory(&self) -> Option<SmolStr> {
+        let agent_dir = self.config.agent_dir.clone()?;
+        let touched = Arc::clone(&self.touched);
+        run_off_thread(move || {
+            let index = titi_memory::index::MemoryIndex::open(&agent_dir).ok()?;
+            let touched = touched.blocking_lock().snapshot();
+            let recalled = index.recall("", &touched).ok()?;
+            let block = titi_memory::index::render_recall(&recalled);
+            if block.is_empty() {
+                None
+            } else {
+                Some(block.into())
+            }
+        })
+        .await
     }
 
     /// Soul, personality and the two memory stores, rendered as one block.

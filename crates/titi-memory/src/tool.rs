@@ -1,0 +1,121 @@
+//! The `memory` tool: the agent writes what it learned, and can search it.
+//!
+//! Read-tier. Remembering is not a side effect the user has to approve — it
+//! is the point of the tool, and a wrong memory is deleted by writing a
+//! better one, not by executing anything.
+
+use std::path::PathBuf;
+use std::sync::Mutex;
+
+use async_trait::async_trait;
+use serde_json::{Value, json};
+use titi_providers::ToolSpec;
+use titi_tools::{ApprovalTier, ToolDefinition, ToolHandler, ToolResult};
+
+use crate::index::{MemoryIndex, Remembered, parse_remember, render_recall};
+
+/// Remembers and recalls. The index lives in the agent directory.
+pub struct MemoryTool {
+    agent_dir: PathBuf,
+    index: Mutex<Option<MemoryIndex>>,
+}
+
+impl MemoryTool {
+    pub fn new(agent_dir: impl Into<PathBuf>) -> Self {
+        Self {
+            agent_dir: agent_dir.into(),
+            index: Mutex::new(None),
+        }
+    }
+
+    fn with_index<T>(
+        &self,
+        f: impl FnOnce(&MemoryIndex) -> Result<T, crate::index::Error>,
+    ) -> Result<T, String> {
+        let mut guard = self
+            .index
+            .lock()
+            .map_err(|_| "memory index lock poisoned".to_owned())?;
+        if guard.is_none() {
+            *guard = Some(MemoryIndex::open(&self.agent_dir).map_err(|e| e.to_string())?);
+        }
+        f(guard.as_ref().unwrap()).map_err(|e| e.to_string())
+    }
+}
+
+#[async_trait]
+impl ToolHandler for MemoryTool {
+    fn definition(&self) -> ToolDefinition {
+        ToolDefinition {
+            spec: ToolSpec {
+                name: "memory".into(),
+                description: "Remember a fact for later sessions, or search what was remembered. \
+                    Use it for decisions, preferences and gotchas worth keeping. \
+                    The same fact stored twice is counted, not duplicated."
+                    .into(),
+                parameters: json!({
+                    "type": "object",
+                    "properties": {
+                        "action": { "type": "string", "enum": ["remember", "search"] },
+                        "summary": { "type": "string", "description": "The fact, one line." },
+                        "details": { "type": "string" },
+                        "category": { "type": "string", "enum": ["pref", "decision", "gotcha", "context"] },
+                        "query": { "type": "string", "description": "What to search for." }
+                    },
+                    "required": ["action"]
+                }),
+            },
+            approval: ApprovalTier::Read,
+        }
+    }
+
+    async fn invoke(&self, args: Value) -> ToolResult {
+        let action = args.get("action").and_then(Value::as_str).unwrap_or("");
+        let result = match action {
+            "remember" => self.remember(&args),
+            "search" => self.search(&args),
+            _ => Err("action must be remember or search".into()),
+        };
+        match result {
+            Ok(output) => ToolResult {
+                output: output.into(),
+                is_error: false,
+            },
+            Err(reason) => ToolResult {
+                output: reason.into(),
+                is_error: true,
+            },
+        }
+    }
+}
+
+impl MemoryTool {
+    fn remember(&self, args: &Value) -> Result<String, String> {
+        let (category, summary, details) =
+            parse_remember(args).ok_or("remember needs a summary")?;
+        if summary.trim().is_empty() {
+            return Err("remember needs a summary".into());
+        }
+        if let Some(existing) = self.with_index(|idx| idx.similar(summary))? {
+            return Ok(format!(
+                "not stored: too close to #{} \"{}\" — refine that one instead",
+                existing.id, existing.summary
+            ));
+        }
+        match self.with_index(|idx| idx.remember(category, summary, details, &[]))? {
+            Remembered::Added(id) => Ok(format!("remembered #{id}")),
+            Remembered::Duplicate(id) => Ok(format!("already remembered as #{id}; counted again")),
+        }
+    }
+
+    fn search(&self, args: &Value) -> Result<String, String> {
+        let query = args.get("query").and_then(Value::as_str).unwrap_or("");
+        let found = self.with_index(|idx| idx.recall(query, &[]))?;
+        let rendered = render_recall(&found);
+        Ok(if rendered.is_empty() {
+            "nothing remembered matches".into()
+        } else {
+            rendered
+        })
+    }
+}

@@ -147,6 +147,9 @@ pub fn start_engine_with(
         tools.register(Arc::from(tool));
     }
     let agent_dir = titi_config::agent_dir();
+    tools.register(std::sync::Arc::new(titi_memory::tool::MemoryTool::new(
+        agent_dir.clone(),
+    )));
     // Resume the newest session and replay its history into the engine;
     // otherwise start a fresh one.
     let mut restored = Vec::new();

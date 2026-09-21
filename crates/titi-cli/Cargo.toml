@@ -16,6 +16,7 @@ titi-config = { workspace = true }
 titi-secrets = { workspace = true }
 titi-tools = { workspace = true }
 titi-genome = { workspace = true }
+titi-memory = { workspace = true }
 titi-tui = { workspace = true }
 crossterm = "0.29"
 serde = { version = "1", features = ["derive"] }

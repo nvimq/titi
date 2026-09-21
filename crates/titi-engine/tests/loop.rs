@@ -94,6 +94,53 @@ async fn the_system_prompt_carries_identity_and_memory() {
     );
 }
 
+/// A memory stored earlier comes back in the next turn's system prompt,
+/// ranked above an unrelated one because the turn touched its file.
+#[tokio::test]
+async fn recalled_memory_enters_the_system_prompt() {
+    let dir = tempfile::tempdir().unwrap();
+    let index = titi_memory::index::MemoryIndex::open(dir.path()).unwrap();
+    index
+        .remember(
+            "gotcha",
+            "auth expires early",
+            "the check uses <",
+            &["src/auth.ts".into()],
+        )
+        .unwrap();
+    index
+        .remember("context", "the readme is long", "", &["README.md".into()])
+        .unwrap();
+    drop(index);
+
+    let transport = Arc::new(MockTransport::new(vec![MockBody::Events(vec![
+        StreamEvent::Done {
+            reason: StopReason::Stop,
+        },
+    ])]));
+    let captured = Arc::clone(&transport);
+    let mut config = EngineConfig::new("primary");
+    config.agent_dir = Some(dir.path().to_path_buf());
+    let mut engine = EngineRuntime::start(config, resolver(vec![("primary", transport)]));
+    engine
+        .send(EngineCommand::SubmitPrompt { text: "hi".into() })
+        .await
+        .unwrap();
+    let _ = collect_until_terminal(&mut engine).await;
+
+    let requests = captured.requests();
+    let system = &requests[0]
+        .messages
+        .iter()
+        .find(|m| m.role == Role::System)
+        .expect("a system message")
+        .content;
+    assert!(
+        system.contains("auth expires early"),
+        "recall missing: {system}"
+    );
+}
+
 /// The status bar's gauge comes from a real event, not a guess.
 #[tokio::test]
 async fn context_usage_reports_the_request_size() {
