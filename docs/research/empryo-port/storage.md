@@ -15,7 +15,7 @@ The same split, already:
 | Transcript | `sessions/<id>.jsonl` | Append-only. A crash loses at most one line. A session copies with one file. |
 | Search | `state.db` (SQLite, WAL, FTS5) | One index over every session. Rebuilt from the JSONL, so it is disposable. |
 | Keys | `auth.db` | Separate from the transcript on purpose. |
-| Memory | `memories/MEMORY.md`, `USER.md` | Bounded, scanned for injection, injected verbatim into the prompt. |
+| Memory | `memory.db` next to `state.db` | FTS, file links, a local trigram embedding. The top five rows are recalled into the prompt. `MEMORY.md` and `USER.md` are not injected. |
 
 `state.db` holds `sessions`, `entries` and `entries_fts`. It is a derived
 index: delete it and the next open rebuilds it from the JSONL.
@@ -80,22 +80,23 @@ Three things make it more than a file:
 This repo holds 6 memories and 7 file links. The gotchas are goal-loop
 failures the agent wrote itself.
 
-## What titi should take from it
+## What titi took from it
 
-The markdown stores stay for what they are good at: a bounded, human-readable
-snapshot that is injected whole. They cannot do the rest. A memory that grows
-past 2,200 characters has to be deleted, and there is no way to find the one
-memory that matters for the file being edited.
+The markdown stores were the first shape. They are retired. `identity_prompt`
+sends SOUL and personality only. Recall injects the top five rows from
+`memory.db`. A file pasted whole shows every fact on every turn and cannot
+say which one matters. Dated decision: `DECISIONS.md`, 2026-09-22.
 
-The piece worth porting is the index, not the embeddings. A `memories` table
-beside `state.db` with the category, the content hash, the file link and FTS
-gives dedup, search and file affinity, and it uses the `rusqlite` already in
-the tree. Embeddings and the similarity graph wait until the index has more
-rows than a prompt can hold.
+The index is `titi-memory`: SHA-256 dedup, FTS5, file links, and an embedding.
+Empty `memory.embeddingModel` or `local` uses a 256-d hashed trigram vector,
+offline. Any other value names an OpenAI-compatible embeddings model, and
+only when that provider is in the registry. Each row records which embedder
+produced it. Secrets (`sk-`, `ghp_`, `AKIA`, PEM, JWT, `token=`) are masked
+before the write.
 
-## Memory stays global
+## Memory stays in the agent home
 
-`MEMORY.md` and `USER.md` are injected into every turn, so they are the
-agent's memory, not a session's. A session-scoped note belongs in the
-transcript. Linking the two would make a resumed session depend on a database
-row that the JSONL does not contain, and the JSONL is the source of truth.
+`memory.db` lives in `~/.titi/agent`, not in the repository and not inside a
+session file. A session-scoped note belongs in the transcript. The JSONL
+remains the source of truth for the conversation; the memory index is a
+separate store the model queries by recall.

@@ -2,7 +2,7 @@
 
 ## Активное направление: Empryo functional port
 
-Статус: **in-progress**, фаза E3 (live Genome: incremental refresh + personalized rank + prompt projection done). Канонический handoff: [`empryo-port/STATE.md`](empryo-port/STATE.md). Решения и roadmap: [`empryo-port/README.md`](empryo-port/README.md). NEXT: symbol-level Genome (tree-sitter), checkpoints/RPC, background agents.
+Статус: **0.1.0 работает** (чат на ratatui, headless, инструменты, сессии, Genome, память, SOUL). Встроенный каталог: OpenAI, OpenRouter, OpenCode, Anthropic; пользовательский конфиг накладывается по id, а не заменяет список. Канонический handoff: [`empryo-port/STATE.md`](empryo-port/STATE.md). Решения: [`empryo-port/DECISIONS.md`](empryo-port/DECISIONS.md). Roadmap: [`empryo-port/README.md`](empryo-port/README.md). Следующий код — goal loop поверх reviewer-а. Не начинать GPUI. Tree-sitter — замена эвристик Genome, не новый граф: symbol-level уже есть.
 
 Правило продолжения: сначала прочитать dedicated STATE, прогнать baseline, выполнить только NEXT, затем синхронизировать оба STATE-файла.
 
@@ -21,7 +21,7 @@ README карта + граф, PLAN.md, CONVEYOR.md (с цепочкой ворк
 | M1: session JSONL+FTS (titi-core::session) | done | 13/13 тестов |
 | M4: titi-tui (width/history/viewport) | done | 30/30 тестов |
 | Волна 1 интеграция | done | cargo test --workspace: 63 passed |
-| Волна 2: trajectory, compaction, system-prompt-soul, provider-каркас | todo | по графу, после деплоя волны 1 |
+| Волна 2: trajectory, compaction, system-prompt-soul, provider-каркас | done | в `titi-core` / `titi-engine` / `titi-soul`; старая пометка `todo` отстала |
 | Волна 2 TUI: Component/overlays/keybindings/theme/kitty/resize | done | см. волну 3 TUI ниже |
 | Fallback-пул titi (glm-5.3-flash + deepseek-flash, лимиты) | todo | фаза Providers |
 
