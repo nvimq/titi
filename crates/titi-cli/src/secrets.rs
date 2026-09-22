@@ -32,6 +32,16 @@ pub fn store_key(agent_dir: &Path, provider: &str, key: &str) -> Result<(), Stri
         .map_err(|e| e.to_string())
 }
 
+/// Drops the stored credential for `provider`. `Ok(false)` means there was none.
+pub fn remove_key(agent_dir: &Path, provider: &str) -> Result<bool, String> {
+    let provider = provider.trim();
+    if provider.is_empty() {
+        return Err("a provider id is required".into());
+    }
+    let store = AuthStore::open(&agent_dir.join("auth.db")).map_err(|e| e.to_string())?;
+    store.remove(provider).map_err(|e| e.to_string())
+}
+
 /// Every stored credential's provider id, kind and timestamp. No tokens.
 pub fn list_keys(agent_dir: &Path) -> Result<Vec<StoredKey>, String> {
     let store = AuthStore::open(&agent_dir.join("auth.db")).map_err(|e| e.to_string())?;

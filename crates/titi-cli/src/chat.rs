@@ -38,6 +38,9 @@ pub enum Key {
     CtrlC,
     CtrlD,
     Esc,
+    Up,
+    Down,
+    Tab,
 }
 
 /// What the screen asks the engine or the process to do.
@@ -117,6 +120,10 @@ pub struct Chat {
     approval: Option<PendingApproval>,
     quit_armed: Option<Instant>,
     hint: String,
+    /// Provider waiting for a key. The composer masks whatever is typed.
+    login_for: Option<String>,
+    /// Highlight in the leading-slash command list.
+    picker: usize,
     /// Kitty or Ghostty unicode placeholders are available.
     kitty: bool,
     tmux: bool,
@@ -148,6 +155,8 @@ impl Chat {
             approval: None,
             quit_armed: None,
             hint: String::new(),
+            login_for: None,
+            picker: 0,
             kitty: false,
             tmux: false,
             photos: Vec::new(),
@@ -220,6 +229,9 @@ impl Chat {
         if self.approval.is_some() {
             return self.approval_key(key);
         }
+        if self.login_for.is_some() {
+            return self.login_key(key);
+        }
         match key {
             Key::CtrlC if self.turn_active => {
                 self.disarm();
@@ -227,18 +239,50 @@ impl Chat {
             }
             Key::CtrlC => self.arm_quit(now),
             Key::CtrlD if self.input.is_empty() => Applied::effect(ChatEffect::Quit),
-            Key::Enter => self.submit(),
+            Key::Up if self.picking() => {
+                self.move_picker(-1);
+                Applied::none()
+            }
+            Key::Down if self.picking() => {
+                self.move_picker(1);
+                Applied::none()
+            }
+            Key::Tab if self.picking() => {
+                self.accept_picker();
+                Applied::none()
+            }
+            Key::Enter => {
+                if let Some(prefix) = command_prefix(&self.input) {
+                    let matches = matching(prefix);
+                    let exact = matches.iter().any(|command| command.name == prefix);
+                    if prefix.is_empty() {
+                        return Applied::none();
+                    }
+                    if !exact && !matches.is_empty() {
+                        self.accept_picker();
+                    }
+                }
+                self.submit()
+            }
             Key::Backspace => {
                 self.disarm();
                 self.input.pop();
+                self.picker = 0;
                 Applied::none()
             }
             Key::Char(ch) => {
                 self.disarm();
                 self.input.push(ch);
+                self.picker = 0;
                 Applied::none()
             }
-            Key::Esc | Key::CtrlD => {
+            Key::Esc if self.picking() => {
+                self.input.clear();
+                self.picker = 0;
+                self.disarm();
+                Applied::none()
+            }
+            Key::Esc | Key::CtrlD | Key::Up | Key::Down | Key::Tab => {
                 self.disarm();
                 Applied::none()
             }
@@ -470,6 +514,9 @@ impl Chat {
             "recap" => self.recap(),
             "pause" => self.toggle_pause(),
             "help" => self.help(),
+            "login" => self.login(args),
+            "logout" => self.logout(args),
+            "keys" | "whoami" => self.keys(),
             _ => {
                 self.push(LineKind::Error, format!("unknown command /{name}"));
                 Applied::none()
@@ -577,10 +624,162 @@ impl Chat {
     }
 
     fn help(&mut self) -> Applied {
+        for command in COMMANDS {
+            self.push(
+                LineKind::Note,
+                format!("/{}  {}", command.name, command.about),
+            );
+        }
+        Applied::none()
+    }
+
+    fn picking(&self) -> bool {
+        self.login_for.is_none() && command_prefix(&self.input).is_some()
+    }
+
+    fn move_picker(&mut self, delta: isize) {
+        let Some(prefix) = command_prefix(&self.input) else {
+            return;
+        };
+        let len = matching(prefix).len();
+        if len == 0 {
+            return;
+        }
+        let current = self.picker % len;
+        self.picker = (current as isize + delta).rem_euclid(len as isize) as usize;
+    }
+
+    fn accept_picker(&mut self) {
+        let Some(prefix) = command_prefix(&self.input) else {
+            return;
+        };
+        let matches = matching(prefix);
+        if matches.is_empty() {
+            return;
+        }
+        let command = matches[self.picker % matches.len()];
+        self.input = format!("/{} ", command.name);
+        self.picker = 0;
+    }
+
+    fn login_key(&mut self, key: Key) -> Applied {
+        match key {
+            Key::Char(ch) if !ch.is_control() => {
+                self.input.push(ch);
+                Applied::none()
+            }
+            Key::Backspace => {
+                self.input.pop();
+                Applied::none()
+            }
+            Key::Enter => self.store_login_key(),
+            Key::Esc | Key::CtrlC => {
+                self.input.clear();
+                self.login_for = None;
+                self.push(LineKind::Note, "login cancelled".to_owned());
+                Applied::none()
+            }
+            _ => Applied::none(),
+        }
+    }
+
+    fn store_login_key(&mut self) -> Applied {
+        let secret = std::mem::take(&mut self.input);
+        let secret = secret.trim().to_owned();
+        let Some(provider) = self.login_for.take() else {
+            return Applied::none();
+        };
+        if secret.is_empty() {
+            self.push(LineKind::Error, "login: a key is required".to_owned());
+            return Applied::none();
+        }
+        match crate::secrets::store_key(&self.agent_dir, &provider, &secret) {
+            Ok(()) => self.push(LineKind::Note, format!("{provider}: key stored")),
+            Err(reason) => self.push(LineKind::Error, format!("login: {reason}")),
+        }
+        Applied::none()
+    }
+
+    fn login(&mut self, args: &str) -> Applied {
+        let mut parts = args.split_whitespace();
+        let Some(provider) = parts.next() else {
+            return self.keys();
+        };
+        let inline = parts.next();
+        if parts.next().is_some() {
+            self.push(LineKind::Error, "usage: /login <provider> [key]".to_owned());
+            return Applied::none();
+        }
+        if !known_provider(provider) {
+            self.push(
+                LineKind::Error,
+                format!("login: unknown provider {provider}"),
+            );
+            return Applied::none();
+        }
+        if let Some(secret) = inline {
+            return self.store_inline_key(provider, secret);
+        }
+        self.login_for = Some(provider.to_owned());
         self.push(
             LineKind::Note,
-            "/model  /checkpoint  /checkpoints  /rewind  /recap  /pause".to_owned(),
+            format!("login {provider}: paste the key, enter stores it"),
         );
+        Applied::none()
+    }
+
+    fn store_inline_key(&mut self, provider: &str, secret: &str) -> Applied {
+        match crate::secrets::store_key(&self.agent_dir, provider, secret) {
+            Ok(()) => self.push(LineKind::Note, format!("{provider}: key stored")),
+            Err(reason) => self.push(LineKind::Error, format!("login: {reason}")),
+        }
+        Applied::none()
+    }
+
+    fn logout(&mut self, args: &str) -> Applied {
+        let mut parts = args.split_whitespace();
+        let Some(provider) = parts.next() else {
+            self.push(LineKind::Error, "usage: /logout <provider>".to_owned());
+            return Applied::none();
+        };
+        if parts.next().is_some() {
+            self.push(LineKind::Error, "usage: /logout <provider>".to_owned());
+            return Applied::none();
+        }
+        if !known_provider(provider) {
+            self.push(
+                LineKind::Error,
+                format!("logout: unknown provider {provider}"),
+            );
+            return Applied::none();
+        }
+        match crate::secrets::remove_key(&self.agent_dir, provider) {
+            Ok(true) => self.push(LineKind::Note, format!("{provider}: signed out")),
+            Ok(false) => self.push(LineKind::Note, format!("{provider}: no stored key")),
+            Err(reason) => self.push(LineKind::Error, format!("logout: {reason}")),
+        }
+        Applied::none()
+    }
+
+    fn keys(&mut self) -> Applied {
+        let stored = crate::secrets::list_keys(&self.agent_dir)
+            .map(|rows| rows.into_iter().map(|row| row.provider).collect::<Vec<_>>())
+            .unwrap_or_default();
+        for provider in crate::engine::default_registry_config().providers {
+            let status = if provider
+                .credential_env
+                .as_deref()
+                .and_then(|name| std::env::var(name).ok())
+                .is_some_and(|value| !value.trim().is_empty())
+            {
+                "env"
+            } else if stored.iter().any(|id| id == provider.id.as_str()) {
+                "stored"
+            } else {
+                "no key"
+            };
+            self.push(LineKind::Note, format!("{}  {status}", provider.id));
+        }
         Applied::none()
     }
 
@@ -665,7 +864,7 @@ impl Chat {
     }
 
     fn agent_state(&self) -> AgentState {
-        if self.approval.is_some() || self.quit_armed.is_some() {
+        if self.approval.is_some() || self.quit_armed.is_some() || self.login_for.is_some() {
             AgentState::Blocked
         } else if self.turn_active {
             AgentState::Working
@@ -758,6 +957,133 @@ impl Drop for Screen {
     }
 }
 
+struct Command {
+    name: &'static str,
+    about: &'static str,
+}
+
+const COMMANDS: &[Command] = &[
+    Command {
+        name: "checkpoint",
+        about: "record a rewind point",
+    },
+    Command {
+        name: "checkpoints",
+        about: "list rewind points",
+    },
+    Command {
+        name: "help",
+        about: "list these commands",
+    },
+    Command {
+        name: "keys",
+        about: "which providers have a key",
+    },
+    Command {
+        name: "login",
+        about: "store a provider key",
+    },
+    Command {
+        name: "logout",
+        about: "forget a stored key",
+    },
+    Command {
+        name: "model",
+        about: "switch model",
+    },
+    Command {
+        name: "pause",
+        about: "hold input and stop the turn",
+    },
+    Command {
+        name: "recap",
+        about: "what this session did",
+    },
+    Command {
+        name: "rewind",
+        about: "cut back to a rewind point",
+    },
+    Command {
+        name: "whoami",
+        about: "which providers have a key",
+    },
+];
+
+/// The command being typed, only when `/` starts the line and no argument
+/// has been started. A slash later in the sentence, or a path like
+/// `/tmp/photo.png`, is not a command list.
+fn command_prefix(input: &str) -> Option<&str> {
+    let text = input.trim_start();
+    let rest = text.strip_prefix('/')?;
+    if rest.contains('/') || rest.chars().any(char::is_whitespace) {
+        return None;
+    }
+    Some(rest)
+}
+
+fn matching(prefix: &str) -> Vec<&'static Command> {
+    COMMANDS
+        .iter()
+        .filter(|command| command.name.starts_with(prefix))
+        .collect()
+}
+
+fn known_provider(id: &str) -> bool {
+    crate::engine::default_registry_config()
+        .providers
+        .iter()
+        .any(|provider| provider.id.as_str() == id)
+}
+
+fn picker_height(chat: &Chat) -> u16 {
+    if chat.login_for.is_some() {
+        return 0;
+    }
+    let Some(prefix) = command_prefix(&chat.input) else {
+        return 0;
+    };
+    matching(prefix).len().min(8) as u16
+}
+
+fn command_picker(chat: &Chat, width: u16, ink: &Ink) -> Paragraph<'static> {
+    let prefix = command_prefix(&chat.input).unwrap_or("");
+    let matches = matching(prefix);
+    let window = 8usize;
+    let selected = if matches.is_empty() {
+        0
+    } else {
+        chat.picker % matches.len()
+    };
+    let start = if matches.len() <= window {
+        0
+    } else {
+        selected
+            .saturating_sub(window / 2)
+            .min(matches.len() - window)
+    };
+    let room = (width as usize).saturating_sub(2).max(8);
+    let rows: Vec<Line<'static>> = matches
+        .iter()
+        .enumerate()
+        .skip(start)
+        .take(window)
+        .map(|(index, command)| {
+            let mark = if index == selected { "▶" } else { " " };
+            let style = if index == selected {
+                ink.fg(ink.gold).add_modifier(Modifier::BOLD)
+            } else {
+                ink.fg(ink.muted)
+            };
+            let label = format!(" {mark} /{:<12} {}", command.name, command.about);
+            Line::from(Span::styled(
+                titi_tui::width::truncate_to_width(&label, room),
+                style,
+            ))
+        })
+        .collect();
+    Paragraph::new(rows).style(ink.page())
+}
+
 fn draw(frame: &mut ratatui::Frame<'_>, chat: &mut Chat) {
     let area = frame.area();
     let ink = Ink::titanium();
@@ -765,9 +1091,11 @@ fn draw(frame: &mut ratatui::Frame<'_>, chat: &mut Chat) {
     if area.height < 6 || area.width < 16 {
         return;
     }
+    let picker_h = picker_height(chat);
     let cols = Layout::vertical([
         Constraint::Length(1),
         Constraint::Min(1),
+        Constraint::Length(picker_h),
         Constraint::Length(4),
     ])
     .split(area);
@@ -779,7 +1107,10 @@ fn draw(frame: &mut ratatui::Frame<'_>, chat: &mut Chat) {
     };
     frame.render_widget(body, cols[1]);
     paint_photos(frame, cols[1], &photos, &ink);
-    frame.render_widget(composer(chat, cols[2].width, &ink), cols[2]);
+    if picker_h > 0 {
+        frame.render_widget(command_picker(chat, cols[2].width, &ink), cols[2]);
+    }
+    frame.render_widget(composer(chat, cols[3].width, &ink), cols[3]);
 }
 
 /// Dark red. Body text stays warm white so a long reply is still readable.
@@ -826,6 +1157,8 @@ impl Ink {
 fn masthead(chat: &Chat, width: u16, ink: &Ink) -> Paragraph<'static> {
     let state = if chat.approval.is_some() {
         "needs you"
+    } else if chat.login_for.is_some() {
+        "sign in"
     } else if chat.paused {
         "paused"
     } else if chat.turn_active {
@@ -833,7 +1166,7 @@ fn masthead(chat: &Chat, width: u16, ink: &Ink) -> Paragraph<'static> {
     } else {
         "ready"
     };
-    let state_color = if chat.approval.is_some() || chat.paused {
+    let state_color = if chat.approval.is_some() || chat.paused || chat.login_for.is_some() {
         ink.amber
     } else if chat.turn_active {
         ink.accent
@@ -1124,7 +1457,7 @@ fn chip(parts: (&str, Color, String, Color), ink: &Ink, width: usize) -> Line<'s
 }
 
 fn composer(chat: &Chat, width: u16, ink: &Ink) -> Paragraph<'static> {
-    let (border, caption_color) = if chat.approval.is_some() {
+    let (border, caption_color) = if chat.approval.is_some() || chat.login_for.is_some() {
         (ink.amber, ink.amber)
     } else if chat.turn_active {
         (ink.accent, ink.accent)
@@ -1153,6 +1486,21 @@ fn composer(chat: &Chat, width: u16, ink: &Ink) -> Paragraph<'static> {
             ),
             ink.fg(ink.amber).add_modifier(Modifier::BOLD),
         ))
+    } else if let Some(provider) = &chat.login_for {
+        let shown = if chat.input.is_empty() {
+            format!("paste the {provider} key")
+        } else {
+            "•".repeat(chat.input.chars().count().min(32))
+        };
+        let color = if chat.input.is_empty() {
+            ink.dim
+        } else {
+            ink.text
+        };
+        Line::from(vec![
+            Span::styled("› ", ink.fg(ink.accent)),
+            Span::styled(shown, ink.fg(color)),
+        ])
     } else if chat.input.is_empty() {
         let placeholder = if chat.paused {
             "paused…"
@@ -1183,6 +1531,8 @@ fn composer_caption(chat: &Chat) -> String {
     };
     let keys = if chat.approval.is_some() {
         "y allow  ·  n refuse"
+    } else if chat.login_for.is_some() {
+        "enter stores  ·  esc cancels"
     } else if chat.paused {
         "/pause resumes"
     } else if !chat.hint.is_empty() {
@@ -1308,6 +1658,9 @@ fn map_key(code: KeyCode, modifiers: KeyModifiers) -> Option<Key> {
         KeyCode::Backspace => Some(Key::Backspace),
         KeyCode::Enter => Some(Key::Enter),
         KeyCode::Esc => Some(Key::Esc),
+        KeyCode::Up => Some(Key::Up),
+        KeyCode::Down => Some(Key::Down),
+        KeyCode::Tab => Some(Key::Tab),
         _ => None,
     }
 }
@@ -1395,6 +1748,22 @@ mod tests {
 
     fn chat() -> Chat {
         Chat::new("openai/gpt-4.1", "session-123")
+    }
+
+    fn frame_text(chat: &mut Chat) -> String {
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = match ratatui::Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("test backend: {error}"),
+        };
+        assert!(terminal.draw(|frame| draw(frame, chat)).is_ok());
+        terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
     }
 
     fn type_text(chat: &mut Chat, text: &str) {
@@ -1566,6 +1935,113 @@ mod tests {
             Some(ChatEffect::Send(EngineCommand::Cancel))
         );
         assert!(chat.paused);
+    }
+
+    #[test]
+    fn a_leading_slash_lists_commands() {
+        let mut chat = chat();
+        type_text(&mut chat, "/");
+        let view = frame_text(&mut chat);
+        assert!(view.contains("/login"), "{view}");
+        assert!(view.contains("store a provider key"), "{view}");
+    }
+
+    #[test]
+    fn a_slash_inside_a_sentence_does_not_list_commands() {
+        let mut chat = chat();
+        type_text(&mut chat, "see /rewind");
+        let view = frame_text(&mut chat);
+        assert!(!view.contains("cut back to a rewind point"), "{view}");
+    }
+
+    #[test]
+    fn tab_fills_the_highlighted_command() {
+        let mut chat = chat();
+        type_text(&mut chat, "/");
+        chat.on_key(Key::Down, Instant::now());
+        chat.on_key(Key::Tab, Instant::now());
+        assert_eq!(chat.input, "/checkpoints ");
+    }
+
+    #[test]
+    fn enter_on_a_prefix_runs_the_highlighted_command() {
+        let mut chat = chat();
+        type_text(&mut chat, "/re");
+        let applied = chat.on_key(Key::Enter, Instant::now());
+        assert!(applied.effect.is_none());
+        assert!(chat.lines.iter().any(|line| line.text.contains("recap")));
+    }
+
+    #[test]
+    fn esc_clears_a_leading_slash() {
+        let mut chat = chat();
+        type_text(&mut chat, "/mo");
+        chat.on_key(Key::Esc, Instant::now());
+        assert!(chat.input.is_empty());
+    }
+
+    #[test]
+    fn login_masks_the_key_and_stores_it() {
+        let dir = tempfile::tempdir().expect("temp");
+        let mut chat = Chat::new("openai/gpt-4.1", "session-123");
+        chat.agent_dir = dir.path().to_path_buf();
+        type_text(&mut chat, "/login openai");
+        chat.on_key(Key::Enter, Instant::now());
+        assert_eq!(chat.login_for.as_deref(), Some("openai"));
+        type_text(&mut chat, "sk-secret-value");
+        let applied = chat.on_key(Key::Enter, Instant::now());
+        assert!(applied.log.is_none());
+        assert!(chat.login_for.is_none());
+        assert!(
+            chat.lines
+                .iter()
+                .any(|line| line.text.contains("key stored"))
+        );
+        assert!(
+            !chat
+                .lines
+                .iter()
+                .any(|line| line.text.contains("sk-secret"))
+        );
+        let keys = crate::secrets::list_keys(dir.path()).expect("keys");
+        assert_eq!(keys.len(), 1);
+        assert_eq!(keys[0].provider, "openai");
+    }
+
+    #[test]
+    fn logout_forgets_the_stored_key() {
+        let dir = tempfile::tempdir().expect("temp");
+        crate::secrets::store_key(dir.path(), "openai", "sk-test").expect("store");
+        let mut chat = Chat::new("openai/gpt-4.1", "session-123");
+        chat.agent_dir = dir.path().to_path_buf();
+        type_text(&mut chat, "/logout openai");
+        chat.on_key(Key::Enter, Instant::now());
+        assert!(
+            chat.lines
+                .iter()
+                .any(|line| line.text.contains("signed out"))
+        );
+        assert!(crate::secrets::list_keys(dir.path()).unwrap().is_empty());
+    }
+
+    #[test]
+    fn an_inline_login_does_not_echo_the_key() {
+        let dir = tempfile::tempdir().expect("temp");
+        let mut chat = Chat::new("openai/gpt-4.1", "session-123");
+        chat.agent_dir = dir.path().to_path_buf();
+        type_text(&mut chat, "/login openai sk-one-line");
+        let applied = chat.on_key(Key::Enter, Instant::now());
+        assert!(applied.log.is_none());
+        assert!(
+            !chat
+                .lines
+                .iter()
+                .any(|line| line.text.contains("sk-one-line"))
+        );
+        assert_eq!(
+            crate::secrets::list_keys(dir.path()).unwrap()[0].provider,
+            "openai"
+        );
     }
 
     #[test]

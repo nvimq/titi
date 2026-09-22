@@ -6,7 +6,7 @@ A terminal coding agent in Rust. It follows the [reference product](https://refe
 
 | Version | License | Phase | As of | Tests |
 | --- | --- | --- | --- | --- |
-| `0.1.0` | [MIT](LICENSE) | E3 · Genome, in progress | 2026-09-22 | 927 passed |
+| `0.1.0` | [MIT](LICENSE) | E3 · Genome, in progress | 2026-09-22 | 935 passed |
 
 ---
 
@@ -55,6 +55,11 @@ titi --headless --approval yolo
 | `/recap` | Prints what the session did: turns, tools, files, problems |
 | `/pause` | Holds the composer and stops the running turn. `/pause` again resumes |
 | `/help` | Lists these commands |
+| `/login` | `/login` lists providers. `/login openai` asks for the key and stores it masked. `/login openai <key>` stores it in one step |
+| `/logout` | Forgets the stored key for a provider. An environment variable is left alone |
+| `/keys` | Which providers have a key: env, stored, or none. The key itself is never shown |
+| Up / Down | Move through the command list. It opens only when `/` is the start of the line |
+| Tab | Fills the highlighted command. Enter on a prefix runs it. Esc clears the slash |
 
 The screen is a ratatui chat: model and session on top, the transcript in the middle, one input line at the bottom. `--mouse` is still accepted so older commands do not fail; this screen does not track the mouse.
 
@@ -177,6 +182,11 @@ titi --headless --approval yolo
 | `/recap` | Что было в сессии: ходы, инструменты, файлы, ошибки |
 | `/pause` | Держит ввод и останавливает ход. Ещё раз `/pause` продолжает |
 | `/help` | Список этих команд |
+| `/login` | `/login` показывает провайдеров. `/login openai` просит ключ и прячет его. `/login openai <ключ>` сохраняет сразу |
+| `/logout` | Забывает сохранённый ключ провайдера. Переменную окружения не трогает |
+| `/keys` | У кого есть ключ: env, сохранён или нет. Сам ключ не показывается |
+| Up / Down | Список команд. Он открывается, только если `/` стоит в начале строки |
+| Tab | Подставляет выбранную команду. Enter на префиксе выполняет её. Esc стирает слэш |
 
 Экран — чат на ratatui: сверху модель и сессия, посередине разговор, снизу одна строка ввода. `--mouse` по-прежнему принимается, чтобы старые команды не падали; этот экран мышь не отслеживает.
 

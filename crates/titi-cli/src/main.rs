@@ -18,7 +18,8 @@ usage: titi [options]
 
 In the chat: Enter sends, and steers while a turn is running. Ctrl+C stops
 the turn; press it twice to leave. y / n answers a write or a shell prompt.
-/model switches to the next model that has a key.
+/model switches to the next model that has a key. /login stores a key.
+A / at the start of the line lists commands; up and down move, tab fills.
 ";
 
 fn main() -> io::Result<()> {
