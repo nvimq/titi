@@ -18,6 +18,20 @@ pub fn default_registry_config() -> ProviderRegistryConfig {
                 credential_required: true,
             },
             ProviderDescriptor {
+                id: "openrouter".into(),
+                api: ApiKind::OpenAiCompletions,
+                base_url: "https://openrouter.ai/api/v1".into(),
+                credential_env: Some("OPENROUTER_API_KEY".into()),
+                credential_required: true,
+            },
+            ProviderDescriptor {
+                id: "opencode-go".into(),
+                api: ApiKind::OpenAiCompletions,
+                base_url: "https://opencode.ai/zen/go/v1".into(),
+                credential_env: Some("OPENCODE_API_KEY".into()),
+                credential_required: true,
+            },
+            ProviderDescriptor {
                 id: "anthropic".into(),
                 api: ApiKind::AnthropicMessages,
                 base_url: "https://api.anthropic.com".into(),
@@ -33,6 +47,24 @@ pub fn default_registry_config() -> ProviderRegistryConfig {
                 context_window: Some(1_000_000),
             },
             ModelDescriptor {
+                id: "openrouter/gpt-4.1".into(),
+                provider: "openrouter".into(),
+                wire_model: "openai/gpt-4.1".into(),
+                context_window: Some(1_000_000),
+            },
+            ModelDescriptor {
+                id: "opencode-go/glm-5.3-flash".into(),
+                provider: "opencode-go".into(),
+                wire_model: "glm-5.3-flash".into(),
+                context_window: None,
+            },
+            ModelDescriptor {
+                id: "opencode-go/deepseek-v4-flash".into(),
+                provider: "opencode-go".into(),
+                wire_model: "deepseek-v4-flash".into(),
+                context_window: None,
+            },
+            ModelDescriptor {
                 id: "anthropic/claude-sonnet-4-5".into(),
                 provider: "anthropic".into(),
                 wire_model: "claude-sonnet-4-5".into(),
@@ -42,15 +74,58 @@ pub fn default_registry_config() -> ProviderRegistryConfig {
     }
 }
 
+/// Keeps the models that `available` accepts, in their original order.
+///
+/// An empty acceptance returns `models` unchanged, so a machine with no keys
+/// still starts and the first request can name the missing credential.
+pub fn prefer_available_models(
+    models: Vec<String>,
+    mut available: impl FnMut(&str) -> bool,
+) -> Vec<String> {
+    let ready: Vec<String> = models.iter().filter(|id| available(id)).cloned().collect();
+    if ready.is_empty() { models } else { ready }
+}
+
+/// Overlay `overlay` onto `base` by id.
+///
+/// A user file that only names one provider used to replace the catalog, so
+/// adding `opencode-go` dropped OpenAI. The same id from the overlay wins;
+/// every other builtin stays. New ids are appended.
+pub fn merge_registry_config(
+    mut base: ProviderRegistryConfig,
+    overlay: ProviderRegistryConfig,
+) -> ProviderRegistryConfig {
+    for provider in overlay.providers {
+        if let Some(existing) = base
+            .providers
+            .iter_mut()
+            .find(|item| item.id == provider.id)
+        {
+            *existing = provider;
+        } else {
+            base.providers.push(provider);
+        }
+    }
+    for model in overlay.models {
+        if let Some(existing) = base.models.iter_mut().find(|item| item.id == model.id) {
+            *existing = model;
+        } else {
+            base.models.push(model);
+        }
+    }
+    base
+}
+
 pub fn load_registry_config() -> ProviderRegistryConfig {
     let cwd = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let defaults = default_registry_config();
     if let Ok(settings) =
         titi_config::settings::Settings::load(&titi_config::agent_dir(), &cwd, &[])
         && let Some(parsed) = ProviderRegistryConfig::from_settings_value(&settings.effective())
     {
-        return parsed;
+        return merge_registry_config(defaults, parsed);
     }
-    default_registry_config()
+    defaults
 }
 
 /// Starts the engine, returning it with the model catalog and the session id
@@ -103,8 +178,13 @@ pub fn start_engine_with(
         .iter()
         .map(|model| model.id.to_string())
         .collect();
-    // Read what the tool needs before the config moves into the registry.
-    let context_window = config.primary_context_window();
+    // Windows stay with their model ids: the primary may not be the first
+    // entry once models without a key are set aside.
+    let windows: Vec<(String, Option<u64>)> = config
+        .models
+        .iter()
+        .map(|model| (model.id.to_string(), model.context_window))
+        .collect();
     let provider_ids: Vec<String> = config
         .providers
         .iter()
@@ -118,6 +198,14 @@ pub fn start_engine_with(
         )
         .map_err(|error| error.to_string())?,
     );
+    // A missing key fails the turn immediately, so a keyless model must not
+    // sit in front of one that can actually run. If none have a key, keep the
+    // catalog order and let the first request say which credential is missing.
+    let models = prefer_available_models(models, |id| registry.resolve(id).is_ok());
+    let context_window = models
+        .first()
+        .and_then(|id| windows.iter().find(|(model, _)| model == id))
+        .and_then(|(_, window)| *window);
     let primary = models
         .first()
         .cloned()
