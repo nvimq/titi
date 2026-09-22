@@ -1,54 +1,9 @@
-//! `titi` — omp port in Rust.
+//! `titi` — terminal coding agent.
 //!
-//! First-frame: banner + OMP box composer (status in the top border) painted
-//! before the provider finishes initializing; input typed during startup is
-//! queued and flushed to the agent once the provider reports ready.
-//! Transcript accordion sections render per DoD defaults.
-//!
-//! Mouse: `--mouse <off|on|wheel|buttons|all>` selects the tracking preset
-//! (1000/1002/1003 + SGR 1006); drag-select paints the selection background
-//! (selectedBg) instead of SGR inverse.
-//!
-//! Contract: `docs/research/agent-ux/README.md` (DoD).
+//! Headless JSONL and one full-screen chat share the engine. The screen is
+//! ratatui; it sends `EngineCommand` and paints `EngineEvent`.
 
-use std::io::{self, Write};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::{Duration, Instant};
-
-use crossterm::cursor::{Hide, Show};
-use crossterm::event::{
-    self, DisableBracketedPaste, DisableFocusChange, EnableBracketedPaste, EnableFocusChange,
-    Event, MouseButton, MouseEvent, MouseEventKind,
-};
-use crossterm::execute;
-use crossterm::terminal::{
-    EnterAlternateScreen, LeaveAlternateScreen, disable_raw_mode, enable_raw_mode, size,
-};
-
-use titi_cli::app::{
-    App, Dispatch, OverlayOutcome, SubmitEffect, default_theme, delete_session, load_mouse_preset,
-    save_mouse_preset,
-};
-use titi_cli::keys::{canonical_from_key_event, overlay_key_data};
-use titi_engine::EngineCommand;
-use titi_tui::caps::{MODE_2031_DISABLE, MODE_2031_ENABLE, MousePreset, OSC11_QUERY, osc52_copy};
-use titi_tui::renderer::{FramePlan, FrameProvider, Renderer, ResizeScrollbackMode};
-
-/// The startup banner shown before the provider is ready.
-fn banner() -> Vec<String> {
-    vec![
-        format!("titi v{} — omp port in Rust", titi_core::VERSION),
-        String::new(),
-    ]
-}
-
-/// Provider initialization.  Runs on a background thread; flips `ready` once
-/// the provider can accept prompts.
-fn init_provider(ready: Arc<AtomicBool>) {
-    let _ = titi_providers::creds::resolve_credential(&titi_providers::creds::LadderCtx::default());
-    ready.store(true, Ordering::SeqCst);
-}
+use std::io;
 
 const USAGE: &str = "\
 usage: titi [options]
@@ -56,32 +11,34 @@ usage: titi [options]
   --headless, -p [prompt]     read EngineCommand JSONL on stdin, or run one prompt
   --prompt <text>             run one prompt headless and print the reply
   --approval <mode>           always-ask | write | yolo (default: write)
-  --mouse <preset>            off | on | wheel | buttons | all
+  --mouse <preset>            accepted, ignored (off | on | wheel | buttons | all)
   --set-key <provider> <key>  store an API key in the agent directory
   --list-keys                 list stored providers (never the keys)
   --help, -h                  this text
 
-In the TUI: Ctrl+C stops a running turn; press it twice to leave. Ctrl+O
-expands or collapses every block, /recap opens the session recap.";
+In the chat: Enter sends, and steers while a turn is running. Ctrl+C stops
+the turn; press it twice to leave. y / n answers a write or a shell prompt.
+/model switches to the next model that has a key.
+";
 
 fn main() -> io::Result<()> {
-    // `--mouse <preset>` (default: persisted `display.mouse_tracking`, else
-    // off — no tracking, terminal-native selection works; drag-select
-    // requires `buttons` or `all`).
-    let mut mouse = load_mouse_preset().unwrap_or(MousePreset::Off);
     let mut headless = false;
     let mut prompt: Option<String> = None;
     let mut set_key: Option<(String, String)> = None;
     let mut list_keys = false;
-    // `--approval <mode>`: a surface with no approval prompt (headless, or a
-    // script) must say so, or a write-tier call waits forever.
     let mut approval = titi_tools::ApprovalMode::Write;
     let mut args = std::env::args().skip(1);
     while let Some(arg) = args.next() {
-        if arg == "--mouse"
-            && let Some(preset) = args.next().and_then(|v| MousePreset::parse(&v))
-        {
-            mouse = preset;
+        if arg == "--mouse" {
+            // Kept so older scripts still parse. The chat does not track the mouse.
+            let Some(raw) = args.next() else {
+                eprintln!("usage: titi --mouse <off|on|wheel|buttons|all>");
+                std::process::exit(2);
+            };
+            if titi_tui::caps::MousePreset::parse(&raw).is_none() {
+                eprintln!("unknown mouse preset {raw}\n\n{USAGE}");
+                std::process::exit(2);
+            }
         } else if arg == "--headless" || arg == "-p" {
             headless = true;
         } else if arg == "--prompt" {
@@ -117,17 +74,13 @@ fn main() -> io::Result<()> {
             println!("{USAGE}");
             return Ok(());
         } else if headless && prompt.is_none() && !arg.starts_with('-') {
-            // `titi --headless "do the thing"` — the bare word is the prompt.
             prompt = Some(arg);
         } else if arg.starts_with('-') {
-            // A typo used to be ignored silently, so `titi --hedless` launched
-            // the full-screen TUI and looked like a hang.
             eprintln!("unknown option {arg}\n\n{USAGE}");
             std::process::exit(2);
         }
     }
 
-    // Credential administration runs without starting the engine.
     if let Some((provider, key)) = set_key {
         return match titi_cli::secrets::store_key(&titi_config::agent_dir(), &provider, &key) {
             Ok(()) => {
@@ -165,16 +118,9 @@ fn main() -> io::Result<()> {
         .map_err(io::Error::other)?;
     let _enter = runtime.enter();
 
-    let ready = Arc::new(AtomicBool::new(false));
-    {
-        let ready = Arc::clone(&ready);
-        std::thread::spawn(move || init_provider(ready));
-    }
-    let (mut engine, models, session_id) =
+    let (engine, models, session_id) =
         titi_cli::engine::start_engine_with(approval).map_err(io::Error::other)?;
-    // The transcript lives in the session store; without this the session file
-    // stays empty and a resume replays nothing. Both surfaces share it.
-    let mut session_log =
+    let session_log =
         titi_cli::session_log::SessionLog::open(&titi_config::agent_dir(), &session_id);
     if session_log.is_none() {
         eprintln!("session: transcript writes are off (store unavailable)");
@@ -189,437 +135,5 @@ fn main() -> io::Result<()> {
         std::process::exit(code);
     }
 
-    enable_raw_mode()?;
-    let mut stdout = io::stdout();
-    execute!(
-        stdout,
-        EnterAlternateScreen,
-        Hide,
-        EnableBracketedPaste,
-        EnableFocusChange
-    )?;
-    write!(stdout, "{}", mouse.enable())?;
-    // OMP: Mode 2031 push + startup OSC 11 query. Replies are ProbeReply
-    // bytes (`App::ingest_probe_reply`); crossterm's Event enum drops OSC,
-    // so FocusGained re-queries the same way Mode 2031 would.
-    write!(stdout, "{MODE_2031_ENABLE}{OSC11_QUERY}")?;
-
-    let theme = default_theme().map_err(io::Error::other)?;
-    let mut app = App::new(Arc::clone(&ready), banner(), theme);
-    app.set_available_models(models);
-    app.set_session_id(session_id);
-    let (w, h) = size().unwrap_or((80, 24));
-    app.resize(w);
-    // Coding-agent default is rebuild; `PI_TUI_RESIZE_SCROLLBACK` overrides.
-    let resize = Renderer::<io::Stdout>::resize_mode_from_env(ResizeScrollbackMode::Rebuild);
-    let mut renderer = Renderer::new(stdout, w, h, true, resize);
-    let mut input = String::new();
-    // Herdr sees this pane as an agent only if we tell it. Outside a Herdr
-    // pane the reporter is absent and nothing is sent.
-    let mut herdr = titi_cli::herdr::Reporter::from_env();
-    if let Some(reporter) = &mut herdr {
-        reporter.set_session(app.session_id().unwrap_or(""));
-        let (state, message) = app.herdr_state();
-        reporter.report(state, message.as_deref());
-    }
-    let mut herdr_state = app.herdr_state();
-    paint(&mut renderer, &mut app, &input)?;
-
-    loop {
-        if event::poll(Duration::from_millis(50))? {
-            match event::read()? {
-                Event::Key(key) => {
-                    let Some(canonical) = canonical_from_key_event(&key) else {
-                        continue;
-                    };
-                    // Pause overlay: Esc/Enter/Space/Ctrl+C resume (OMP /pause).
-                    if app.is_paused()
-                        && matches!(canonical.as_str(), "escape" | "enter" | "space" | "ctrl+c")
-                    {
-                        app.close_overlay();
-                        paint(&mut renderer, &mut app, &input)?;
-                        continue;
-                    }
-                    if app.overlay_open() {
-                        if let Some(data) = overlay_key_data(&key) {
-                            if let Some(outcome) = app.overlay_input(&data) {
-                                handle_outcome(
-                                    &mut engine,
-                                    &mut app,
-                                    &mut input,
-                                    &mut session_log,
-                                    outcome,
-                                );
-                            }
-                            paint(&mut renderer, &mut app, &input)?;
-                        }
-                        continue;
-                    }
-                    match app.handle_canonical(&canonical, &mut input) {
-                        Dispatch::Exit => {
-                            let _ = engine.try_send(EngineCommand::Shutdown);
-                            break;
-                        }
-                        Dispatch::Cancel => {
-                            let _ = engine.try_send(EngineCommand::Cancel);
-                            paint(&mut renderer, &mut app, &input)?;
-                        }
-                        Dispatch::Unhandled => {}
-                        Dispatch::Handled(effect) => {
-                            if let Some(effect) = effect {
-                                apply_effect(
-                                    &mut mouse,
-                                    &mut renderer,
-                                    &mut engine,
-                                    &mut app,
-                                    &mut input,
-                                    effect,
-                                )?;
-                            } else {
-                                paint(&mut renderer, &mut app, &input)?;
-                            }
-                        }
-                    }
-                }
-                Event::Resize(w, h) => {
-                    app.set_size(w, h);
-                    renderer.on_resize(
-                        w,
-                        h,
-                        &mut AppFrame {
-                            app: &mut app,
-                            input: &input,
-                        },
-                    )?;
-                }
-                Event::Mouse(mouse_event) => {
-                    handle_mouse(&mut app, mouse_event);
-                    paint(&mut renderer, &mut app, &input)?;
-                }
-                Event::Paste(text) if !app.overlay_open() => {
-                    // One paste = one event: the whole block is inserted
-                    // into the buffer, never executed line-by-line.
-                    let appended = app.paste(&text);
-                    input.push_str(&appended);
-                    paint(&mut renderer, &mut app, &input)?;
-                }
-                Event::FocusGained => {
-                    // Mode 2031 analogue under crossterm: re-query OSC 11.
-                    let out = renderer.out_mut();
-                    write!(out, "{OSC11_QUERY}")?;
-                    out.flush()?;
-                }
-                _ => {}
-            }
-        }
-
-        if app.poll_space_hold(Instant::now()) {
-            paint(&mut renderer, &mut app, &input)?;
-        }
-
-        let flushed = app.flush_queued(&ready);
-        for prompt in flushed {
-            let _ = engine.try_send(EngineCommand::SubmitPrompt {
-                text: prompt.into(),
-            });
-        }
-        let mut events = false;
-        while let Ok(event) = engine.try_recv() {
-            app.ingest_engine_event(event);
-            events = true;
-        }
-        if events {
-            paint(&mut renderer, &mut app, &input)?;
-        }
-        // Report only on a change: a report per frame would flood the socket.
-        let current = app.herdr_state();
-        if current != herdr_state {
-            if let Some(reporter) = &herdr {
-                reporter.report(current.0, current.1.as_deref());
-            }
-            herdr_state = current;
-        }
-        persist_session(&mut app, session_log.as_ref());
-    }
-
-    let stdout = renderer.out_mut();
-    execute!(
-        stdout,
-        Show,
-        LeaveAlternateScreen,
-        DisableBracketedPaste,
-        DisableFocusChange
-    )?;
-    write!(stdout, "{MODE_2031_DISABLE}")?;
-    write!(stdout, "{}", mouse.disable())?;
-    disable_raw_mode()?;
-    Ok(())
-}
-
-/// Appends everything the App has queued for the transcript. A failed append
-/// is reported once per batch and never stops the CLI: losing a line of
-/// history is better than dropping the session.
-fn persist_session(app: &mut App, log: Option<&titi_cli::session_log::SessionLog>) {
-    let writes = app.drain_session_writes();
-    if writes.is_empty() {
-        return;
-    }
-    let Some(log) = log else {
-        return;
-    };
-    for (role, text) in writes {
-        let result = match role {
-            titi_core::session::Role::User => log.user(&text),
-            titi_core::session::Role::Assistant => log.assistant(&text),
-            titi_core::session::Role::System => log.system(&text),
-        };
-        if let Err(reason) = result {
-            eprintln!("session: not saved ({reason})");
-        }
-    }
-}
-
-/// Route a mouse event into the app's selection model.
-fn handle_mouse(app: &mut App, event: MouseEvent) {
-    match event.kind {
-        MouseEventKind::Down(MouseButton::Left) => app.mouse_press(event.column, event.row),
-        MouseEventKind::Drag(MouseButton::Left) => app.mouse_drag(event.column, event.row),
-        MouseEventKind::Up(MouseButton::Left) => app.mouse_release(),
-        MouseEventKind::Moved => app.clear_selection(),
-        _ => {}
-    }
-}
-
-/// Act on a closed overlay panel's outcome.  An approval Yes is the only
-/// path that deletes; Esc / No / Cancel never do.
-fn handle_outcome(
-    engine: &mut titi_engine::Engine,
-    app: &mut App,
-    input: &mut String,
-    log: &mut Option<titi_cli::session_log::SessionLog>,
-    outcome: OverlayOutcome,
-) {
-    match outcome {
-        OverlayOutcome::ModelSelected(model) => {
-            app.apply_model(&model);
-            let _ = engine.try_send(EngineCommand::SwitchModel {
-                model: model.into(),
-            });
-        }
-        OverlayOutcome::HistoryPicked(text) => {
-            *input = text;
-        }
-        OverlayOutcome::SessionSwitched(id) => {
-            if app.session_id() == Some(id.as_str()) {
-                app.set_alert(format!("session: {id} is already live"));
-                return;
-            }
-            // A switch is three moves, not one: the engine replays the other
-            // session's history, the view drops the old conversation, and the
-            // log starts writing to the new file.
-            let agent_dir = titi_config::agent_dir();
-            let history = titi_cli::app::session_history(&agent_dir, &id).unwrap_or_default();
-            let _ = engine.try_send(EngineCommand::RestoreHistory { messages: history });
-            *log = titi_cli::session_log::SessionLog::open(&agent_dir, &id);
-            app.switch_to_session(&id);
-        }
-        OverlayOutcome::SessionNew => {
-            // Same three moves as a switch, starting from an empty history.
-            let agent_dir = titi_config::agent_dir();
-            match titi_cli::app::new_session(&agent_dir) {
-                Ok(id) => {
-                    let _ = engine.try_send(EngineCommand::RestoreHistory {
-                        messages: Vec::new(),
-                    });
-                    *log = titi_cli::session_log::SessionLog::open(&agent_dir, &id);
-                    app.switch_to_session(&id);
-                }
-                Err(reason) => app.set_alert(format!("session: not created ({reason})")),
-            }
-        }
-        OverlayOutcome::SessionCancelled => {
-            eprintln!("session switcher: cancelled (nothing deleted)");
-        }
-        OverlayOutcome::Approval(true) => match app.take_pending_close() {
-            Some(id) if id == "current" => {
-                eprintln!("session: cannot close the live session");
-            }
-            Some(id) => match delete_session(&id) {
-                Ok(()) => eprintln!("session: closed {id}"),
-                Err(reason) => eprintln!("session: not closed ({reason})"),
-            },
-            None => eprintln!("approval: yes (no pending action)"),
-        },
-        OverlayOutcome::Approval(false) => {
-            let _ = app.take_pending_close();
-            eprintln!("approval: declined (nothing deleted)");
-        }
-        OverlayOutcome::ToolApproval { call_id, approved } => {
-            let _ = engine.try_send(EngineCommand::ApproveTool {
-                call_id: call_id.into(),
-                approved,
-            });
-        }
-        OverlayOutcome::Dismissed => {}
-        OverlayOutcome::HubSelected(id) => {
-            let _ = engine.try_send(EngineCommand::FocusAgent {
-                agent_id: id.into(),
-            });
-        }
-        OverlayOutcome::HubRevive(id) => {
-            let _ = engine.try_send(EngineCommand::ReviveAgent {
-                agent_id: id.into(),
-            });
-        }
-        OverlayOutcome::HubStop(id) => {
-            let _ = engine.try_send(EngineCommand::StopAgent {
-                agent_id: id.into(),
-            });
-        }
-    }
-}
-
-fn apply_effect(
-    mouse: &mut MousePreset,
-    renderer: &mut Renderer<io::Stdout>,
-    engine: &mut titi_engine::Engine,
-    app: &mut App,
-    input: &mut String,
-    effect: SubmitEffect,
-) -> io::Result<()> {
-    match effect {
-        SubmitEffect::DisplayReset => {
-            app.request_history_replay();
-            let mut provider = AppFrame { app, input };
-            renderer.reset_display(&mut provider)?;
-        }
-        SubmitEffect::Rewind => {
-            // The session file was cut; the engine's replayed history must be
-            // cut with it, or the model keeps reading the removed turns.
-            let history = app
-                .session_id()
-                .and_then(|id| titi_cli::app::session_history(&titi_config::agent_dir(), id).ok())
-                .unwrap_or_default();
-            let _ = engine.try_send(EngineCommand::RestoreHistory { messages: history });
-        }
-        SubmitEffect::ExternalEditor => {
-            let stdout = renderer.out_mut();
-            execute!(stdout, Show, LeaveAlternateScreen)?;
-            disable_raw_mode()?;
-            *input = run_external_editor(input);
-            enable_raw_mode()?;
-            execute!(stdout, EnterAlternateScreen, Hide)?;
-            renderer.set_size(renderer.width(), renderer.height());
-            paint(renderer, app, input)?;
-        }
-        other => {
-            apply_submit_effect(engine, mouse, renderer.out_mut(), other)?;
-            paint(renderer, app, input)?;
-        }
-    }
-    Ok(())
-}
-
-fn apply_submit_effect(
-    engine: &mut titi_engine::Engine,
-    mouse: &mut MousePreset,
-    stdout: &mut impl Write,
-    effect: SubmitEffect,
-) -> io::Result<()> {
-    match effect {
-        SubmitEffect::None => {}
-        SubmitEffect::MouseToggle => {
-            let next = cycle_mouse(*mouse);
-            apply_submit_effect(engine, mouse, stdout, SubmitEffect::Mouse(next))?;
-        }
-        SubmitEffect::Mouse(next) => {
-            write!(stdout, "{}", mouse.disable())?;
-            *mouse = next;
-            write!(stdout, "{}", mouse.enable())?;
-            match save_mouse_preset(*mouse) {
-                Ok(()) => eprintln!("mouse preset: {} (saved)", mouse.name()),
-                Err(reason) => {
-                    eprintln!("mouse preset: {} (not saved: {reason})", mouse.name())
-                }
-            }
-        }
-        SubmitEffect::Queued(prompt) | SubmitEffect::Delivered(prompt) => {
-            let _ = engine.try_send(EngineCommand::SubmitPrompt {
-                text: prompt.into(),
-            });
-        }
-        SubmitEffect::Steer(prompt) => {
-            let _ = engine.try_send(EngineCommand::Steer {
-                text: prompt.into(),
-            });
-        }
-        // The modal holds input; this is the half that stops the agent. The
-        // engine has no suspend, so the honest "stop at this boundary" is a
-        // cancel: the turn ends where it is and the conversation keeps it.
-        SubmitEffect::Pause => {
-            let _ = engine.try_send(EngineCommand::Cancel);
-        }
-        // Handled by `apply_effect`, which is the only caller holding the App
-        // and therefore the session id.
-        SubmitEffect::Rewind => {}
-        SubmitEffect::Copy(text) => {
-            write!(stdout, "{}", osc52_copy(&text))?;
-            stdout.flush()?;
-        }
-        SubmitEffect::DisplayReset | SubmitEffect::ExternalEditor => {}
-    }
-    Ok(())
-}
-
-fn cycle_mouse(current: MousePreset) -> MousePreset {
-    match current {
-        MousePreset::Off => MousePreset::Wheel,
-        MousePreset::Wheel => MousePreset::Buttons,
-        MousePreset::Buttons => MousePreset::All,
-        MousePreset::All => MousePreset::Off,
-    }
-}
-
-/// Viewport-diff paint via [`Renderer`] — never `Clear(All)`.
-fn paint(renderer: &mut Renderer<io::Stdout>, app: &mut App, input: &str) -> io::Result<()> {
-    let mut provider = AppFrame { app, input };
-    let plan = provider.plan((renderer.width(), renderer.height()));
-    if let Some(ack) = renderer.draw(plan)? {
-        provider.acknowledge(ack.id);
-    }
-    Ok(())
-}
-
-struct AppFrame<'a> {
-    app: &'a mut App,
-    input: &'a str,
-}
-
-impl FrameProvider for AppFrame<'_> {
-    fn plan(&mut self, size: (u16, u16)) -> FramePlan {
-        self.app.plan_frame(self.input, size.1)
-    }
-
-    fn acknowledge(&mut self, id: u64) {
-        self.app.acknowledge_history(id);
-    }
-}
-
-/// `$VISUAL` / `$EDITOR` (fallback `vi`) on a temp file; returns the
-/// edited draft, or the original text if the editor fails.
-fn run_external_editor(draft: &str) -> String {
-    let editor = std::env::var("VISUAL")
-        .or_else(|_| std::env::var("EDITOR"))
-        .unwrap_or_else(|_| "vi".to_owned());
-    let path = std::env::temp_dir().join(format!("titi-draft-{}.txt", std::process::id()));
-    if std::fs::write(&path, draft).is_err() {
-        return draft.to_owned();
-    }
-    let status = std::process::Command::new(&editor).arg(&path).status();
-    let text = std::fs::read_to_string(&path).unwrap_or_else(|_| draft.to_owned());
-    let _ = std::fs::remove_file(&path);
-    match status {
-        Ok(s) if s.success() => text,
-        _ => draft.to_owned(),
-    }
+    titi_cli::chat::run(engine, session_log, models, session_id)
 }
