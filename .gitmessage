@@ -1,0 +1,11 @@
+# type(scope): summary   (english, imperative, lowercase, no trailing dot)
+#   type:  feat fix docs refactor test ci style chore
+#   scope: ci cargo workspace readme agents commits conveyor skills <crate>
+#
+# --- subject above (~50 cols), blank line, then body wrapped ~78 cols ---
+#
+# Why: what problem or goal — not a restatement of the diff.
+# Invariant: what is now guaranteed or protected.
+# Tradeoff: why this way and not the alternative.
+#
+# One concern per commit. No filler, no "as requested".
