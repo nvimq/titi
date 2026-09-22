@@ -124,7 +124,7 @@ The handoff notes a public endpoint (`https://opencode.ai/zen/go/v1`) and model 
 
 ### Continue the work
 
-Start at [`docs/research/reference-product-port/STATE.md`](docs/research/reference-product-port/STATE.md). When the state and the code disagree, [`docs/research/reference-product-port/DECISIONS.md`](docs/research/reference-product-port/DECISIONS.md) wins. The map and the rules are in [`docs/research/reference-product-port/README.md`](docs/research/reference-product-port/README.md).
+The resume point is [`docs/research/STATE.md`](docs/research/STATE.md); the research map is [`docs/research/README.md`](docs/research/README.md). The task cycle is [`docs/CONVEYOR.md`](docs/CONVEYOR.md) and the milestones are [`docs/PLAN.md`](docs/PLAN.md). Decisions live in the theme docs under `docs/research/`.
 
 ```bash
 cargo fmt --check
@@ -251,7 +251,7 @@ cargo run -p titi-genome --example map -- . 40
 
 ### Продолжить работу
 
-Точка возобновления — [`docs/research/reference-product-port/STATE.md`](docs/research/reference-product-port/STATE.md). Если стейт и код разошлись, верен [`docs/research/reference-product-port/DECISIONS.md`](docs/research/reference-product-port/DECISIONS.md). Карта и правила — [`docs/research/reference-product-port/README.md`](docs/research/reference-product-port/README.md).
+Точка возобновления — [`docs/research/STATE.md`](docs/research/STATE.md); карта ресерча — [`docs/research/README.md`](docs/research/README.md). Цикл задачи — [`docs/CONVEYOR.md`](docs/CONVEYOR.md), майлстоуны — [`docs/PLAN.md`](docs/PLAN.md). Решения живут в доках тем под `docs/research/`.
 
 ```bash
 cargo fmt --check
