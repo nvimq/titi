@@ -2,7 +2,7 @@
 
 ## Активное направление: Empryo functional port
 
-Статус: **0.1.0 работает** (чат на ratatui, headless, инструменты, сессии, Genome, память, SOUL). Встроенный каталог: OpenAI, OpenRouter, OpenCode, Anthropic; пользовательский конфиг накладывается по id, а не заменяет список. Канонический handoff: [`empryo-port/STATE.md`](empryo-port/STATE.md). Решения: [`empryo-port/DECISIONS.md`](empryo-port/DECISIONS.md). Roadmap: [`empryo-port/README.md`](empryo-port/README.md). Следующий код — goal loop поверх reviewer-а. Не начинать GPUI. Tree-sitter — замена эвристик Genome, не новый граф: symbol-level уже есть.
+Статус: **0.1.0 работает** (чат на ratatui, headless, инструменты, сессии, Genome, память, SOUL). Встроенный каталог: OpenAI, OpenRouter, OpenCode, Anthropic; пользовательский конфиг накладывается по id, а не заменяет список. Канонический handoff: [`empryo-port/STATE.md`](empryo-port/STATE.md). Решения: [`empryo-port/DECISIONS.md`](empryo-port/DECISIONS.md). Roadmap: [`empryo-port/README.md`](empryo-port/README.md). Goal loop поверх reviewer-а — done (`titi-engine::goal_loop`, 7 тестов, workspace 899 passed). Следующий код — Genome tree-sitter для языков за пределами Rust/TS/Python, или fallback-пул titi. Не начинать GPUI.
 
 Правило продолжения: сначала прочитать dedicated STATE, прогнать baseline, выполнить только NEXT, затем синхронизировать оба STATE-файла.
 

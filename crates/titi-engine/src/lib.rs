@@ -4,6 +4,7 @@ pub mod agents;
 pub mod claims;
 pub mod compaction;
 pub mod findings;
+pub mod goal_loop;
 pub mod protocol;
 pub mod registry;
 pub mod review;
@@ -15,6 +16,7 @@ pub mod tool_loop;
 pub use agents::{AgentContext, AgentRequest, AgentRunner, AgentSupervisor, StreamingAgentRunner};
 pub use claims::{ClaimError, Claims};
 pub use findings::{FINDINGS_CAPACITY, Finding, Findings};
+pub use goal_loop::{GoalOutcome, GoalRound, GoalStopReason, run_goal_loop};
 pub use protocol::{AgentKind, AgentStatus, EngineCommand, EngineEvent, TurnId};
 pub use registry::{
     CredentialSource, EnvCredentialSource, HttpTransportFactory, LayeredCredentialSource,

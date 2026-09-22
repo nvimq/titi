@@ -75,6 +75,7 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Паника или ошибка в построении карты деградирует в «нет карты в этом turn» через `run_off_thread` (JoinError и Err обрабатываются одинаково) — покрыто тестом с реальной паникой.
 - `titi-engine::review` — fresh-context reviewer:"}] `Verdict` (PASS/FAIL/PARTIAL, exit 0/3/1), `ReviewRequest::prompt` собирает brief + goal + evidence, `AgentReviewer` гоняет один turn через `AgentRunner` с `AgentContext::detached()`.
 - Verdict читается только с первой непустой строки: эхо brief-а, отговорка или токен на второй строке дают `PARTIAL`.
+- **Goal loop поверх reviewer-а** (`titi-engine::goal_loop`): `run_goal_loop(coder, reviewer, goal, max_rounds)` гоняет coder↔reviewer раунды до `Verdict::Pass`, потолка раундов, или осцилляции. Осцилляция = coder вернул byte-for-byte то же самое, что в прошлом раунде — вторая проверка ревьюером не имеет смысла (прошлый раунд уже несёт non-pass verdict для этого evidence), поэтому цикл останавливается без лишнего review-вызова. После non-pass раунда notes ревьюера вшиваются в task следующего раунда. `GoalOutcome::exit_code()` делегирует в `Verdict::exit_code()` — тот самый "PASS=0, FAIL=3, PARTIAL=1" контракт, уже задокументированный в `review.rs`. `max_rounds` клампится к минимум 1 (тот же паттерн, что `ToolAgentRunner::with_max_rounds`). 7 тестов: pass на первом раунде, потолок раундов при разном evidence, осцилляция останавливает без второго review-вызова, восстановление после fail, `max_rounds=0` даёт 1 раунд, ошибка coder-а пробрасывается без вызова reviewer-а, notes ревьюера доходят до task следующего раунда.
 
 ## VERIFIED
 
@@ -153,6 +154,10 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - `titi-cli`: `herdr_state_follows_the_turn` — idle → working на `TurnStarted`, blocked с «waiting for approval» на `ToolApprovalNeeded` — PASS.
 - `cargo test --workspace` — 891 passed, 0 failed.
 - Реальный прогон: `example map` на titi — 110 файлов, 148 рёбер, `stream.rs:(→8)`, `width.rs:(→12)` наверху — PASS.
+- `titi-engine::goal_loop` — 7 unit tests PASS (см. DONE выше).
+- `cargo test --workspace` — 899 passed, 0 failed, после добавления goal_loop.
+- `cargo fmt --check` — чистый.
+- `cargo clippy -p titi-engine --all-targets` — 0 новых ошибок; 7 предупреждений `unwrap_used` внутри `#[cfg(test)]` в goal_loop.rs, тот же принятый паттерн, что уже в loop.rs/tools.rs/agents.rs/registry.rs (`warn`, не `deny` в workspace lints).
 
 ## DECISIONS
 
@@ -160,6 +165,8 @@ Plan: `.empryo/plans/plan-211e3ec9-de18-487f-b75c-8430855aecd0.md`
 - Fallback запрещён после visible content.
 - Permanent 4xx не retry/fallback.
 - Не подключать CLI к fake/empty resolver: сначала сделать provider registry с transport + credential.
+- Осцилляция цикла детектится по byte-for-byte совпадению evidence с прошлым раундом, не по diff — прошлый раунд уже несёт non-pass verdict для этого evidence, повторный review-вызов на идентичном input не изменит результат.
+- `GoalStopReason` (не `StopReason`) — `titi_providers::StopReason` уже существует (почему остановился turn); одинаковое имя двух разных enum сбивало бы ревьюера PR.
 - Документация и STATE обновляются после каждого milestone, чтобы другая модель могла продолжить без истории чата.
 
 ## RISKS
@@ -205,7 +212,6 @@ when an entry below describes an earlier shape.
 1m. Чего ещё нет: скиллы/hooks/MCP (E6), вкладки (в Empryo до 5), стоимость в USD (нет цен провайдеров), STT. Настоящая модель эмбеддингов — когда записей станет больше, чем влезает в промпт; интерфейс `embed()` уже изолирован.
 1b. TUI: рекап читает только store+trajectory; агентские findings и стоимости в него пока не попадают (нужна персистентность findings).
 2. Genome: tree-sitter для остальных языков и symbol-level граф.
-3. Goal loop поверх reviewer-а (coder ⟷ reviewer rounds с oscillation-детекцией).
 
 ## Verification baseline
 
