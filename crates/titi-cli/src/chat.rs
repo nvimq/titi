@@ -3,7 +3,9 @@
 //! The state machine does not touch the terminal, so tests drive it with
 //! keys and engine events. [`run`] is the only place that owns the screen.
 
-use std::io::{self, Stdout};
+use std::collections::HashSet;
+use std::io::{self, Stdout, Write};
+use std::path::Path;
 use std::time::{Duration, Instant};
 
 use ratatui::Terminal;
@@ -112,6 +114,14 @@ pub struct Chat {
     approval: Option<PendingApproval>,
     quit_armed: Option<Instant>,
     hint: String,
+    /// Kitty or Ghostty unicode placeholders are available.
+    kitty: bool,
+    tmux: bool,
+    photos: Vec<Photo>,
+    misses: HashSet<String>,
+    next_image_id: u32,
+    /// Transmit and placement sequences to write before the next frame.
+    kitty_flush: String,
 }
 
 impl Chat {
@@ -132,6 +142,71 @@ impl Chat {
             approval: None,
             quit_armed: None,
             hint: String::new(),
+            kitty: false,
+            tmux: false,
+            photos: Vec::new(),
+            misses: HashSet::new(),
+            next_image_id: 1,
+            kitty_flush: String::new(),
+        }
+    }
+
+    fn take_kitty_flush(&mut self) -> String {
+        std::mem::take(&mut self.kitty_flush)
+    }
+
+    /// Load a local photo once and queue its kitty setup when the size changes.
+    fn prepare_photo(&mut self, path: &str, max_cols: u16) -> Option<PlacedPhoto> {
+        if let Some(index) = self.photos.iter().position(|photo| photo.path == path) {
+            return Some(self.place_cached(index, max_cols));
+        }
+        if self.misses.contains(path) {
+            return None;
+        }
+        let Some(decoded) = titi_tui::image::decode_rgba_file(Path::new(path)) else {
+            self.misses.insert(path.to_owned());
+            return None;
+        };
+        let id = self.next_image_id;
+        self.next_image_id = self.next_image_id.saturating_add(1);
+        self.photos.push(Photo {
+            path: path.to_owned(),
+            id,
+            pixels: decoded.pixels,
+            pixel_w: decoded.width,
+            pixel_h: decoded.height,
+            transmitted: false,
+            placed: None,
+        });
+        let index = self.photos.len() - 1;
+        Some(self.place_cached(index, max_cols))
+    }
+
+    fn place_cached(&mut self, index: usize, max_cols: u16) -> PlacedPhoto {
+        let slot = &self.photos[index];
+        let (columns, rows) = titi_tui::image::photo_cells(slot.pixel_w, slot.pixel_h, max_cols);
+        let size = Some((columns, rows));
+        if !slot.transmitted || slot.placed != size {
+            let setup = titi_tui::image::kitty_photo_setup(
+                slot.id,
+                &slot.pixels,
+                slot.pixel_w,
+                slot.pixel_h,
+                columns,
+                rows,
+                self.tmux,
+                !slot.transmitted,
+            );
+            let slot = &mut self.photos[index];
+            slot.transmitted = true;
+            slot.placed = size;
+            self.kitty_flush.push_str(&setup);
+        }
+        let slot = &self.photos[index];
+        PlacedPhoto {
+            id: slot.id,
+            columns,
+            rows,
         }
     }
 
@@ -453,6 +528,11 @@ pub fn run(
     if !models.is_empty() {
         chat.models = models;
     }
+    let detect = titi_tui::image::PlaceholderDetect::from_env();
+    if detect.supported() {
+        chat.kitty = true;
+        chat.tmux = detect.tmux;
+    }
     let mut herdr_reporter = herdr::Reporter::from_env();
     if let Some(reporter) = &mut herdr_reporter {
         reporter.set_session(&session_id);
@@ -468,7 +548,14 @@ pub fn run(
             reporter.report(state, None);
             reported = state;
         }
-        screen.terminal.draw(|frame| draw(frame, &chat))?;
+        screen.terminal.draw(|frame| draw(frame, &mut chat))?;
+        let kitty = chat.take_kitty_flush();
+        if !kitty.is_empty() {
+            let backend = screen.terminal.backend_mut();
+            backend.write_all(kitty.as_bytes())?;
+            backend.flush()?;
+            screen.terminal.draw(|frame| draw(frame, &mut chat))?;
+        }
         if pump(&mut engine, &mut chat, &session_log)? {
             break Ok(());
         }
@@ -509,7 +596,7 @@ impl Drop for Screen {
     }
 }
 
-fn draw(frame: &mut ratatui::Frame<'_>, chat: &Chat) {
+fn draw(frame: &mut ratatui::Frame<'_>, chat: &mut Chat) {
     let area = frame.area();
     let ink = Ink::titanium();
     frame.render_widget(Block::default().style(ink.page()), area);
@@ -523,14 +610,13 @@ fn draw(frame: &mut ratatui::Frame<'_>, chat: &Chat) {
     ])
     .split(area);
     frame.render_widget(masthead(chat, cols[0].width, &ink), cols[0]);
-    if chat.lines.is_empty() {
-        frame.render_widget(empty_state(cols[1].height, &ink), cols[1]);
+    let (body, photos) = if chat.lines.is_empty() {
+        (empty_state(cols[1].height, &ink), Vec::new())
     } else {
-        frame.render_widget(
-            transcript(chat, cols[1].width, cols[1].height, &ink),
-            cols[1],
-        );
-    }
+        transcript(chat, cols[1].width, cols[1].height, &ink)
+    };
+    frame.render_widget(body, cols[1]);
+    paint_photos(frame, cols[1], &photos, &ink);
     frame.render_widget(composer(chat, cols[2].width, &ink), cols[2]);
 }
 
@@ -636,19 +722,166 @@ fn empty_state(height: u16, ink: &Ink) -> Paragraph<'static> {
         .style(ink.page())
 }
 
-fn transcript(chat: &Chat, width: u16, height: u16, ink: &Ink) -> Paragraph<'static> {
+struct Photo {
+    path: String,
+    id: u32,
+    pixels: Vec<u8>,
+    pixel_w: u32,
+    pixel_h: u32,
+    transmitted: bool,
+    placed: Option<(u16, u16)>,
+}
+
+struct PlacedPhoto {
+    id: u32,
+    columns: u16,
+    rows: u16,
+}
+
+enum TranscriptRow {
+    Text(Line<'static>),
+    Photo {
+        id: u32,
+        columns: u16,
+        image_row: u16,
+    },
+}
+
+struct PhotoPaint {
+    row: u16,
+    id: u32,
+    columns: u16,
+    image_row: u16,
+}
+
+fn transcript(
+    chat: &mut Chat,
+    width: u16,
+    height: u16,
+    ink: &Ink,
+) -> (Paragraph<'static>, Vec<PhotoPaint>) {
     let inner = (width as usize).saturating_sub(2).max(8);
-    let mut rows: Vec<Line<'static>> = Vec::new();
-    for (index, line) in chat.lines.iter().enumerate() {
+    let max_cols = width.saturating_sub(8).max(8);
+    let owned = chat.lines.clone();
+    let mut rows: Vec<TranscriptRow> = Vec::new();
+    for (index, line) in owned.iter().enumerate() {
         let gap = matches!(line.kind, LineKind::User | LineKind::Assistant) && index > 0;
         if gap && !rows.is_empty() {
-            rows.push(Line::from(""));
+            rows.push(TranscriptRow::Text(Line::from("")));
         }
-        rows.extend(message_rows(line, inner, ink));
+        for text in message_rows(line, inner, ink) {
+            rows.push(TranscriptRow::Text(text));
+        }
+        if chat.kitty {
+            for path in image_paths(&line.text) {
+                if let Some(photo) = chat.prepare_photo(&path, max_cols) {
+                    for image_row in 0..photo.rows {
+                        rows.push(TranscriptRow::Photo {
+                            id: photo.id,
+                            columns: photo.columns,
+                            image_row,
+                        });
+                    }
+                }
+            }
+        }
     }
     let keep = height as usize;
     let start = rows.len().saturating_sub(keep);
-    Paragraph::new(rows.into_iter().skip(start).collect::<Vec<_>>()).style(ink.page())
+    let mut lines = Vec::new();
+    let mut photos = Vec::new();
+    for (index, row) in rows.into_iter().skip(start).enumerate() {
+        match row {
+            TranscriptRow::Text(line) => lines.push(line),
+            TranscriptRow::Photo {
+                id,
+                columns,
+                image_row,
+            } => {
+                photos.push(PhotoPaint {
+                    row: index as u16,
+                    id,
+                    columns,
+                    image_row,
+                });
+                lines.push(Line::from(""));
+            }
+        }
+    }
+    (Paragraph::new(lines).style(ink.page()), photos)
+}
+
+fn paint_photos(
+    frame: &mut ratatui::Frame<'_>,
+    area: ratatui::layout::Rect,
+    photos: &[PhotoPaint],
+    ink: &Ink,
+) {
+    if photos.is_empty() {
+        return;
+    }
+    let buf = frame.buffer_mut();
+    for photo in photos {
+        let y = area.y.saturating_add(photo.row);
+        if y >= area.y.saturating_add(area.height) {
+            continue;
+        }
+        let x0 = area.x.saturating_add(4);
+        let (red, green, blue) = titi_tui::image::image_id_rgb(photo.id);
+        for column in 0..photo.columns {
+            let x = x0.saturating_add(column);
+            if x >= area.x.saturating_add(area.width) {
+                break;
+            }
+            let Some(cell) = buf.cell_mut((x, y)) else {
+                continue;
+            };
+            cell.set_symbol(&titi_tui::image::placeholder_symbol(
+                column as usize,
+                photo.image_row as usize,
+            ));
+            cell.set_fg(Color::Rgb(red, green, blue));
+            cell.set_bg(ink.page);
+        }
+    }
+}
+
+fn image_paths(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut rest = text;
+    while let Some(at) = rest.find("](") {
+        let after = &rest[at + 2..];
+        let Some(end) = after.find(')') else {
+            break;
+        };
+        consider_image(&mut found, after[..end].trim());
+        rest = &after[end + 1..];
+    }
+    for token in text.split_whitespace() {
+        let trimmed = token.trim_matches(|ch: char| {
+            matches!(
+                ch,
+                '"' | '\'' | '`' | '(' | ')' | '[' | ']' | ',' | ';' | '<' | '>'
+            )
+        });
+        consider_image(&mut found, trimmed);
+    }
+    found
+}
+
+fn consider_image(found: &mut Vec<String>, raw: &str) {
+    if raw.is_empty() || found.iter().any(|path| path == raw) {
+        return;
+    }
+    let lower = raw.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return;
+    }
+    let path = raw.strip_prefix("file://").unwrap_or(raw);
+    let ext = path.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    if matches!(ext.as_str(), "png" | "jpg" | "jpeg" | "gif" | "bmp" | "ico") {
+        found.push(path.to_owned());
+    }
 }
 
 fn message_rows(line: &TranscriptLine, width: usize, ink: &Ink) -> Vec<Line<'static>> {
@@ -1159,7 +1392,7 @@ mod tests {
             turn_id: TurnId(1),
             text: "hello".into(),
         });
-        assert!(terminal.draw(|frame| draw(frame, &chat)).is_ok());
+        assert!(terminal.draw(|frame| draw(frame, &mut chat)).is_ok());
         let view: String = terminal
             .backend()
             .buffer()
@@ -1173,4 +1406,41 @@ mod tests {
         assert!(view.contains("hi"), "{view}");
         assert!(view.contains("hello"), "{view}");
     }
+
+    #[test]
+    fn a_local_png_is_placed_when_kitty_is_on() {
+        let path = std::env::temp_dir().join(format!("titi-kitty-{}.png", std::process::id()));
+        std::fs::write(&path, PNG_2X2).expect("write png");
+        let mut chat = chat();
+        chat.kitty = true;
+        chat.push(LineKind::User, path.display().to_string());
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = match ratatui::Terminal::new(backend) {
+            Ok(terminal) => terminal,
+            Err(error) => panic!("test backend: {error}"),
+        };
+        assert!(terminal.draw(|frame| draw(frame, &mut chat)).is_ok());
+        let flush = chat.take_kitty_flush();
+        assert!(flush.contains("f=32"), "{flush}");
+        assert!(flush.contains("a=p,U=1"), "{flush}");
+        let symbols: String = terminal
+            .backend()
+            .buffer()
+            .content
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(symbols.contains('\u{10EEEE}'), "{symbols}");
+        assert!(terminal.draw(|frame| draw(frame, &mut chat)).is_ok());
+        assert!(chat.take_kitty_flush().is_empty());
+        let _ = std::fs::remove_file(&path);
+    }
 }
+
+/// 2×2 red PNG. Small enough to keep the kitty transmit in the test.
+const PNG_2X2: &[u8] = &[
+    137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 13, 73, 72, 68, 82, 0, 0, 0, 2, 0, 0, 0, 2, 8, 6, 0,
+    0, 0, 114, 182, 13, 36, 0, 0, 0, 17, 73, 68, 65, 84, 120, 156, 99, 248, 207, 192, 240, 31, 132,
+    25, 96, 12, 0, 71, 202, 7, 249, 103, 89, 110, 183, 0, 0, 0, 0, 73, 69, 78, 68, 174, 66, 96,
+    130,
+];
