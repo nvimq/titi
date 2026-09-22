@@ -6,7 +6,7 @@ A terminal coding agent in Rust. It follows the [reference product](https://refe
 
 | Version | License | Phase | As of | Tests |
 | --- | --- | --- | --- | --- |
-| `0.1.0` | [MIT](LICENSE) | E3 · Genome, in progress | 2026-09-22 | 922 passed |
+| `0.1.0` | [MIT](LICENSE) | E3 · Genome, in progress | 2026-09-22 | 927 passed |
 
 ---
 
@@ -49,6 +49,12 @@ titi --headless --approval yolo
 | Ctrl+D | Quits when the input line is empty |
 | `y` / `n` | Approves or refuses a write or a shell command |
 | `/model` | Switches to the next model that has a key. `/model <id>` picks one |
+| `/checkpoint` | Records a rewind point, and the git HEAD when the index is clean |
+| `/checkpoints` | Lists this session's rewind points |
+| `/rewind` | Cuts the session back to the newest point. `/rewind 2` picks one |
+| `/recap` | Prints what the session did: turns, tools, files, problems |
+| `/pause` | Holds the composer and stops the running turn. `/pause` again resumes |
+| `/help` | Lists these commands |
 
 The screen is a ratatui chat: model and session on top, the transcript in the middle, one input line at the bottom. `--mouse` is still accepted so older commands do not fail; this screen does not track the mouse.
 
@@ -165,6 +171,12 @@ titi --headless --approval yolo
 | Ctrl+D | Выход, если строка ввода пустая |
 | `y` / `n` | Разрешить или отказать записи и shell |
 | `/model` | Следующая модель, у которой есть ключ. `/model <id>` выбирает конкретную |
+| `/checkpoint` | Точка отката и git HEAD, если индекс чистый |
+| `/checkpoints` | Список точек отката этой сессии |
+| `/rewind` | Откат к последней точке. `/rewind 2` выбирает номер |
+| `/recap` | Что было в сессии: ходы, инструменты, файлы, ошибки |
+| `/pause` | Держит ввод и останавливает ход. Ещё раз `/pause` продолжает |
+| `/help` | Список этих команд |
 
 Экран — чат на ratatui: сверху модель и сессия, посередине разговор, снизу одна строка ввода. `--mouse` по-прежнему принимается, чтобы старые команды не падали; этот экран мышь не отслеживает.
 

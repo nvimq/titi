@@ -5,7 +5,7 @@
 
 use std::collections::HashSet;
 use std::io::{self, Stdout, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use ratatui::Terminal;
@@ -105,7 +105,10 @@ pub struct Chat {
     turn_active: bool,
     model: String,
     models: Vec<String>,
+    session_id: String,
     session_label: String,
+    agent_dir: PathBuf,
+    paused: bool,
     context_percent: Option<u8>,
     reply: String,
     thinking: String,
@@ -133,7 +136,10 @@ impl Chat {
             turn_active: false,
             model: model.clone(),
             models: vec![model],
+            session_id: session_id.to_owned(),
             session_label: short_session(session_id),
+            agent_dir: titi_config::agent_dir(),
+            paused: false,
             context_percent: None,
             reply: String::new(),
             thinking: String::new(),
@@ -368,10 +374,16 @@ impl Chat {
         if text.is_empty() {
             return Applied::none();
         }
-        if let Some(applied) = self.switch_model(&text) {
+        if let Some(applied) = self.slash(&text) {
             self.input.clear();
             self.disarm();
             return applied;
+        }
+        if self.paused {
+            self.input.clear();
+            self.disarm();
+            self.push(LineKind::Note, "paused · /pause resumes".to_owned());
+            return Applied::none();
         }
         self.input.clear();
         self.disarm();
@@ -420,6 +432,156 @@ impl Chat {
             EngineCommand::SwitchModel { model: next.into() },
             None,
         ))
+    }
+
+    /// A leading slash is a command when the first word has no extra slash.
+    /// `/tmp/photo.png` stays a prompt, because that is a path.
+    fn slash(&mut self, text: &str) -> Option<Applied> {
+        if let Some(applied) = self.switch_model(text) {
+            return Some(applied);
+        }
+        let Some(raw) = text.strip_prefix('/') else {
+            return None;
+        };
+        if raw.is_empty() {
+            return None;
+        }
+        let (name, args) = raw
+            .split_once(char::is_whitespace)
+            .map(|(name, args)| (name, args.trim()))
+            .unwrap_or((raw, ""));
+        if name.contains('/')
+            || !name
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || ch == '-')
+        {
+            return None;
+        }
+        let applied = match name {
+            "checkpoint" => self.session_note(crate::app::checkpoint_session(
+                &self.agent_dir,
+                &self.session_id,
+            )),
+            "checkpoints" => self.session_note(crate::app::list_checkpoints(
+                &self.agent_dir,
+                &self.session_id,
+            )),
+            "rewind" => self.rewind(args),
+            "recap" => self.recap(),
+            "pause" => self.toggle_pause(),
+            "help" => self.help(),
+            _ => {
+                self.push(LineKind::Error, format!("unknown command /{name}"));
+                Applied::none()
+            }
+        };
+        Some(applied)
+    }
+
+    fn session_note(&mut self, result: Result<String, String>) -> Applied {
+        match result {
+            Ok(summary) => self.push(LineKind::Note, summary),
+            Err(reason) => self.push(LineKind::Error, reason),
+        }
+        Applied::none()
+    }
+
+    fn rewind(&mut self, args: &str) -> Applied {
+        let index = match args {
+            "" => Ok(None),
+            other => other
+                .parse::<usize>()
+                .map(Some)
+                .map_err(|_| format!("usage: /rewind [n] (got {other})")),
+        };
+        let Ok(index) = index else {
+            self.push(
+                LineKind::Error,
+                index.err().unwrap_or_else(|| "rewind".into()),
+            );
+            return Applied::none();
+        };
+        match crate::app::rewind_session(&self.agent_dir, &self.session_id, index) {
+            Ok(summary) => match crate::app::session_history(&self.agent_dir, &self.session_id) {
+                Ok(messages) => {
+                    self.show_history(&messages);
+                    self.turn_active = false;
+                    self.approval = None;
+                    self.push(LineKind::Note, summary);
+                    Applied::send(EngineCommand::RestoreHistory { messages }, None)
+                }
+                Err(reason) => {
+                    self.push(
+                        LineKind::Error,
+                        format!("rewind: history not restored ({reason})"),
+                    );
+                    Applied::none()
+                }
+            },
+            Err(reason) => {
+                self.push(LineKind::Error, format!("rewind: {reason}"));
+                Applied::none()
+            }
+        }
+    }
+
+    fn show_history(&mut self, messages: &[titi_providers::ChatMessage]) {
+        self.lines.clear();
+        self.assistant_at = None;
+        self.thinking_at = None;
+        self.reply.clear();
+        self.thinking.clear();
+        for message in messages {
+            let kind = match message.role {
+                titi_providers::Role::User => LineKind::User,
+                titi_providers::Role::Assistant => LineKind::Assistant,
+                titi_providers::Role::System | titi_providers::Role::Tool => continue,
+            };
+            let text = message.content.trim();
+            if text.is_empty() {
+                continue;
+            }
+            self.push(kind, text.to_owned());
+        }
+    }
+
+    fn recap(&mut self) -> Applied {
+        match crate::recap::build(&self.agent_dir, &self.session_id) {
+            Ok(sections) => {
+                if sections.is_empty() {
+                    self.push(LineKind::Note, "recap: empty".to_owned());
+                }
+                for section in sections {
+                    self.push(
+                        LineKind::Note,
+                        format!("{} · {}", section.title, section.summary),
+                    );
+                }
+            }
+            Err(reason) => self.push(LineKind::Error, format!("recap: {reason}")),
+        }
+        Applied::none()
+    }
+
+    fn toggle_pause(&mut self) -> Applied {
+        self.paused = !self.paused;
+        if self.paused {
+            self.push(LineKind::Note, "paused · /pause resumes".to_owned());
+            if self.turn_active {
+                return Applied::effect(ChatEffect::Send(EngineCommand::Cancel));
+            }
+        } else {
+            self.push(LineKind::Note, "resumed".to_owned());
+        }
+        Applied::none()
+    }
+
+    fn help(&mut self) -> Applied {
+        self.push(
+            LineKind::Note,
+            "/model  /checkpoint  /checkpoints  /rewind  /recap  /pause".to_owned(),
+        );
+        Applied::none()
     }
 
     fn arm_quit(&mut self, now: Instant) -> Applied {
@@ -664,12 +826,14 @@ impl Ink {
 fn masthead(chat: &Chat, width: u16, ink: &Ink) -> Paragraph<'static> {
     let state = if chat.approval.is_some() {
         "needs you"
+    } else if chat.paused {
+        "paused"
     } else if chat.turn_active {
         "working"
     } else {
         "ready"
     };
-    let state_color = if chat.approval.is_some() {
+    let state_color = if chat.approval.is_some() || chat.paused {
         ink.amber
     } else if chat.turn_active {
         ink.accent
@@ -990,7 +1154,9 @@ fn composer(chat: &Chat, width: u16, ink: &Ink) -> Paragraph<'static> {
             ink.fg(ink.amber).add_modifier(Modifier::BOLD),
         ))
     } else if chat.input.is_empty() {
-        let placeholder = if chat.turn_active {
+        let placeholder = if chat.paused {
+            "paused…"
+        } else if chat.turn_active {
             "steer this turn…"
         } else {
             "ask titi…"
@@ -1017,6 +1183,8 @@ fn composer_caption(chat: &Chat) -> String {
     };
     let keys = if chat.approval.is_some() {
         "y allow  ·  n refuse"
+    } else if chat.paused {
+        "/pause resumes"
     } else if !chat.hint.is_empty() {
         chat.hint.as_str()
     } else if chat.turn_active {
@@ -1366,6 +1534,83 @@ mod tests {
         }
         assert!(applied.log.is_none());
         assert!(!chat.turn_active);
+    }
+
+    #[test]
+    fn slash_pause_blocks_a_prompt_until_resumed() {
+        let mut chat = chat();
+        type_text(&mut chat, "/pause");
+        let paused = chat.on_key(Key::Enter, Instant::now());
+        assert!(paused.effect.is_none());
+        assert!(chat.paused);
+        type_text(&mut chat, "hi");
+        let blocked = chat.on_key(Key::Enter, Instant::now());
+        assert!(blocked.effect.is_none());
+        assert!(blocked.log.is_none());
+        type_text(&mut chat, "/pause");
+        chat.on_key(Key::Enter, Instant::now());
+        assert!(!chat.paused);
+    }
+
+    #[test]
+    fn slash_pause_cancels_a_running_turn() {
+        let mut chat = chat();
+        chat.on_event(EngineEvent::TurnStarted {
+            turn_id: TurnId(1),
+            model: "openai/gpt-4.1".into(),
+        });
+        type_text(&mut chat, "/pause");
+        let applied = chat.on_key(Key::Enter, Instant::now());
+        assert_eq!(
+            applied.effect,
+            Some(ChatEffect::Send(EngineCommand::Cancel))
+        );
+        assert!(chat.paused);
+    }
+
+    #[test]
+    fn a_path_is_not_a_slash_command() {
+        let mut chat = chat();
+        type_text(&mut chat, "/tmp/photo.png");
+        let applied = chat.on_key(Key::Enter, Instant::now());
+        assert!(matches!(
+            applied.effect,
+            Some(ChatEffect::Send(EngineCommand::SubmitPrompt { .. }))
+        ));
+    }
+
+    #[test]
+    fn unknown_slash_is_not_sent_to_the_model() {
+        let mut chat = chat();
+        type_text(&mut chat, "/nope");
+        let applied = chat.on_key(Key::Enter, Instant::now());
+        assert!(applied.effect.is_none());
+        assert!(chat.lines.iter().any(|line| line.text.contains("unknown")));
+    }
+
+    #[test]
+    fn rewind_restores_the_history_and_tells_the_engine() {
+        let dir = tempfile::tempdir().expect("temp");
+        let store = titi_core::session::SessionStore::new(dir.path()).expect("store");
+        let id = store
+            .create(titi_core::session::SessionMeta::default())
+            .expect("session");
+        store.append(&id, Role::User, "keep").expect("keep");
+        store.checkpoint(&id).expect("checkpoint");
+        store.append(&id, Role::User, "drop").expect("drop");
+        let mut chat = Chat::new("openai/gpt-4.1", &id);
+        chat.agent_dir = dir.path().to_path_buf();
+        type_text(&mut chat, "/rewind");
+        let applied = chat.on_key(Key::Enter, Instant::now());
+        match applied.effect {
+            Some(ChatEffect::Send(EngineCommand::RestoreHistory { messages })) => {
+                assert_eq!(messages.len(), 1);
+                assert_eq!(messages[0].content.as_str(), "keep");
+            }
+            other => panic!("expected restore, got {other:?}"),
+        }
+        assert!(chat.lines.iter().any(|line| line.text == "keep"));
+        assert!(!chat.lines.iter().any(|line| line.text == "drop"));
     }
 
     #[test]
