@@ -534,7 +534,7 @@ fn draw(frame: &mut ratatui::Frame<'_>, chat: &Chat) {
     frame.render_widget(composer(chat, cols[2].width, &ink), cols[2]);
 }
 
-/// Titanium, softened so the accent does not glow like a default cyan theme.
+/// Dark red. Body text stays warm white so a long reply is still readable.
 struct Ink {
     page: Color,
     card: Color,
@@ -552,17 +552,17 @@ struct Ink {
 impl Ink {
     fn titanium() -> Self {
         Self {
-            page: Color::Rgb(12, 14, 18),
-            card: Color::Rgb(21, 24, 32),
-            line: Color::Rgb(42, 48, 56),
-            text: Color::Rgb(232, 236, 244),
-            muted: Color::Rgb(156, 163, 176),
-            dim: Color::Rgb(107, 114, 128),
-            accent: Color::Rgb(110, 186, 255),
-            gold: Color::Rgb(212, 192, 144),
+            page: Color::Rgb(18, 8, 10),
+            card: Color::Rgb(36, 16, 20),
+            line: Color::Rgb(92, 42, 50),
+            text: Color::Rgb(255, 236, 234),
+            muted: Color::Rgb(196, 150, 154),
+            dim: Color::Rgb(132, 90, 96),
+            accent: Color::Rgb(255, 64, 84),
+            gold: Color::Rgb(255, 176, 176),
             green: Color::Rgb(125, 211, 168),
-            amber: Color::Rgb(255, 179, 71),
-            red: Color::Rgb(255, 112, 128),
+            amber: Color::Rgb(255, 120, 128),
+            red: Color::Rgb(255, 96, 112),
         }
     }
 
