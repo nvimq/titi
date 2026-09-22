@@ -475,8 +475,148 @@ pub fn render_kitty_placeholder_lines(
     Some(grid)
 }
 
+/// RGBA8 pixels, row-major, after a local photo has been scaled down.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RgbaImage {
+    pub pixels: Vec<u8>,
+    pub width: u32,
+    pub height: u32,
+}
+
+const PHOTO_MAX_EDGE: u32 = 800;
+const PHOTO_MAX_BYTES: u64 = 20 * 1024 * 1024;
+
+/// Decode a photo from memory. Files larger than the cap are refused by
+/// [`decode_rgba_file`]; this only checks that the bytes are an image.
+pub fn decode_rgba_bytes(bytes: &[u8]) -> Option<RgbaImage> {
+    rgba_from_dynamic(image::load_from_memory(bytes).ok()?)
+}
+
+/// Decode a local photo. Anything that is not a regular file, or is larger
+/// than 20 MiB, is skipped. The longest edge is scaled to 800 px.
+pub fn decode_rgba_file(path: &std::path::Path) -> Option<RgbaImage> {
+    let meta = std::fs::metadata(path).ok()?;
+    if !meta.is_file() || meta.len() == 0 || meta.len() > PHOTO_MAX_BYTES {
+        return None;
+    }
+    rgba_from_dynamic(image::ImageReader::open(path).ok()?.decode().ok()?)
+}
+
+fn rgba_from_dynamic(mut img: image::DynamicImage) -> Option<RgbaImage> {
+    if img.width() > PHOTO_MAX_EDGE || img.height() > PHOTO_MAX_EDGE {
+        img = img.thumbnail(PHOTO_MAX_EDGE, PHOTO_MAX_EDGE);
+    }
+    let rgba = img.to_rgba8();
+    let (width, height) = rgba.dimensions();
+    if width == 0 || height == 0 || width > u32::from(u16::MAX) || height > u32::from(u16::MAX) {
+        return None;
+    }
+    Some(RgbaImage {
+        pixels: rgba.into_raw(),
+        width,
+        height,
+    })
+}
+
+/// Columns and rows a photo occupies. Cell size is assumed at 8×16 px
+/// because the terminal has not been asked for its font metrics.
+pub fn photo_cells(pixel_w: u32, pixel_h: u32, max_cols: u16) -> (u16, u16) {
+    const CELL_W: u32 = 8;
+    const CELL_H: u32 = 16;
+    let cap = (KITTY_PLACEHOLDER_MAX_CELLS as u16).min(60);
+    let max_cols = max_cols.clamp(1, cap);
+    let columns = pixel_w.div_ceil(CELL_W).clamp(1, u32::from(max_cols)) as u16;
+    let rows = if pixel_w == 0 {
+        1
+    } else {
+        let aspect = (u64::from(pixel_h) * u64::from(columns) * u64::from(CELL_W))
+            / (u64::from(pixel_w) * u64::from(CELL_H));
+        aspect.clamp(1, 12) as u16
+    };
+    (columns, rows)
+}
+
+/// Foreground color kitty uses to bind a placeholder cell to an image id.
+pub fn image_id_rgb(image_id: u32) -> (u8, u8, u8) {
+    (
+        ((image_id >> 16) & 0xff) as u8,
+        ((image_id >> 8) & 0xff) as u8,
+        (image_id & 0xff) as u8,
+    )
+}
+
+/// One placeholder grapheme: U+10EEEE plus the row and column diacritics.
+pub fn placeholder_symbol(column: usize, row: usize) -> String {
+    let mut symbol = String::new();
+    symbol.push(KITTY_PLACEHOLDER);
+    symbol.push_str(&diacritic(row));
+    symbol.push_str(&diacritic(column));
+    symbol
+}
+
+/// Kitty transmit (`a=T`, RGBA) plus the virtual placement (`a=p,U=1`).
+/// `transmit` is false once the pixels have already been sent.
+pub fn kitty_photo_setup(
+    id: u32,
+    pixels: &[u8],
+    pixel_w: u32,
+    pixel_h: u32,
+    columns: u16,
+    rows: u16,
+    tmux: bool,
+    transmit: bool,
+) -> String {
+    let mut out = String::new();
+    if transmit {
+        let mut key = 0;
+        out.push_str(&build_transmit(
+            id,
+            pixels,
+            pixel_w as u16,
+            pixel_h as u16,
+            &mut key,
+        ));
+    }
+    out.push_str(&encode_kitty_virtual_placement(
+        id, None, columns, rows, tmux,
+    ));
+    out
+}
+
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn decode_rgba_bytes_reads_a_png() {
+        let image = image::RgbaImage::from_pixel(2, 2, image::Rgba([9, 8, 7, 255]));
+        let mut bytes = std::io::Cursor::new(Vec::new());
+        image::DynamicImage::ImageRgba8(image)
+            .write_to(&mut bytes, image::ImageFormat::Png)
+            .expect("png");
+        let decoded = decode_rgba_bytes(bytes.get_ref()).expect("decoded");
+        assert_eq!((decoded.width, decoded.height), (2, 2));
+        assert_eq!(decoded.pixels.len(), 16);
+        assert_eq!(&decoded.pixels[..4], &[9, 8, 7, 255]);
+    }
+
+    #[test]
+    fn photo_cells_keep_a_wide_image_inside_the_transcript() {
+        let (cols, rows) = photo_cells(1600, 800, 40);
+        assert!(cols <= 40, "{cols}");
+        assert!((1..=12).contains(&rows), "{rows}");
+    }
+
+    #[test]
+    fn kitty_photo_setup_transmits_once() {
+        let cmd = kitty_photo_setup(7, &[255, 0, 0, 255], 1, 1, 1, 1, false, true);
+        assert!(cmd.contains("f=32"), "{cmd}");
+        assert!(cmd.contains("id=7"), "{cmd}");
+        assert!(cmd.contains("a=p,U=1"), "{cmd}");
+        let again = kitty_photo_setup(7, &[255, 0, 0, 255], 1, 1, 1, 1, false, false);
+        assert!(!again.contains("f=32"), "{again}");
+        assert!(again.contains("a=p,U=1"), "{again}");
+    }
+
     use super::*;
 
     /// Create a trivial RGBA pixel buffer of `w × h` pixels.

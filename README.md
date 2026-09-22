@@ -6,7 +6,7 @@ A terminal coding agent in Rust. It follows the [Empryo](https://empryo.com) pro
 
 | Version | License | Phase | As of | Tests |
 | --- | --- | --- | --- | --- |
-| `0.1.0` | [MIT](LICENSE) | E3 · Genome, in progress | 2026-09-22 | 918 passed |
+| `0.1.0` | [MIT](LICENSE) | E3 · Genome, in progress | 2026-09-22 | 922 passed |
 
 ---
 
@@ -51,6 +51,8 @@ titi --headless --approval yolo
 | `/model` | Switches to the next model that has a key. `/model <id>` picks one |
 
 The screen is a ratatui chat: model and session on top, the transcript in the middle, one input line at the bottom. `--mouse` is still accepted so older commands do not fail; this screen does not track the mouse.
+
+In Kitty or Ghostty, a local photo named in the transcript is drawn in place: png, jpeg, gif, bmp, or ico, including a markdown image. The pixels are sent once. Other terminals leave the path as text. `TITI_NO_KITTY_PLACEHOLDERS=1` turns the pictures off.
 
 Tool approval: `--approval always-ask|write|yolo`. The default is `write` — reads pass, writes and the shell ask. Headless has no approval panel, so the mode has to be set explicitly or a write waits for an answer that never comes.
 
@@ -97,7 +99,7 @@ cargo run -p titi-genome --example map -- . 40
 
 ### What is already here
 
-The engine, streaming, model switching, tools jailed to the current directory, approval for dangerous calls, sessions that restore and rewind, compaction of a long context, subagents that can only read unless asked otherwise, Genome across eleven languages, memory, and SOUL.
+The engine, streaming, model switching, tools jailed to the current directory, approval for dangerous calls, sessions that restore and rewind, compaction of a long context, subagents that can only read unless asked otherwise, Genome across eleven languages, memory, SOUL, and local photos in Kitty and Ghostty.
 
 ### What is not
 
@@ -166,6 +168,8 @@ titi --headless --approval yolo
 
 Экран — чат на ratatui: сверху модель и сессия, посередине разговор, снизу одна строка ввода. `--mouse` по-прежнему принимается, чтобы старые команды не падали; этот экран мышь не отслеживает.
 
+В Kitty и Ghostty локальное фото, названное в разговоре, рисуется на месте: png, jpeg, gif, bmp или ico, в том числе картинка из markdown. Пиксели уходят один раз. В остальных терминалах остаётся путь. `TITI_NO_KITTY_PLACEHOLDERS=1` выключает картинки.
+
 Подтверждение инструментов: `--approval always-ask|write|yolo`. По умолчанию `write` — чтение проходит само, запись и shell спрашивают. У headless нет панели подтверждения, поэтому режим надо задать явно, иначе запись будет ждать ответа, которого не будет.
 
 ### Как устроено
@@ -211,7 +215,7 @@ cargo run -p titi-genome --example map -- . 40
 
 ### Что уже есть
 
-Движок, стриминг, смена модели, инструменты в пределах текущего каталога, подтверждение опасных вызовов, сессии с восстановлением и откатом, компакция длинного контекста, субагенты (по умолчанию только чтение), Genome по одиннадцати языкам, память и SOUL.
+Движок, стриминг, смена модели, инструменты в пределах текущего каталога, подтверждение опасных вызовов, сессии с восстановлением и откатом, компакция длинного контекста, субагенты (по умолчанию только чтение), Genome по одиннадцати языкам, память, SOUL и локальные фото в Kitty и Ghostty.
 
 ### Чего ещё нет
 
