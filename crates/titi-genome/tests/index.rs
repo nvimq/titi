@@ -298,7 +298,7 @@ fn touched_files_are_boosted_in_projection() {
 }
 
 #[test]
-fn reference-productignore_hides_from_discovery() {
+fn reference_productignore_hides_from_discovery() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
     write(root, "src/keep.rs", "pub fn keep() {}");
