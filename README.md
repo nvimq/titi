@@ -6,7 +6,7 @@ A terminal coding agent in Rust. It follows the [reference product](https://refe
 
 | Version | License | Phase | As of | Tests |
 | --- | --- | --- | --- | --- |
-| `0.1.0` | [MIT](LICENSE) | E3 · Genome, in progress | 2026-09-22 | 891 passed |
+| `0.1.0` | [MIT](LICENSE) | E3 · Genome, in progress | 2026-09-22 | 918 passed |
 
 ---
 
@@ -29,6 +29,8 @@ titi --list-keys
 
 Without a key the turn fails in the open: the provider requires a credential. Settings stack from lowest to highest: built-in defaults, `~/.titi/agent`, `<project>/.titi/config.yml`, then environment variables.
 
+Built in: OpenAI (`openai`, model `gpt-4.1`, env `OPENAI_API_KEY`), OpenRouter (`openrouter`, wire `openai/gpt-4.1`, env `OPENROUTER_API_KEY`), OpenCode (`opencode-go`, `glm-5.3-flash` and `deepseek-v4-flash`, env `OPENCODE_API_KEY`), and Anthropic. A project config overlays this list by id. It does not delete the others. `titi --set-key <id>` stores the key for that provider. The first model that has a key is the one that runs; a machine with no keys still starts on `openai/gpt-4.1` and the request fails in the open.
+
 One turn, no screen:
 
 ```bash
@@ -43,15 +45,12 @@ titi --headless --approval yolo
 | Key or command | What it does |
 | --- | --- |
 | Enter | Sends the turn. During a turn it steers, it does not start a second one |
-| Ctrl+C | Stops the running turn. When idle, press it again to quit |
-| Ctrl+O | Expand or collapse every block |
-| `/agents` | Live agent list |
-| `/pause` | Stop the agent and hold input |
-| `/checkpoint` `/rewind` | Mark a point in the session, then return to it |
-| `/recap` | Session summary: turns, tools, files |
-| Ctrl+N | A new empty session |
+| Ctrl+C | Stops the running turn. When idle, press it again within 2 seconds to quit |
+| Ctrl+D | Quits when the input line is empty |
+| `y` / `n` | Approves or refuses a write or a shell command |
+| `/model` | Switches to the next model that has a key. `/model <id>` picks one |
 
-Mouse tracking: `--mouse off|on|wheel|buttons|all`. It is off by default, so the terminal's own selection still works.
+The screen is a ratatui chat: model and session on top, the transcript in the middle, one input line at the bottom. `--mouse` is still accepted so older commands do not fail; this screen does not track the mouse.
 
 Tool approval: `--approval always-ask|write|yolo`. The default is `write` — reads pass, writes and the shell ask. Headless has no approval panel, so the mode has to be set explicitly or a write waits for an answer that never comes.
 
@@ -144,6 +143,8 @@ titi --list-keys
 
 Без ключа ход падает открыто: провайдер требует credential. Настройки складываются снизу вверх: встроенные значения, `~/.titi/agent`, `<проект>/.titi/config.yml`, затем переменные окружения.
 
+Встроены: OpenAI (`openai`, модель `gpt-4.1`, env `OPENAI_API_KEY`), OpenRouter (`openrouter`, в запросе `openai/gpt-4.1`, env `OPENROUTER_API_KEY`), OpenCode (`opencode-go`, `glm-5.3-flash` и `deepseek-v4-flash`, env `OPENCODE_API_KEY`) и Anthropic. Конфиг проекта накладывается на этот список по id и не удаляет остальные. `titi --set-key <id>` кладёт ключ этого провайдера. Запускается первая модель, у которой ключ уже есть. Если ключей нет, остаётся `openai/gpt-4.1`, и запрос падает открыто.
+
 Один ход без экрана:
 
 ```bash
@@ -158,15 +159,12 @@ titi --headless --approval yolo
 | Клавиша или команда | Что делает |
 | --- | --- |
 | Enter | Отправляет ход. Во время хода это steering, а не второй ход |
-| Ctrl+C | Останавливает активный ход. В покое просит нажать ещё раз, чтобы выйти |
-| Ctrl+O | Раскрыть или свернуть все блоки |
-| `/agents` | Живой список агентов |
-| `/pause` | Остановить агента и подержать ввод |
-| `/checkpoint` `/rewind` | Точка в сессии и возврат к ней |
-| `/recap` | Сводка: ходы, инструменты, файлы |
-| Ctrl+N | Новая пустая сессия |
+| Ctrl+C | Останавливает активный ход. В покое второе нажатие за 2 секунды выходит |
+| Ctrl+D | Выход, если строка ввода пустая |
+| `y` / `n` | Разрешить или отказать записи и shell |
+| `/model` | Следующая модель, у которой есть ключ. `/model <id>` выбирает конкретную |
 
-Мышь: `--mouse off|on|wheel|buttons|all`. По умолчанию выключена, чтобы работало выделение самого терминала.
+Экран — чат на ratatui: сверху модель и сессия, посередине разговор, снизу одна строка ввода. `--mouse` по-прежнему принимается, чтобы старые команды не падали; этот экран мышь не отслеживает.
 
 Подтверждение инструментов: `--approval always-ask|write|yolo`. По умолчанию `write` — чтение проходит само, запись и shell спрашивают. У headless нет панели подтверждения, поэтому режим надо задать явно, иначе запись будет ждать ответа, которого не будет.
 
